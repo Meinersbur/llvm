@@ -53,6 +53,7 @@ public:
     msp430,  // MSP430: msp430
     ppc,     // PPC: powerpc
     ppc64,   // PPC64: powerpc64, ppu
+    r600,    // R600: AMD GPUs HD2XXX - HD6XXX
     sparc,   // Sparc: sparc
     sparcv9, // Sparcv9: Sparcv9
     tce,     // TCE (http://tce.cs.tut.fi/): tce
@@ -63,6 +64,8 @@ public:
     mblaze,  // MBlaze: mblaze
     ptx32,   // PTX: ptx (32-bit)
     ptx64,   // PTX: ptx (64-bit)
+    nvptx,   // NVPTX: 32-bit
+    nvptx64, // NVPTX: 64-bit
     le32,    // le32: generic little-endian 32-bit CPU (PNaCl / Emscripten)
     amdil   // amdil: amd IL
   };
@@ -71,7 +74,9 @@ public:
 
     Apple,
     PC,
-    SCEI
+    SCEI,
+    BGP,
+    BGQ
   };
   enum OSType {
     UnknownOS,
@@ -94,7 +99,8 @@ public:
     Haiku,
     Minix,
     RTEMS,
-    NativeClient
+    NativeClient,
+    CNK         // BG/P Compute-Node Kernel
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -189,6 +195,11 @@ public:
   /// just set to a constant 10.4.0 in that case.  Returns true if successful.
   bool getMacOSXVersion(unsigned &Major, unsigned &Minor,
                         unsigned &Micro) const;
+
+  /// getiOSVersion - Parse the version number as with getOSVersion.  This should
+  /// only be called with IOS triples.
+  void getiOSVersion(unsigned &Major, unsigned &Minor,
+                     unsigned &Micro) const;
 
   /// @}
   /// @name Direct Component Access

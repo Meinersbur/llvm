@@ -16,9 +16,10 @@
 #define HexagonREGISTERINFO_H
 
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/MC/MachineLocation.h"
+
 #define GET_REGINFO_HEADER
 #include "HexagonGenRegisterInfo.inc"
-#include "llvm/MC/MachineLocation.h"
 
 //
 //  We try not to hard code the reserved registers in our code,
@@ -69,6 +70,10 @@ struct HexagonRegisterInfo : public HexagonGenRegisterInfo {
   /// requiresRegisterScavenging - returns true since we may need scavenging for
   /// a temporary register when generating hardware loop instructions.
   bool requiresRegisterScavenging(const MachineFunction &MF) const {
+    return true;
+  }
+
+  bool trackLivenessAfterRegAlloc(const MachineFunction &MF) const {
     return true;
   }
 

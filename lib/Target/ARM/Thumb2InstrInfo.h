@@ -14,9 +14,8 @@
 #ifndef THUMB2INSTRUCTIONINFO_H
 #define THUMB2INSTRUCTIONINFO_H
 
-#include "llvm/Target/TargetInstrInfo.h"
 #include "ARM.h"
-#include "ARMInstrInfo.h"
+#include "ARMBaseInstrInfo.h"
 #include "Thumb2RegisterInfo.h"
 
 namespace llvm {

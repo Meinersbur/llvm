@@ -13,10 +13,10 @@
 
 #define DEBUG_TYPE "mips-reg-info"
 
+#include "MipsRegisterInfo.h"
 #include "Mips.h"
 #include "MipsAnalyzeImmediate.h"
 #include "MipsSubtarget.h"
-#include "MipsRegisterInfo.h"
 #include "MipsMachineFunction.h"
 #include "llvm/Constants.h"
 #include "llvm/Type.h"
@@ -62,7 +62,7 @@ getCalleeSavedRegs(const MachineFunction *MF) const
     return CSR_O32_SaveList;
   else if (Subtarget.isABI_N32())
     return CSR_N32_SaveList;
-  
+
   assert(Subtarget.isABI_N64());
   return CSR_N64_SaveList;  
 }
@@ -83,18 +83,18 @@ MipsRegisterInfo::getCallPreservedMask(CallingConv::ID) const
 
 BitVector MipsRegisterInfo::
 getReservedRegs(const MachineFunction &MF) const {
-  static const unsigned ReservedCPURegs[] = {
+  static const uint16_t ReservedCPURegs[] = {
     Mips::ZERO, Mips::AT, Mips::K0, Mips::K1,
-    Mips::SP, Mips::FP, Mips::RA
+    Mips::SP, Mips::RA
   };
 
-  static const unsigned ReservedCPU64Regs[] = {
+  static const uint16_t ReservedCPU64Regs[] = {
     Mips::ZERO_64, Mips::AT_64, Mips::K0_64, Mips::K1_64,
-    Mips::SP_64, Mips::FP_64, Mips::RA_64
+    Mips::SP_64, Mips::RA_64
   };
 
   BitVector Reserved(getNumRegs());
-  typedef TargetRegisterClass::iterator RegIter;
+  typedef TargetRegisterClass::const_iterator RegIter;
 
   for (unsigned I = 0; I < array_lengthof(ReservedCPURegs); ++I)
     Reserved.set(ReservedCPURegs[I]);
@@ -104,28 +104,41 @@ getReservedRegs(const MachineFunction &MF) const {
       Reserved.set(ReservedCPU64Regs[I]);
 
     // Reserve all registers in AFGR64.
-    for (RegIter Reg = Mips::AFGR64RegisterClass->begin();
-         Reg != Mips::AFGR64RegisterClass->end(); ++Reg)
+    for (RegIter Reg = Mips::AFGR64RegClass.begin(),
+         EReg = Mips::AFGR64RegClass.end(); Reg != EReg; ++Reg)
       Reserved.set(*Reg);
-  }
-  else {
+  } else {
     // Reserve all registers in CPU64Regs & FGR64.
-    for (RegIter Reg = Mips::CPU64RegsRegisterClass->begin();
-         Reg != Mips::CPU64RegsRegisterClass->end(); ++Reg)
+    for (RegIter Reg = Mips::CPU64RegsRegClass.begin(),
+         EReg = Mips::CPU64RegsRegClass.end(); Reg != EReg; ++Reg)
       Reserved.set(*Reg);
 
-    for (RegIter Reg = Mips::FGR64RegisterClass->begin();
-         Reg != Mips::FGR64RegisterClass->end(); ++Reg)
+    for (RegIter Reg = Mips::FGR64RegClass.begin(),
+         EReg = Mips::FGR64RegClass.end(); Reg != EReg; ++Reg)
       Reserved.set(*Reg);
   }
 
-  // If GP is dedicated as a global base register, reserve it.
-  if (MF.getInfo<MipsFunctionInfo>()->globalBaseRegFixed()) {
-    Reserved.set(Mips::GP);
-    Reserved.set(Mips::GP_64);
+  // Reserve FP if this function should have a dedicated frame pointer register.
+  if (MF.getTarget().getFrameLowering()->hasFP(MF)) {
+    Reserved.set(Mips::FP);
+    Reserved.set(Mips::FP_64);
   }
+
+  // Reserve hardware registers.
+  Reserved.set(Mips::HWR29);
+  Reserved.set(Mips::HWR29_64);
 
   return Reserved;
+}
+
+bool
+MipsRegisterInfo::requiresRegisterScavenging(const MachineFunction &MF) const {
+  return true;
+}
+
+bool
+MipsRegisterInfo::trackLivenessAfterRegAlloc(const MachineFunction &MF) const {
+  return true;
 }
 
 // This function eliminate ADJCALLSTACKDOWN,
@@ -198,8 +211,7 @@ eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
   //   incoming argument, callee-saved register location or local variable.
   int64_t Offset;
 
-  if (MipsFI->isOutArgFI(FrameIndex) || MipsFI->isGPFI(FrameIndex) ||
-      MipsFI->isDynAllocFI(FrameIndex))
+  if (MipsFI->isOutArgFI(FrameIndex) || MipsFI->isDynAllocFI(FrameIndex))
     Offset = spOffset;
   else
     Offset = spOffset + (int64_t)stackSize;
@@ -223,8 +235,7 @@ eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
       AnalyzeImm.Analyze(Offset, Size, true /* LastInstrIsADDiu */);
     MipsAnalyzeImmediate::InstSeq::const_iterator Inst = Seq.begin();
 
-    // FIXME: change this when mips goes MC".
-    BuildMI(MBB, II, DL, TII.get(Mips::NOAT));
+    MipsFI->setEmitNOAT();
 
     // The first instruction can be a LUi, which is different from other
     // instructions (ADDiu, ORI and SLL) in that it does not have a register
@@ -245,7 +256,6 @@ eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
 
     FrameReg = ATReg;
     Offset = SignExtend64<16>(Inst->ImmOpnd);
-    BuildMI(MBB, ++II, MI.getDebugLoc(), TII.get(Mips::ATMACRO));
   }
 
   MI.getOperand(i).ChangeToRegister(FrameReg, false);

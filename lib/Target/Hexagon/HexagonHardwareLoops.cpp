@@ -27,6 +27,8 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "hwloops"
+#include "Hexagon.h"
+#include "HexagonTargetMachine.h"
 #include "llvm/Constants.h"
 #include "llvm/PassSupport.h"
 #include "llvm/ADT/DenseMap.h"
@@ -43,8 +45,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include <algorithm>
-#include "Hexagon.h"
-#include "HexagonTargetMachine.h"
 
 using namespace llvm;
 
@@ -623,7 +623,7 @@ void HexagonFixupHwLoops::convertLoopInstr(MachineFunction &MF,
   const TargetInstrInfo *TII = MF.getTarget().getInstrInfo();
   MachineBasicBlock *MBB = MII->getParent();
   DebugLoc DL = MII->getDebugLoc();
-  unsigned Scratch = RS.scavengeRegister(Hexagon::IntRegsRegisterClass, MII, 0);
+  unsigned Scratch = RS.scavengeRegister(&Hexagon::IntRegsRegClass, MII, 0);
 
   // First, set the LC0 with the trip count.
   if (MII->getOperand(1).isReg()) {

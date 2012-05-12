@@ -113,7 +113,7 @@ public:
 /// differing argument types even if they would implicit promote to a common
 /// type without changing the value.
 template <typename T>
-typename enable_if<is_integral<T>, hash_code>::type hash_value(T value);
+typename enable_if<is_integral_or_enum<T>, hash_code>::type hash_value(T value);
 
 /// \brief Compute a hash_code for a pointer's address.
 ///
@@ -349,14 +349,15 @@ inline size_t get_execution_seed() {
 /// reading the underlying data. It is false if values of this type must
 /// first be passed to hash_value, and the resulting hash_codes combined.
 //
-// FIXME: We want to replace is_integral and is_pointer here with a predicate
-// which asserts that comparing the underlying storage of two values of the
-// type for equality is equivalent to comparing the two values for equality.
-// For all the platforms we care about, this holds for integers and pointers,
-// but there are platforms where it doesn't and we would like to support
-// user-defined types which happen to satisfy this property.
+// FIXME: We want to replace is_integral_or_enum and is_pointer here with
+// a predicate which asserts that comparing the underlying storage of two
+// values of the type for equality is equivalent to comparing the two values
+// for equality. For all the platforms we care about, this holds for integers
+// and pointers, but there are platforms where it doesn't and we would like to
+// support user-defined types which happen to satisfy this property.
 template <typename T> struct is_hashable_data
-  : integral_constant<bool, ((is_integral<T>::value || is_pointer<T>::value) &&
+  : integral_constant<bool, ((is_integral_or_enum<T>::value ||
+                              is_pointer<T>::value) &&
                              64 % sizeof(T) == 0)> {};
 
 // Special case std::pair to detect when both types are viable and when there
@@ -419,8 +420,6 @@ hash_code hash_combine_range_impl(InputIteratorT first, InputIteratorT last) {
   while (first != last && store_and_advance(buffer_ptr, buffer_end,
                                             get_hashable_data(*first)))
     ++first;
-/// \brief Metafunction that determines whether the given type is an integral
-/// type.
   if (first == last)
     return hash_short(buffer, buffer_ptr - buffer, seed);
   assert(buffer_ptr == buffer_end);
@@ -458,7 +457,7 @@ hash_code hash_combine_range_impl(InputIteratorT first, InputIteratorT last) {
 /// and directly reads from the underlying memory.
 template <typename ValueT>
 typename enable_if<is_hashable_data<ValueT>, hash_code>::type
-hash_combine_range_impl(const ValueT *first, const ValueT *last) {
+hash_combine_range_impl(ValueT *first, ValueT *last) {
   const size_t seed = get_execution_seed();
   const char *s_begin = reinterpret_cast<const char *>(first);
   const char *s_end = reinterpret_cast<const char *>(last);
@@ -506,13 +505,10 @@ namespace detail {
 /// recursive combining of arguments used in hash_combine. It is particularly
 /// useful at minimizing the code in the recursive calls to ease the pain
 /// caused by a lack of variadic functions.
-class hash_combine_recursive_helper {
-  const size_t seed;
+struct hash_combine_recursive_helper {
   char buffer[64];
-  char *const buffer_end;
-  char *buffer_ptr;
-  size_t length;
   hash_state state;
+  const size_t seed;
 
 public:
   /// \brief Construct a recursive hash combining helper.
@@ -520,10 +516,7 @@ public:
   /// This sets up the state for a recursive hash combine, including getting
   /// the seed and buffer setup.
   hash_combine_recursive_helper()
-    : seed(get_execution_seed()),
-      buffer_end(buffer + array_lengthof(buffer)),
-      buffer_ptr(buffer),
-      length(0) {}
+    : seed(get_execution_seed()) {}
 
   /// \brief Combine one chunk of data into the current in-flight hash.
   ///
@@ -531,7 +524,8 @@ public:
   /// the data. If the buffer is full, it hashes the buffer into its
   /// hash_state, empties it, and then merges the new chunk in. This also
   /// handles cases where the data straddles the end of the buffer.
-  template <typename T> void combine_data(T data) {
+  template <typename T>
+  char *combine_data(size_t &length, char *buffer_ptr, char *buffer_end, T data) {
     if (!store_and_advance(buffer_ptr, buffer_end, data)) {
       // Check for skew which prevents the buffer from being packed, and do
       // a partial store into the buffer to fill it. This is only a concern
@@ -562,6 +556,7 @@ public:
                              partial_store_size))
         abort();
     }
+    return buffer_ptr;
   }
 
 #if defined(__has_feature) && __has_feature(__cxx_variadic_templates__)
@@ -571,11 +566,12 @@ public:
   /// This function recurses through each argument, combining that argument
   /// into a single hash.
   template <typename T, typename ...Ts>
-  hash_code combine(const T &arg, const Ts &...args) {
-    combine_data( get_hashable_data(arg));
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T &arg, const Ts &...args) {
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg));
 
     // Recurse to the next argument.
-    return combine(args...);
+    return combine(length, buffer_ptr, buffer_end, args...);
   }
 
 #else
@@ -584,37 +580,43 @@ public:
 
   template <typename T1, typename T2, typename T3, typename T4, typename T5,
             typename T6>
-  hash_code combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1, const T2 &arg2, const T3 &arg3,
                     const T4 &arg4, const T5 &arg5, const T6 &arg6) {
-    combine_data(get_hashable_data(arg1));
-    return combine(arg2, arg3, arg4, arg5, arg6);
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end, arg2, arg3, arg4, arg5, arg6);
   }
   template <typename T1, typename T2, typename T3, typename T4, typename T5>
-  hash_code combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1, const T2 &arg2, const T3 &arg3,
                     const T4 &arg4, const T5 &arg5) {
-    combine_data(get_hashable_data(arg1));
-    return combine(arg2, arg3, arg4, arg5);
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end, arg2, arg3, arg4, arg5);
   }
   template <typename T1, typename T2, typename T3, typename T4>
-  hash_code combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1, const T2 &arg2, const T3 &arg3,
                     const T4 &arg4) {
-    combine_data(get_hashable_data(arg1));
-    return combine(arg2, arg3, arg4);
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end, arg2, arg3, arg4);
   }
   template <typename T1, typename T2, typename T3>
-  hash_code combine(const T1 &arg1, const T2 &arg2, const T3 &arg3) {
-    combine_data(get_hashable_data(arg1));
-    return combine(arg2, arg3);
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1, const T2 &arg2, const T3 &arg3) {
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end, arg2, arg3);
   }
   template <typename T1, typename T2>
-  hash_code combine(const T1 &arg1, const T2 &arg2) {
-    combine_data(get_hashable_data(arg1));
-    return combine(arg2);
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1, const T2 &arg2) {
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end, arg2);
   }
   template <typename T1>
-  hash_code combine(const T1 &arg1) {
-    combine_data(get_hashable_data(arg1));
-    return combine();
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end,
+                    const T1 &arg1) {
+    buffer_ptr = combine_data(length, buffer_ptr, buffer_end, get_hashable_data(arg1));
+    return combine(length, buffer_ptr, buffer_end);
   }
 
 #endif
@@ -624,7 +626,7 @@ public:
   /// The base case when combining arguments recursively is reached when all
   /// arguments have been handled. It flushes the remaining buffer and
   /// constructs a hash_code.
-  hash_code combine() {
+  hash_code combine(size_t length, char *buffer_ptr, char *buffer_end) {
     // Check whether the entire set of values fit in the buffer. If so, we'll
     // use the optimized short hashing routine and skip state entirely.
     if (length == 0)
@@ -664,7 +666,7 @@ public:
 template <typename ...Ts> hash_code hash_combine(const Ts &...args) {
   // Recursively hash each argument using a helper class.
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(args...);
+  return helper.combine(0, helper.buffer, helper.buffer + 64, args...);
 }
 
 #else
@@ -675,36 +677,39 @@ template <typename ...Ts> hash_code hash_combine(const Ts &...args) {
 template <typename T1, typename T2, typename T3, typename T4, typename T5,
           typename T6>
 hash_code hash_combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
-                  const T4 &arg4, const T5 &arg5, const T6 &arg6) {
+                       const T4 &arg4, const T5 &arg5, const T6 &arg6) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1, arg2, arg3, arg4, arg5, arg6);
+  return helper.combine(0, helper.buffer, helper.buffer + 64,
+                        arg1, arg2, arg3, arg4, arg5, arg6);
 }
 template <typename T1, typename T2, typename T3, typename T4, typename T5>
 hash_code hash_combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
-                  const T4 &arg4, const T5 &arg5) {
+                       const T4 &arg4, const T5 &arg5) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1, arg2, arg3, arg4, arg5);
+  return helper.combine(0, helper.buffer, helper.buffer + 64,
+                        arg1, arg2, arg3, arg4, arg5);
 }
 template <typename T1, typename T2, typename T3, typename T4>
 hash_code hash_combine(const T1 &arg1, const T2 &arg2, const T3 &arg3,
-                  const T4 &arg4) {
+                       const T4 &arg4) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1, arg2, arg3, arg4);
+  return helper.combine(0, helper.buffer, helper.buffer + 64,
+                        arg1, arg2, arg3, arg4);
 }
 template <typename T1, typename T2, typename T3>
 hash_code hash_combine(const T1 &arg1, const T2 &arg2, const T3 &arg3) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1, arg2, arg3);
+  return helper.combine(0, helper.buffer, helper.buffer + 64, arg1, arg2, arg3);
 }
 template <typename T1, typename T2>
 hash_code hash_combine(const T1 &arg1, const T2 &arg2) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1, arg2);
+  return helper.combine(0, helper.buffer, helper.buffer + 64, arg1, arg2);
 }
 template <typename T1>
 hash_code hash_combine(const T1 &arg1) {
   ::llvm::hashing::detail::hash_combine_recursive_helper helper;
-  return helper.combine(arg1);
+  return helper.combine(0, helper.buffer, helper.buffer + 64, arg1);
 }
 
 #endif
@@ -734,7 +739,8 @@ inline hash_code hash_integer_value(uint64_t value) {
 // Declared and documented above, but defined here so that any of the hashing
 // infrastructure is available.
 template <typename T>
-typename enable_if<is_integral<T>, hash_code>::type hash_value(T value) {
+typename enable_if<is_integral_or_enum<T>, hash_code>::type
+hash_value(T value) {
   return ::llvm::hashing::detail::hash_integer_value(value);
 }
 

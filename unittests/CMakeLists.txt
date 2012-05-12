@@ -87,11 +87,35 @@ add_llvm_unittest(ExecutionEngine
   ExecutionEngine/ExecutionEngineTest.cpp
   )
 
+if( LLVM_USE_INTEL_JITEVENTS )
+  include_directories( ${LLVM_INTEL_JITEVENTS_INCDIR} )
+  link_directories( ${LLVM_INTEL_JITEVENTS_LIBDIR} )
+  set(ProfileTestSources
+    ExecutionEngine/JIT/IntelJITEventListenerTest.cpp
+    )
+  set(LLVM_LINK_COMPONENTS
+    ${LLVM_LINK_COMPONENTS}
+    IntelJITEvents
+    ) 
+endif( LLVM_USE_INTEL_JITEVENTS )
+
+if( LLVM_USE_OPROFILE )
+  set(ProfileTestSources
+    ${ProfileTestSources}
+    ExecutionEngine/JIT/OProfileJITEventListenerTest.cpp
+    )
+  set(LLVM_LINK_COMPONENTS
+    ${LLVM_LINK_COMPONENTS}
+    OProfileJIT
+    )
+endif( LLVM_USE_OPROFILE )
+
 set(JITTestsSources
   ExecutionEngine/JIT/JITEventListenerTest.cpp
   ExecutionEngine/JIT/JITMemoryManagerTest.cpp
   ExecutionEngine/JIT/JITTest.cpp
   ExecutionEngine/JIT/MultiJITTest.cpp
+  ${ProfileTestSources}
   )
 
 if(MSVC)
@@ -115,6 +139,7 @@ set(VMCoreSources
   VMCore/PassManagerTest.cpp
   VMCore/ValueMapTest.cpp
   VMCore/VerifierTest.cpp
+  VMCore/DominatorTreeTest.cpp
   )
 
 # MSVC9 and 8 cannot compile ValueMapTest.cpp due to their bug.
@@ -140,7 +165,6 @@ add_llvm_unittest(Support
   Support/CommandLineTest.cpp
   Support/ConstantRangeTest.cpp
   Support/EndianTest.cpp
-  Support/JSONParserTest.cpp
   Support/LeakDetectorTest.cpp
   Support/MathExtrasTest.cpp
   Support/Path.cpp
@@ -150,4 +174,5 @@ add_llvm_unittest(Support
   Support/TimeValue.cpp
   Support/TypeBuilderTest.cpp
   Support/ValueHandleTest.cpp
+  Support/YAMLParserTest.cpp
   )

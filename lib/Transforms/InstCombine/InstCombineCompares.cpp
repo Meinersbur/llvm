@@ -1028,15 +1028,14 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
       // of the high bits truncated out of x are known.
       unsigned DstBits = LHSI->getType()->getPrimitiveSizeInBits(),
              SrcBits = LHSI->getOperand(0)->getType()->getPrimitiveSizeInBits();
-      APInt Mask(APInt::getHighBitsSet(SrcBits, SrcBits-DstBits));
       APInt KnownZero(SrcBits, 0), KnownOne(SrcBits, 0);
-      ComputeMaskedBits(LHSI->getOperand(0), Mask, KnownZero, KnownOne);
+      ComputeMaskedBits(LHSI->getOperand(0), KnownZero, KnownOne);
 
       // If all the high bits are known, we can do this xform.
       if ((KnownZero|KnownOne).countLeadingOnes() >= SrcBits-DstBits) {
         // Pull in the high bits from known-ones set.
         APInt NewRHS = RHS->getValue().zext(SrcBits);
-        NewRHS |= KnownOne;
+        NewRHS |= KnownOne & APInt::getHighBitsSet(SrcBits, SrcBits-DstBits);
         return new ICmpInst(ICI.getPredicate(), LHSI->getOperand(0),
                             ConstantInt::get(ICI.getContext(), NewRHS));
       }

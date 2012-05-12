@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "XCore.h"
 #include "XCoreFrameLowering.h"
+#include "XCore.h"
 #include "XCoreInstrInfo.h"
 #include "XCoreMachineFunctionInfo.h"
 #include "llvm/Function.h"
@@ -341,7 +341,7 @@ XCoreFrameLowering::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   MachineFrameInfo *MFI = MF.getFrameInfo();
   const TargetRegisterInfo *RegInfo = MF.getTarget().getRegisterInfo();
   bool LRUsed = MF.getRegInfo().isPhysRegUsed(XCore::LR);
-  const TargetRegisterClass *RC = XCore::GRRegsRegisterClass;
+  const TargetRegisterClass *RC = &XCore::GRRegsRegClass;
   XCoreFunctionInfo *XFI = MF.getInfo<XCoreFunctionInfo>();
   if (LRUsed) {
     MF.getRegInfo().setPhysRegUnused(XCore::LR);

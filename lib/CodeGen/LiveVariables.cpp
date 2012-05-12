@@ -14,7 +14,7 @@
 // the instruction, but are never used after the instruction (i.e., they are
 // killed).
 //
-// This class computes live variables using are sparse implementation based on
+// This class computes live variables using a sparse implementation based on
 // the machine code SSA form.  This class computes live variable information for
 // each virtual and _register allocatable_ physical register in a function.  It
 // uses the dominance properties of SSA form to efficiently compute live
@@ -109,6 +109,7 @@ void LiveVariables::MarkVirtRegAliveInBlock(VarInfo& VRInfo,
   // Mark the variable known alive in this bb
   VRInfo.AliveBlocks.set(BBNum);
 
+  assert(MBB != &MF->front() && "Can't find reaching def for virtreg");
   WorkList.insert(WorkList.end(), MBB->pred_rbegin(), MBB->pred_rend());
 }
 

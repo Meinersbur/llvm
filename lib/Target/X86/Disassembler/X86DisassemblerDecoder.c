@@ -312,6 +312,15 @@ static int readPrefixes(struct InternalInstruction* insn) {
     
     if (consumeByte(insn, &byte))
       return -1;
+
+    /*
+     * If the first byte is a LOCK prefix break and let it be disassembled
+     * as a lock "instruction", by creating an <MCInst #xxxx LOCK_PREFIX>.
+     * FIXME there is currently no way to get the disassembler to print the
+     * lock prefix if it is not the first byte.
+     */
+    if (insn->readerCursor - 1 == insn->startLocation && byte == 0xf0)
+      break;
     
     switch (byte) {
     case 0xf0:  /* LOCK */
@@ -1517,6 +1526,9 @@ static int readOperands(struct InternalInstruction* insn) {
         return -1;
       if (insn->spec->operands[index].type == TYPE_IMM3 &&
           insn->immediates[insn->numImmediatesConsumed - 1] > 7)
+        return -1;
+      if (insn->spec->operands[index].type == TYPE_IMM5 &&
+          insn->immediates[insn->numImmediatesConsumed - 1] > 31)
         return -1;
       if (insn->spec->operands[index].type == TYPE_XMM128 ||
           insn->spec->operands[index].type == TYPE_XMM256)

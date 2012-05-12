@@ -3,7 +3,7 @@
 <html>
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-  <link rel="stylesheet" href="llvm.css" type="text/css">
+  <link rel="stylesheet" href="_static/llvm.css" type="text/css">
   <title>LLVM 3.1 Release Notes</title>
 </head>
 <body>
@@ -96,6 +96,7 @@ Release Notes</a>.</h1>
 
 <p>In the LLVM 3.1 time-frame, the Clang team has made many improvements:</p>
 <ul>
+  <li>C++11 support is greatly expanded including lambdas, initializer lists, constexpr, user-defined literals, and atomics.</li>
   <li>...</li>
 </ul>
 
@@ -119,17 +120,30 @@ Release Notes</a>.</h1>
 <div>
 <p><a href="http://dragonegg.llvm.org/">DragonEgg</a> is a
    <a href="http://gcc.gnu.org/wiki/plugins">gcc plugin</a> that replaces GCC's
-   optimizers and code generators with LLVM's. It works with gcc-4.5 or gcc-4.6,
-   targets the x86-32 and x86-64 processor families, and has been successfully
-   used on the Darwin, FreeBSD, KFreeBSD, Linux and OpenBSD platforms.  It fully
-   supports Ada, C, C++ and Fortran.  It has partial support for Go, Java, Obj-C
-   and Obj-C++.</p>
+   optimizers and code generators with LLVM's. It works with gcc-4.5 and gcc-4.6
+   (and partially with gcc-4.7), can target the x86-32/x86-64 and ARM processor
+   families, and has been successfully used on the Darwin, FreeBSD, KFreeBSD,
+   Linux and OpenBSD platforms.  It fully supports Ada, C, C++ and Fortran.  It
+   has partial support for Go, Java, Obj-C and Obj-C++.</p>
 
 <p>The 3.1 release has the following notable changes:</p>
 
   <ul>
 
-  <li>...</li>
+  <li>Partial support for gcc-4.7. Ada support is poor, but other languages work
+      fairly well.</li>
+
+  <li>Support for ARM processors. Some essential gcc headers that are needed to
+      build DragonEgg for ARM are not installed by gcc. To work around this,
+      copy the missing headers from the gcc source tree.</li>
+
+  <li>Better optimization for Fortran by exploiting the fact that Fortran scalar
+      arguments have 'restrict' semantics.</li>
+
+  <li>Better optimization for all languages by passing information about type
+      aliasing and type ranges to the LLVM optimizers.</li>
+
+  <li>A regression test-suite was added.</li>
 
 </ul>
 
@@ -206,6 +220,36 @@ Release Notes</a>.</h1>
 
 </div>
 
+
+<!--=========================================================================-->
+<h3>
+<a name="Polly">Polly: Polyhedral Optimizer</a>
+</h3>
+
+<div>
+
+  <p><a href="http://polly.llvm.org/">Polly</a> is an <em>experimental</em>
+  optimizer for data locality and parallelism. It currently provides high-level
+  loop optimizations and automatic parallelisation (using the OpenMP run time).
+  Work in the area of automatic SIMD and accelerator code generation was
+  started.
+
+  <p>Within the LLVM 3.1 time-frame there were the following highlights:</p>
+
+  <ul>
+  <li>Polly became an official LLVM project</li>
+  <li>Polly can be loaded directly into clang (Enabled by '-O3 -mllvm -polly'
+  )</li>
+  <li>An automatic scheduling optimizer (derived from <a
+  href="http://pluto-compiler.sourceforge.net/">Pluto</a>) was integrated. It
+  performs loop transformations to optimize for data-locality and parallelism.
+  The transformations include, but are not limited to interchange, fusion,
+  fission, skewing and tiling.
+  </li>
+  </ul>
+
+</div>
+
 </div>
 
 <!-- *********************************************************************** -->
@@ -220,7 +264,40 @@ Release Notes</a>.</h1>
    a lot of other language and tools projects.  This section lists some of the
    projects that have already been updated to work with LLVM 3.1.</p>
 
-  ... to be filled in right before the release ...
+<h3>Glasgow Haskell Compiler (GHC)</h3>
+
+<div>
+
+<p>GHC is an open source compiler and programming suite for Haskell, a lazy
+   functional programming language. It includes an optimizing static compiler
+   generating good code for a variety of platforms, together with an interactive
+   system for convenient, quick development.</p>
+
+<p>GHC 7.0 and onwards include an LLVM code generator, supporting LLVM 2.8 and
+   later.</p>
+
+</div>
+
+<h3>Pure</h3>
+
+<div>
+
+<p><a href="http://pure-lang.googlecode.com/">Pure</a> is an
+   algebraic/functional programming language based on term rewriting. Programs
+   are collections of equations which are used to evaluate expressions in a
+   symbolic fashion. The interpreter uses LLVM as a backend to JIT-compile Pure
+   programs to fast native code. Pure offers dynamic typing, eager and lazy
+   evaluation, lexical closures, a hygienic macro system (also based on term
+   rewriting), built-in list and matrix support (including list and matrix
+   comprehensions) and an easy-to-use interface to C and other programming
+   languages (including the ability to load LLVM bitcode modules, and inline C,
+   C++, Fortran and Faust code in Pure programs if the corresponding
+   LLVM-enabled compilers are installed).</p>
+
+<p>Pure version 0.54 has been tested and is known to work with LLVM 3.1 (and
+   continues to work with older LLVM releases >= 2.5).</p>
+
+</div>
 
 </div>
 
@@ -269,6 +346,8 @@ Release Notes</a>.</h1>
       Support to model instruction bundling / packing.</li>
   <li><a href="#armintegratedassembler">ARM Integrated Assembler</a>,
       A full featured assembler and direct-to-object support for ARM.</li>
+  <li><a href="#blockplacement">Basic Block Placement</a>
+      Probability driven basic block placement.</li>
   <li>....</li>
 </ul>
 
@@ -290,6 +369,11 @@ Release Notes</a>.</h1>
     <li>IR support for vectors of pointers, including vector GEPs.</li>
     <li>Module flags have been introduced. They convey information about the
         module as a whole to LLVM subsystems.</li>
+    <li>Loads can now have range metadata attached to them to describe the
+        possible values being loaded.</li>
+    <li>Inline cost heuristics have been completely overhauled and now closely
+        model constant propagation through call sites, disregard trivially dead
+        code costs, and can model C++ STL iterator patterns.</li>
     <li>....</li>
   </ul>
 </div>
@@ -306,6 +390,14 @@ Release Notes</a>.</h1>
    optimizers:</p>
 
 <ul>
+  <li>The loop unroll pass now is able to unroll loops with run-time trip counts.
+      This feature is turned off by default, and is enabled with the
+      <code>-unroll-runtime</code> flag.</li>
+  <li>A new basic-block autovectorization pass is available. Pass
+      <code>-vectorize</code> to run this pass along with some associated
+      post-vectorization cleanup passes. For more information, see the EuroLLVM
+      2012 slides: <a href="http://llvm.org/devmtg/2012-04-12/Slides/Hal_Finkel.pdf">
+      Autovectorization with LLVM</a>.</li>
   <li>....</li>
 </ul>
 
@@ -365,6 +457,25 @@ Release Notes</a>.</h1>
       is clobbered.</li>
 </ul>
 
+<p> We added new TableGen infrastructure to support bundling for
+    Very Long Instruction Word (VLIW) architectures. TableGen can now
+    automatically generate a deterministic finite automaton from a VLIW
+    target's schedule description which can be queried to determine
+    legal groupings of instructions in a bundle.</p>
+
+<p> We have added a new target independent VLIW packetizer based on the
+    DFA infrastructure to group machine instructions into bundles.</p>
+
+</div>
+
+<h4>
+<a name="blockplacement">Basic Block Placement</a>
+</h4>
+<div>
+<p>A probability based block placement and code layout algorithm was added to
+LLVM's code generator. This layout pass supports probabilities derived from
+static heuristics as well as source code annotations such as
+<code>__builtin_expect</code>.</p>
 </div>
 
 <!--=========================================================================-->
@@ -382,6 +493,8 @@ Release Notes</a>.</h1>
   <li>Call instructions use the new register mask operands for faster compile
   times and better support for different calling conventions.  The old WINCALL
   instructions are no longer needed.</li>
+  <li>DW2 Exception Handling is enabled on Cygwin and MinGW.</li>
+  <li>Support for implicit TLS model used with MS VC runtime</li>
 </ul>
 
 </div>
@@ -401,7 +514,6 @@ Release Notes</a>.</h1>
   <li>On Darwin, the ARM target now has a full-featured integrated assembler.
   </li>
 </ul>
-</div>
 
 <h4>
 <a name="armintegratedassembler">ARM Integrated Assembler</a>
@@ -418,6 +530,8 @@ subtarget and CPU specific extensions for VFP2, VFP3 and NEON.</p>
 <p>The assembler is Unified Syntax only (see ARM Architecural Reference Manual
 for details). While there is some, and growing, support for pre-unfied (divided)
 syntax, there are still significant gaps in that support.</p>
+</div>
+
 </div>
 <!--=========================================================================-->
 <h3>
@@ -440,6 +554,8 @@ syntax, there are still significant gaps in that support.</p>
 </h3>
 
 <div>
+
+<p>Support for Qualcomm's Hexagon VLIW processor has been added.</p>
 
 <ul>
   <li>....</li>
@@ -467,6 +583,9 @@ syntax, there are still significant gaps in that support.</p>
   <li>The <tt>unwind</tt> instruction is now gone. With the introduction of the
       new exception handling system in LLVM 3.0, the <tt>unwind</tt> instruction
       became obsolete.</li>
+  <li>LLVM 3.0 and earlier automatically added the returns_twice fo functions
+      like setjmp based on the name. This functionality was removed in 3.1.
+      This affects Clang users, if -ffreestanding is used.</li>
   <li>....</li>
 </ul>
 
@@ -483,10 +602,41 @@ syntax, there are still significant gaps in that support.</p>
    LLVM API changes are:</p>
 
 <ul>
+  <li>Target specific options have been moved from global variables to members
+      on the new <code>TargetOptions</code> class, which is local to each
+      <code>TargetMachine</code>. As a consequence, the associated flags will
+      no longer be accepted by <tt>clang -mllvm</tt>. This includes:
+<ul>
+<li><code>llvm::PrintMachineCode</code></li>
+<li><code>llvm::NoFramePointerElim</code></li>
+<li><code>llvm::NoFramePointerElimNonLeaf</code></li>
+<li><code>llvm::DisableFramePointerElim(const MachineFunction &)</code></li>
+<li><code>llvm::LessPreciseFPMADOption</code></li>
+<li><code>llvm::LessPrecideFPMAD()</code></li>
+<li><code>llvm::NoExcessFPPrecision</code></li>
+<li><code>llvm::UnsafeFPMath</code></li>
+<li><code>llvm::NoInfsFPMath</code></li>
+<li><code>llvm::NoNaNsFPMath</code></li>
+<li><code>llvm::HonorSignDependentRoundingFPMathOption</code></li>
+<li><code>llvm::HonorSignDependentRoundingFPMath()</code></li>
+<li><code>llvm::UseSoftFloat</code></li>
+<li><code>llvm::FloatABIType</code></li>
+<li><code>llvm::NoZerosInBSS</code></li>
+<li><code>llvm::JITExceptionHandling</code></li>
+<li><code>llvm::JITEmitDebugInfo</code></li>
+<li><code>llvm::JITEmitDebugInfoToDisk</code></li>
+<li><code>llvm::GuaranteedTailCallOpt</code></li>
+<li><code>llvm::StackAlignmentOverride</code></li>
+<li><code>llvm::RealignStack</code></li>
+<li><code>llvm::DisableJumpTables</code></li>
+<li><code>llvm::EnableFastISel</code></li>
+<li><code>llvm::getTrapFunctionName()</code></li>
+<li><code>llvm::EnableSegmentedStacks</code></li>
+</ul></li>
+  <li>The MDBuilder class has been added to simplify the creation of
+      metadata.</li>
   <li>....</li>
 </ul>
-
-</div>
 
 </div>
 
@@ -504,12 +654,37 @@ syntax, there are still significant gaps in that support.</p>
 <ul>
   <li>llvm-stress is a command line tool for generating random .ll files to fuzz
       different LLVM components. </li>
+  <li>llvm-ld has been removed.  Use llvm-link or Clang instead.</li>
   <li>....</li>
 </ul>
 
 <ul>
   <li>....</li>
 </ul>
+
+</div>
+
+
+<!--=========================================================================-->
+<h3>
+<a name="python">Python Bindings</a>
+</h3>
+
+<div>
+
+<p>Officially supported Python bindings have been added! Feature support is far
+from complete. The current bindings support interfaces to:</p>
+<ul>
+  <li>Object File Interface</li>
+  <li>Disassembler</li>
+</ul>
+
+<p>Using the Object File Interface, it is possible to inspect binary object files.
+Think of it as a Python version of readelf or llvm-objdump.</p>
+
+<p>Support for additional features is currently being developed by community
+contributors. If you are interested in shaping the direction of the Python
+bindings, please express your intent on IRC or the developers list.</p>
 
 </div>
 

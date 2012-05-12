@@ -18,11 +18,11 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
-#define GET_INSTRUCTION_NAME
 #include "ARMGenAsmWriter.inc"
 
 /// translateShiftImm - Convert shift immediate from 0-31 to 1-32 for printing.
@@ -36,15 +36,12 @@ static unsigned translateShiftImm(unsigned imm) {
 
 
 ARMInstPrinter::ARMInstPrinter(const MCAsmInfo &MAI,
+                               const MCInstrInfo &MII,
                                const MCRegisterInfo &MRI,
                                const MCSubtargetInfo &STI) :
-  MCInstPrinter(MAI, MRI) {
+  MCInstPrinter(MAI, MII, MRI) {
   // Initialize the set of available features.
   setAvailableFeatures(STI.getFeatureBits());
-}
-
-StringRef ARMInstPrinter::getOpcodeName(unsigned Opcode) const {
-  return getInstructionName(Opcode);
 }
 
 void ARMInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
@@ -212,12 +209,12 @@ void ARMInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   } else {
     assert(Op.isExpr() && "unknown operand kind in printOperand");
     // If a symbolic branch target was added as a constant expression then print
-    // that address in hex.
+    // that address in hex. And only print 32 unsigned bits for the address.
     const MCConstantExpr *BranchTarget = dyn_cast<MCConstantExpr>(Op.getExpr());
     int64_t Address;
     if (BranchTarget && BranchTarget->EvaluateAsAbsolute(Address)) {
       O << "0x";
-      O.write_hex(Address);
+      O.write_hex((uint32_t)Address);
     }
     else {
       // Otherwise, just print the expression.
@@ -429,9 +426,13 @@ void ARMInstPrinter::printAM3PreOrOffsetIndexOp(const MCInst *MI, unsigned Op,
     return;
   }
 
-  if (unsigned ImmOffs = ARM_AM::getAM3Offset(MO3.getImm()))
+  //If the op is sub we have to print the immediate even if it is 0 
+  unsigned ImmOffs = ARM_AM::getAM3Offset(MO3.getImm());
+  ARM_AM::AddrOpc op = ARM_AM::getAM3Op(MO3.getImm());
+ 
+  if (ImmOffs || (op == ARM_AM::sub))
     O << ", #"
-      << ARM_AM::getAddrOpcStr(ARM_AM::getAM3Op(MO3.getImm()))
+      << ARM_AM::getAddrOpcStr(op)
       << ImmOffs;
   O << ']';
 }
@@ -757,7 +758,8 @@ void ARMInstPrinter::printThumbITMask(const MCInst *MI, unsigned OpNum,
                                       raw_ostream &O) {
   // (3 - the number of trailing zeros) is the number of then / else.
   unsigned Mask = MI->getOperand(OpNum).getImm();
-  unsigned CondBit0 = Mask >> 4 & 1;
+  unsigned Firstcond = MI->getOperand(OpNum-1).getImm();
+  unsigned CondBit0 = Firstcond & 1;
   unsigned NumTZ = CountTrailingZeros_32(Mask);
   assert(NumTZ <= 3 && "Invalid IT mask!");
   for (unsigned Pos = 3, e = NumTZ; Pos > e; --Pos) {
@@ -1026,19 +1028,19 @@ void ARMInstPrinter::printVectorListOne(const MCInst *MI, unsigned OpNum,
 }
 
 void ARMInstPrinter::printVectorListTwo(const MCInst *MI, unsigned OpNum,
-                                        raw_ostream &O) {
-  // Normally, it's not safe to use register enum values directly with
-  // addition to get the next register, but for VFP registers, the
-  // sort order is guaranteed because they're all of the form D<n>.
-  O << "{" << getRegisterName(MI->getOperand(OpNum).getReg()) << ", "
-    << getRegisterName(MI->getOperand(OpNum).getReg() + 1) << "}";
-}
-
-void ARMInstPrinter::printVectorListDPair(const MCInst *MI, unsigned OpNum,
                                           raw_ostream &O) {
   unsigned Reg = MI->getOperand(OpNum).getReg();
   unsigned Reg0 = MRI.getSubReg(Reg, ARM::dsub_0);
   unsigned Reg1 = MRI.getSubReg(Reg, ARM::dsub_1);
+  O << "{" << getRegisterName(Reg0) << ", " << getRegisterName(Reg1) << "}";
+}
+
+void ARMInstPrinter::printVectorListTwoSpaced(const MCInst *MI,
+                                              unsigned OpNum,
+                                              raw_ostream &O) {
+  unsigned Reg = MI->getOperand(OpNum).getReg();
+  unsigned Reg0 = MRI.getSubReg(Reg, ARM::dsub_0);
+  unsigned Reg1 = MRI.getSubReg(Reg, ARM::dsub_2);
   O << "{" << getRegisterName(Reg0) << ", " << getRegisterName(Reg1) << "}";
 }
 
@@ -1072,11 +1074,10 @@ void ARMInstPrinter::printVectorListOneAllLanes(const MCInst *MI,
 void ARMInstPrinter::printVectorListTwoAllLanes(const MCInst *MI,
                                                 unsigned OpNum,
                                                 raw_ostream &O) {
-  // Normally, it's not safe to use register enum values directly with
-  // addition to get the next register, but for VFP registers, the
-  // sort order is guaranteed because they're all of the form D<n>.
-  O << "{" << getRegisterName(MI->getOperand(OpNum).getReg()) << "[], "
-    << getRegisterName(MI->getOperand(OpNum).getReg() + 1) << "[]}";
+  unsigned Reg = MI->getOperand(OpNum).getReg();
+  unsigned Reg0 = MRI.getSubReg(Reg, ARM::dsub_0);
+  unsigned Reg1 = MRI.getSubReg(Reg, ARM::dsub_1);
+  O << "{" << getRegisterName(Reg0) << "[], " << getRegisterName(Reg1) << "[]}";
 }
 
 void ARMInstPrinter::printVectorListThreeAllLanes(const MCInst *MI,
@@ -1102,23 +1103,13 @@ void ARMInstPrinter::printVectorListFourAllLanes(const MCInst *MI,
     << getRegisterName(MI->getOperand(OpNum).getReg() + 3) << "[]}";
 }
 
-void ARMInstPrinter::printVectorListTwoSpaced(const MCInst *MI, unsigned OpNum,
-                                              raw_ostream &O) {
-  // Normally, it's not safe to use register enum values directly with
-  // addition to get the next register, but for VFP registers, the
-  // sort order is guaranteed because they're all of the form D<n>.
-  O << "{" << getRegisterName(MI->getOperand(OpNum).getReg()) << ", "
-    << getRegisterName(MI->getOperand(OpNum).getReg() + 2) << "}";
-}
-
 void ARMInstPrinter::printVectorListTwoSpacedAllLanes(const MCInst *MI,
                                                       unsigned OpNum,
                                                       raw_ostream &O) {
-  // Normally, it's not safe to use register enum values directly with
-  // addition to get the next register, but for VFP registers, the
-  // sort order is guaranteed because they're all of the form D<n>.
-  O << "{" << getRegisterName(MI->getOperand(OpNum).getReg()) << "[], "
-    << getRegisterName(MI->getOperand(OpNum).getReg() + 2) << "[]}";
+  unsigned Reg = MI->getOperand(OpNum).getReg();
+  unsigned Reg0 = MRI.getSubReg(Reg, ARM::dsub_0);
+  unsigned Reg1 = MRI.getSubReg(Reg, ARM::dsub_2);
+  O << "{" << getRegisterName(Reg0) << "[], " << getRegisterName(Reg1) << "[]}";
 }
 
 void ARMInstPrinter::printVectorListThreeSpacedAllLanes(const MCInst *MI,

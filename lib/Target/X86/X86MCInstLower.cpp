@@ -12,10 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "InstPrinter/X86ATTInstPrinter.h"
 #include "X86MCInstLower.h"
 #include "X86AsmPrinter.h"
 #include "X86COFFMachineModuleInfo.h"
+#include "InstPrinter/X86ATTInstPrinter.h"
+#include "llvm/Type.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -26,7 +27,6 @@
 #include "llvm/Target/Mangler.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Type.h"
 using namespace llvm;
 
 X86MCInstLower::X86MCInstLower(Mangler *mang, const MachineFunction &mf,
@@ -160,6 +160,7 @@ MCOperand X86MCInstLower::LowerSymbolOperand(const MachineOperand &MO,
   case X86II::MO_INDNTPOFF: RefKind = MCSymbolRefExpr::VK_INDNTPOFF; break;
   case X86II::MO_TPOFF:     RefKind = MCSymbolRefExpr::VK_TPOFF; break;
   case X86II::MO_NTPOFF:    RefKind = MCSymbolRefExpr::VK_NTPOFF; break;
+  case X86II::MO_GOTNTPOFF: RefKind = MCSymbolRefExpr::VK_GOTNTPOFF; break;
   case X86II::MO_GOTPCREL:  RefKind = MCSymbolRefExpr::VK_GOTPCREL; break;
   case X86II::MO_GOT:       RefKind = MCSymbolRefExpr::VK_GOT; break;
   case X86II::MO_GOTOFF:    RefKind = MCSymbolRefExpr::VK_GOTOFF; break;

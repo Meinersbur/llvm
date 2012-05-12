@@ -15,6 +15,7 @@
 #ifndef ARMISELLOWERING_H
 #define ARMISELLOWERING_H
 
+#include "ARM.h"
 #include "ARMSubtarget.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -314,7 +315,6 @@ namespace llvm {
                                             SelectionDAG &DAG) const;
 
     virtual void computeMaskedBitsForTargetNode(const SDValue Op,
-                                                const APInt &Mask,
                                                 APInt &KnownZero,
                                                 APInt &KnownOne,
                                                 const SelectionDAG &DAG,
@@ -422,7 +422,8 @@ namespace llvm {
     SDValue LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
                                             SelectionDAG &DAG) const;
     SDValue LowerToTLSExecModels(GlobalAddressSDNode *GA,
-                                   SelectionDAG &DAG) const;
+                                 SelectionDAG &DAG,
+                                 TLSModel::Model model) const;
     SDValue LowerGLOBAL_OFFSET_TABLE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBR_JT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
@@ -434,6 +435,8 @@ namespace llvm {
     SDValue LowerShiftRightParts(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerShiftLeftParts(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerConstantFP(SDValue Op, SelectionDAG &DAG,
+                            const ARMSubtarget *ST) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
                               const ARMSubtarget *ST) const;
 
@@ -491,7 +494,7 @@ namespace llvm {
                   const SmallVectorImpl<SDValue> &OutVals,
                   DebugLoc dl, SelectionDAG &DAG) const;
 
-    virtual bool isUsedByReturnOnly(SDNode *N) const;
+    virtual bool isUsedByReturnOnly(SDNode *N, SDValue &Chain) const;
 
     virtual bool mayBeEmittedAsTailCall(CallInst *CI) const;
 

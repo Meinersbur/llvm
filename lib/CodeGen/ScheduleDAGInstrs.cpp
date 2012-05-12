@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "sched-instrs"
-#include "ScheduleDAGInstrs.h"
+#include "RegisterPressure.h"
 #include "llvm/Operator.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
+#include "llvm/CodeGen/ScheduleDAGInstrs.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetInstrInfo.h"
@@ -38,28 +39,13 @@ ScheduleDAGInstrs::ScheduleDAGInstrs(MachineFunction &mf,
                                      bool IsPostRAFlag,
                                      LiveIntervals *lis)
   : ScheduleDAG(mf), MLI(mli), MDT(mdt), MFI(mf.getFrameInfo()),
-    InstrItins(mf.getTarget().getInstrItineraryData()), IsPostRA(IsPostRAFlag),
-    LIS(lis), UnitLatencies(false), LoopRegs(MLI, MDT), FirstDbgValue(0) {
+    InstrItins(mf.getTarget().getInstrItineraryData()), LIS(lis),
+    IsPostRA(IsPostRAFlag), UnitLatencies(false), CanHandleTerminators(false),
+    LoopRegs(MLI, MDT), FirstDbgValue(0) {
   assert((IsPostRA || LIS) && "PreRA scheduling requires LiveIntervals");
   DbgValues.clear();
   assert(!(IsPostRA && MRI.getNumVirtRegs()) &&
          "Virtual registers must be removed prior to PostRA scheduling");
-}
-
-/// Run - perform scheduling.
-///
-void ScheduleDAGInstrs::Run(MachineBasicBlock *bb,
-                            MachineBasicBlock::iterator begin,
-                            MachineBasicBlock::iterator end,
-                            unsigned endcount) {
-  BB = bb;
-  Begin = begin;
-  InsertPosIndex = endcount;
-
-  // Check to see if the scheduler cares about latencies.
-  UnitLatencies = ForceUnitLatencies();
-
-  ScheduleDAG::Run(bb, end);
 }
 
 /// getUnderlyingObjectFromInt - This is the function that does the work of
@@ -141,28 +127,60 @@ static const Value *getUnderlyingObjectForInstr(const MachineInstr *MI,
   return 0;
 }
 
-void ScheduleDAGInstrs::StartBlock(MachineBasicBlock *BB) {
+void ScheduleDAGInstrs::startBlock(MachineBasicBlock *bb) {
+  BB = bb;
   LoopRegs.Deps.clear();
   if (MachineLoop *ML = MLI.getLoopFor(BB))
     if (BB == ML->getLoopLatch())
       LoopRegs.VisitLoop(ML);
 }
 
+void ScheduleDAGInstrs::finishBlock() {
+  // Subclasses should no longer refer to the old block.
+  BB = 0;
+}
+
 /// Initialize the map with the number of registers.
-void ScheduleDAGInstrs::Reg2SUnitsMap::setRegLimit(unsigned Limit) {
+void Reg2SUnitsMap::setRegLimit(unsigned Limit) {
   PhysRegSet.setUniverse(Limit);
   SUnits.resize(Limit);
 }
 
 /// Clear the map without deallocating storage.
-void ScheduleDAGInstrs::Reg2SUnitsMap::clear() {
+void Reg2SUnitsMap::clear() {
   for (const_iterator I = reg_begin(), E = reg_end(); I != E; ++I) {
     SUnits[*I].clear();
   }
   PhysRegSet.clear();
 }
 
-/// AddSchedBarrierDeps - Add dependencies from instructions in the current
+/// Initialize the DAG and common scheduler state for the current scheduling
+/// region. This does not actually create the DAG, only clears it. The
+/// scheduling driver may call BuildSchedGraph multiple times per scheduling
+/// region.
+void ScheduleDAGInstrs::enterRegion(MachineBasicBlock *bb,
+                                    MachineBasicBlock::iterator begin,
+                                    MachineBasicBlock::iterator end,
+                                    unsigned endcount) {
+  assert(bb == BB && "startBlock should set BB");
+  RegionBegin = begin;
+  RegionEnd = end;
+  EndIndex = endcount;
+  MISUnitMap.clear();
+
+  // Check to see if the scheduler cares about latencies.
+  UnitLatencies = forceUnitLatencies();
+
+  ScheduleDAG::clearDAG();
+}
+
+/// Close the current scheduling region. Don't clear any state in case the
+/// driver wants to refer to the previous scheduling region.
+void ScheduleDAGInstrs::exitRegion() {
+  // Nothing to do.
+}
+
+/// addSchedBarrierDeps - Add dependencies from instructions in the current
 /// list of instructions being scheduled to scheduling barrier by adding
 /// the exit SU to the register defs and use list. This is because we want to
 /// make sure instructions which define registers that are either used by
@@ -170,8 +188,8 @@ void ScheduleDAGInstrs::Reg2SUnitsMap::clear() {
 /// especially important when the definition latency of the return value(s)
 /// are too high to be hidden by the branch or when the liveout registers
 /// used by instructions in the fallthrough block.
-void ScheduleDAGInstrs::AddSchedBarrierDeps() {
-  MachineInstr *ExitMI = InsertPos != BB->end() ? &*InsertPos : 0;
+void ScheduleDAGInstrs::addSchedBarrierDeps() {
+  MachineInstr *ExitMI = RegionEnd != BB->end() ? &*RegionEnd : 0;
   ExitSU.setInstr(ExitMI);
   bool AllDepKnown = ExitMI &&
     (ExitMI->isCall() || ExitMI->isBarrier());
@@ -186,19 +204,21 @@ void ScheduleDAGInstrs::AddSchedBarrierDeps() {
 
       if (TRI->isPhysicalRegister(Reg))
         Uses[Reg].push_back(&ExitSU);
-      else
+      else {
         assert(!IsPostRA && "Virtual register encountered after regalloc.");
+        addVRegUseDeps(&ExitSU, i);
+      }
     }
   } else {
     // For others, e.g. fallthrough, conditional branch, assume the exit
     // uses all the registers that are livein to the successor blocks.
-    SmallSet<unsigned, 8> Seen;
+    assert(Uses.empty() && "Uses in set before adding deps?");
     for (MachineBasicBlock::succ_iterator SI = BB->succ_begin(),
            SE = BB->succ_end(); SI != SE; ++SI)
       for (MachineBasicBlock::livein_iterator I = (*SI)->livein_begin(),
              E = (*SI)->livein_end(); I != E; ++I) {
         unsigned Reg = *I;
-        if (Seen.insert(Reg))
+        if (!Uses.contains(Reg))
           Uses[Reg].push_back(&ExitSU);
       }
   }
@@ -246,7 +266,7 @@ void ScheduleDAGInstrs::addPhysRegDataDeps(SUnit *SU,
       // perform its own adjustments.
       const SDep& dep = SDep(SU, SDep::Data, LDataLatency, *Alias);
       if (!UnitLatencies) {
-        ComputeOperandLatency(SU, UseSU, const_cast<SDep &>(dep));
+        computeOperandLatency(SU, UseSU, const_cast<SDep &>(dep));
         ST.adjustSchedDependency(SU, UseSU, const_cast<SDep &>(dep));
       }
       UseSU->addPred(dep);
@@ -393,7 +413,7 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
   // uses. We're conservative for now until we have a way to guarantee the uses
   // are not eliminated sometime during scheduling. The output dependence edge
   // is also useful if output latency exceeds def-use latency.
-  VReg2SUnitMap::iterator DefI = findVRegDef(Reg);
+  VReg2SUnitMap::iterator DefI = VRegDefs.find(Reg);
   if (DefI == VRegDefs.end())
     VRegDefs.insert(VReg2SUnit(Reg, SU));
   else {
@@ -422,6 +442,15 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
   SlotIndex UseIdx = LIS->getInstructionIndex(MI).getRegSlot();
   LiveInterval *LI = &LIS->getInterval(Reg);
   VNInfo *VNI = LI->getVNInfoBefore(UseIdx);
+
+  // Special case: An early-clobber tied operand reads and writes the
+  // register one slot early. e.g. InlineAsm.
+  //
+  // FIXME: Same special case is in shrinkToUses. Hide under an API.
+  if (SlotIndex::isSameInstr(VNI->def, UseIdx)) {
+    UseIdx = VNI->def;
+    VNI = LI->getVNInfoBefore(UseIdx);
+  }
   // VNI will be valid because MachineOperand::readsReg() is checked by caller.
   MachineInstr *Def = LIS->getInstructionFromIndex(VNI->def);
   // Phis and other noninstructions (after coalescing) have a NULL Def.
@@ -436,7 +465,7 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
       if (!UnitLatencies) {
         // Adjust the dependence latency using operand def/use information, then
         // allow the target to perform its own adjustments.
-        ComputeOperandLatency(DefSU, SU, const_cast<SDep &>(dep));
+        computeOperandLatency(DefSU, SU, const_cast<SDep &>(dep));
         const TargetSubtargetInfo &ST = TM.getSubtarget<TargetSubtargetInfo>();
         ST.adjustSchedDependency(DefSU, SU, const_cast<SDep &>(dep));
       }
@@ -445,7 +474,7 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
   }
 
   // Add antidependence to the following def of the vreg it uses.
-  VReg2SUnitMap::iterator DefI = findVRegDef(Reg);
+  VReg2SUnitMap::iterator DefI = VRegDefs.find(Reg);
   if (DefI != VRegDefs.end() && DefI->SU != SU)
     DefI->SU->addPred(SDep(SU, SDep::Anti, 0, Reg));
 }
@@ -455,20 +484,23 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
 ///
 /// Map each real instruction to its SUnit.
 ///
-/// After initSUnits, the SUnits vector is cannot be resized and the scheduler
-/// may hang onto SUnit pointers. We may relax this in the future by using SUnit
-/// IDs instead of pointers.
+/// After initSUnits, the SUnits vector cannot be resized and the scheduler may
+/// hang onto SUnit pointers. We may relax this in the future by using SUnit IDs
+/// instead of pointers.
+///
+/// MachineScheduler relies on initSUnits numbering the nodes by their order in
+/// the original instruction list.
 void ScheduleDAGInstrs::initSUnits() {
   // We'll be allocating one SUnit for each real instruction in the region,
   // which is contained within a basic block.
   SUnits.reserve(BB->size());
 
-  for (MachineBasicBlock::iterator I = Begin; I != InsertPos; ++I) {
+  for (MachineBasicBlock::iterator I = RegionBegin; I != RegionEnd; ++I) {
     MachineInstr *MI = I;
     if (MI->isDebugValue())
       continue;
 
-    SUnit *SU = NewSUnit(MI);
+    SUnit *SU = newSUnit(MI);
     MISUnitMap[MI] = SU;
 
     SU->isCall = MI->isCall();
@@ -478,11 +510,15 @@ void ScheduleDAGInstrs::initSUnits() {
     if (UnitLatencies)
       SU->Latency = 1;
     else
-      ComputeLatency(SU);
+      computeLatency(SU);
   }
 }
 
-void ScheduleDAGInstrs::BuildSchedGraph(AliasAnalysis *AA) {
+/// If RegPressure is non null, compute register pressure as a side effect. The
+/// DAG builder is an efficient place to do it because it already visits
+/// operands.
+void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
+                                        RegPressureTracker *RPTracker) {
   // Create an SUnit for each real instruction.
   initSUnits();
 
@@ -517,11 +553,11 @@ void ScheduleDAGInstrs::BuildSchedGraph(AliasAnalysis *AA) {
 
   // Model data dependencies between instructions being scheduled and the
   // ExitSU.
-  AddSchedBarrierDeps();
+  addSchedBarrierDeps();
 
   // Walk the list of instructions, from bottom moving up.
   MachineInstr *PrevMI = NULL;
-  for (MachineBasicBlock::iterator MII = InsertPos, MIE = Begin;
+  for (MachineBasicBlock::iterator MII = RegionEnd, MIE = RegionBegin;
        MII != MIE; --MII) {
     MachineInstr *MI = prior(MII);
     if (MI && PrevMI) {
@@ -533,8 +569,12 @@ void ScheduleDAGInstrs::BuildSchedGraph(AliasAnalysis *AA) {
       PrevMI = MI;
       continue;
     }
+    if (RPTracker) {
+      RPTracker->recede();
+      assert(RPTracker->getPos() == prior(MII) && "RPTracker can't find MI");
+    }
 
-    assert(!MI->isTerminator() && !MI->isLabel() &&
+    assert((!MI->isTerminator() || CanHandleTerminators) && !MI->isLabel() &&
            "Cannot schedule terminators or labels!");
 
     SUnit *SU = MISUnitMap[MI];
@@ -712,14 +752,9 @@ void ScheduleDAGInstrs::BuildSchedGraph(AliasAnalysis *AA) {
   Uses.clear();
   VRegDefs.clear();
   PendingLoads.clear();
-  MISUnitMap.clear();
 }
 
-void ScheduleDAGInstrs::FinishBlock() {
-  // Nothing to do.
-}
-
-void ScheduleDAGInstrs::ComputeLatency(SUnit *SU) {
+void ScheduleDAGInstrs::computeLatency(SUnit *SU) {
   // Compute the latency for the node.
   if (!InstrItins || InstrItins->isEmpty()) {
     SU->Latency = 1;
@@ -733,7 +768,7 @@ void ScheduleDAGInstrs::ComputeLatency(SUnit *SU) {
   }
 }
 
-void ScheduleDAGInstrs::ComputeOperandLatency(SUnit *Def, SUnit *Use,
+void ScheduleDAGInstrs::computeOperandLatency(SUnit *Def, SUnit *Use,
                                               SDep& dep) const {
   if (!InstrItins || InstrItins->isEmpty())
     return;
@@ -808,37 +843,8 @@ std::string ScheduleDAGInstrs::getGraphNodeLabel(const SUnit *SU) const {
   return oss.str();
 }
 
-// EmitSchedule - Emit the machine code in scheduled order.
-MachineBasicBlock *ScheduleDAGInstrs::EmitSchedule() {
-  Begin = InsertPos;
-
-  // If first instruction was a DBG_VALUE then put it back.
-  if (FirstDbgValue)
-    BB->splice(InsertPos, BB, FirstDbgValue);
-
-  // Then re-insert them according to the given schedule.
-  for (unsigned i = 0, e = Sequence.size(); i != e; i++) {
-    if (SUnit *SU = Sequence[i])
-      BB->splice(InsertPos, BB, SU->getInstr());
-    else
-      // Null SUnit* is a noop.
-      EmitNoop();
-
-    // Update the Begin iterator, as the first instruction in the block
-    // may have been scheduled later.
-    if (i == 0)
-      Begin = prior(InsertPos);
-  }
-
-  // Reinsert any remaining debug_values.
-  for (std::vector<std::pair<MachineInstr *, MachineInstr *> >::iterator
-         DI = DbgValues.end(), DE = DbgValues.begin(); DI != DE; --DI) {
-    std::pair<MachineInstr *, MachineInstr *> P = *prior(DI);
-    MachineInstr *DbgValue = P.first;
-    MachineBasicBlock::iterator OrigPrivMI = P.second;
-    BB->splice(++OrigPrivMI, BB, DbgValue);
-  }
-  DbgValues.clear();
-  FirstDbgValue = NULL;
-  return BB;
+/// Return the basic block label. It is not necessarilly unique because a block
+/// contains multiple scheduling regions. But it is fine for visualization.
+std::string ScheduleDAGInstrs::getDAGName() const {
+  return "dag." + BB->getFullName();
 }

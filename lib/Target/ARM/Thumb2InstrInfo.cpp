@@ -15,12 +15,10 @@
 #include "ARM.h"
 #include "ARMConstantPoolValue.h"
 #include "ARMMachineFunctionInfo.h"
-#include "Thumb2InstrInfo.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -60,7 +58,7 @@ Thumb2InstrInfo::ReplaceTailWithBranchTo(MachineBasicBlock::iterator Tail,
   // If the first instruction of Tail is predicated, we may have to update
   // the IT instruction.
   unsigned PredReg = 0;
-  ARMCC::CondCodes CC = llvm::getInstrPredicate(Tail, PredReg);
+  ARMCC::CondCodes CC = getInstrPredicate(Tail, PredReg);
   MachineBasicBlock::iterator MBBI = Tail;
   if (CC != ARMCC::AL)
     // Expecting at least the t2IT instruction before it.
@@ -108,7 +106,7 @@ Thumb2InstrInfo::isLegalToSplitMBBAt(MachineBasicBlock &MBB,
   }
 
   unsigned PredReg = 0;
-  return llvm::getITInstrPredicate(MBBI, PredReg) == ARMCC::AL;
+  return getITInstrPredicate(MBBI, PredReg) == ARMCC::AL;
 }
 
 void Thumb2InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
@@ -128,9 +126,9 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                     unsigned SrcReg, bool isKill, int FI,
                     const TargetRegisterClass *RC,
                     const TargetRegisterInfo *TRI) const {
-  if (RC == ARM::GPRRegisterClass   || RC == ARM::tGPRRegisterClass ||
-      RC == ARM::tcGPRRegisterClass || RC == ARM::rGPRRegisterClass ||
-      RC == ARM::GPRnopcRegisterClass) {
+  if (RC == &ARM::GPRRegClass   || RC == &ARM::tGPRRegClass ||
+      RC == &ARM::tcGPRRegClass || RC == &ARM::rGPRRegClass ||
+      RC == &ARM::GPRnopcRegClass) {
     DebugLoc DL;
     if (I != MBB.end()) DL = I->getDebugLoc();
 
@@ -155,9 +153,9 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                      unsigned DestReg, int FI,
                      const TargetRegisterClass *RC,
                      const TargetRegisterInfo *TRI) const {
-  if (RC == ARM::GPRRegisterClass   || RC == ARM::tGPRRegisterClass ||
-      RC == ARM::tcGPRRegisterClass || RC == ARM::rGPRRegisterClass ||
-      RC == ARM::GPRnopcRegisterClass) {
+  if (RC == &ARM::GPRRegClass   || RC == &ARM::tGPRRegClass ||
+      RC == &ARM::tcGPRRegClass || RC == &ARM::rGPRRegClass ||
+      RC == &ARM::GPRnopcRegClass) {
     DebugLoc DL;
     if (I != MBB.end()) DL = I->getDebugLoc();
 
@@ -575,7 +573,7 @@ Thumb2InstrInfo::scheduleTwoAddrSource(MachineInstr *SrcMI,
     return;
 
   unsigned PredReg = 0;
-  ARMCC::CondCodes CC = llvm::getInstrPredicate(UseMI, PredReg);
+  ARMCC::CondCodes CC = getInstrPredicate(UseMI, PredReg);
   if (CC == ARMCC::AL || PredReg != ARM::CPSR)
     return;
 
@@ -591,7 +589,7 @@ Thumb2InstrInfo::scheduleTwoAddrSource(MachineInstr *SrcMI,
       continue;
 
     MachineInstr *NMI = &*MBBI;
-    ARMCC::CondCodes NCC = llvm::getInstrPredicate(NMI, PredReg);
+    ARMCC::CondCodes NCC = getInstrPredicate(NMI, PredReg);
     if (!(NCC == CC || NCC == OCC) ||
         NMI->modifiesRegister(SrcReg, &TRI) ||
         NMI->modifiesRegister(ARM::CPSR, &TRI))
@@ -612,5 +610,5 @@ llvm::getITInstrPredicate(const MachineInstr *MI, unsigned &PredReg) {
   unsigned Opc = MI->getOpcode();
   if (Opc == ARM::tBcc || Opc == ARM::t2Bcc)
     return ARMCC::AL;
-  return llvm::getInstrPredicate(MI, PredReg);
+  return getInstrPredicate(MI, PredReg);
 }

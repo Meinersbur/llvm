@@ -25,7 +25,6 @@
 #include "llvm/CallingConv.h"
 #include "llvm/InlineAsm.h"
 #include "llvm/Attributes.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
 #include "llvm/Support/DebugLoc.h"
@@ -41,6 +40,7 @@ namespace llvm {
   class FastISel;
   class FunctionLoweringInfo;
   class ImmutableCallSite;
+  class IntrinsicInst;
   class MachineBasicBlock;
   class MachineFunction;
   class MachineInstr;
@@ -63,17 +63,6 @@ namespace llvm {
       VLIW              // Scheduling for VLIW targets.
     };
   }
-
-  // FIXME: should this be here?
-  namespace TLSModel {
-    enum Model {
-      GeneralDynamic,
-      LocalDynamic,
-      InitialExec,
-      LocalExec
-    };
-  }
-  TLSModel::Model getTLSModel(const GlobalValue *GV, Reloc::Model reloc);
 
 
 //===----------------------------------------------------------------------===//
@@ -160,6 +149,12 @@ public:
   /// isJumpExpensive() - Return true if Flow Control is an expensive operation
   /// that should be avoided.
   bool isJumpExpensive() const { return JumpIsExpensive; }
+
+  /// isPredictableSelectExpensive - Return true if selects are only cheaper
+  /// than branches if the branch is unlikely to be predicted right.
+  bool isPredictableSelectExpensive() const {
+    return predictableSelectIsExpensive;
+  }
 
   /// getSetCCResultType - Return the ValueType of the result of SETCC
   /// operations.  Also used to obtain the target's preferred type for
@@ -873,7 +868,6 @@ public:
   /// Mask are known to be either zero or one and return them in the
   /// KnownZero/KnownOne bitsets.
   virtual void computeMaskedBitsForTargetNode(const SDValue Op,
-                                              const APInt &Mask,
                                               APInt &KnownZero,
                                               APInt &KnownOne,
                                               const SelectionDAG &DAG,
@@ -1286,9 +1280,11 @@ public:
   }
 
   /// isUsedByReturnOnly - Return true if result of the specified node is used
-  /// by a return node only. This is used to determine whether it is possible
+  /// by a return node only. It also compute and return the input chain for the
+  /// tail call.
+  /// This is used to determine whether it is possible
   /// to codegen a libcall as tail call at legalization time.
-  virtual bool isUsedByReturnOnly(SDNode *) const {
+  virtual bool isUsedByReturnOnly(SDNode *, SDValue &Chain) const {
     return false;
   }
 
@@ -1539,6 +1535,17 @@ public:
     AddrMode() : BaseGV(0), BaseOffs(0), HasBaseReg(false), Scale(0) {}
   };
 
+  /// GetAddrModeArguments - CodeGenPrepare sinks address calculations into the
+  /// same BB as Load/Store instructions reading the address.  This allows as
+  /// much computation as possible to be done in the address mode for that
+  /// operand.  This hook lets targets also pass back when this should be done
+  /// on intrinsics which load/store.
+  virtual bool GetAddrModeArguments(IntrinsicInst *I,
+                                    SmallVectorImpl<Value*> &Ops,
+                                    Type *&AccessTy) const {
+    return false;
+  }
+
   /// isLegalAddressingMode - Return true if the addressing mode represented by
   /// AM is legal for this target, for a load/store of the specified type.
   /// The type may be VoidTy, in which case only return true if the addressing
@@ -1586,6 +1593,18 @@ public:
   }
 
   virtual bool isZExtFree(EVT /*VT1*/, EVT /*VT2*/) const {
+    return false;
+  }
+
+  /// isFNegFree - Return true if an fneg operation is free to the point where
+  /// it is never worthwhile to replace it with a bitwise operation.
+  virtual bool isFNegFree(EVT) const {
+    return false;
+  }
+
+  /// isFAbsFree - Return true if an fneg operation is free to the point where
+  /// it is never worthwhile to replace it with a bitwise operation.
+  virtual bool isFAbsFree(EVT) const {
     return false;
   }
 
@@ -2015,14 +2034,14 @@ protected:
   /// optimization.
   bool benefitFromCodePlacementOpt;
 
+  /// predictableSelectIsExpensive - Tells the code generator that select is
+  /// more expensive than a branch if the branch is usually predicted right.
+  bool predictableSelectIsExpensive;
+
 private:
   /// isLegalRC - Return true if the value types that can be represented by the
   /// specified register class are all legal.
   bool isLegalRC(const TargetRegisterClass *RC) const;
-
-  /// hasLegalSuperRegRegClasses - Return true if the specified register class
-  /// has one or more super-reg register classes that are legal.
-  bool hasLegalSuperRegRegClasses(const TargetRegisterClass *RC) const;
 };
 
 /// GetReturnInfo - Given an LLVM IR type and return type attributes,

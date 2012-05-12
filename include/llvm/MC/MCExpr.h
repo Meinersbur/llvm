@@ -15,7 +15,6 @@
 #include "llvm/Support/DataTypes.h"
 
 namespace llvm {
-class MCAsmInfo;
 class MCAsmLayout;
 class MCAssembler;
 class MCContext;
@@ -195,7 +194,7 @@ public:
     VK_Mips_GPOFF_LO,
     VK_Mips_GOT_DISP,
     VK_Mips_GOT_PAGE,
-    VK_Mips_GOT_OFST 
+    VK_Mips_GOT_OFST
   };
 
 private:

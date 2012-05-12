@@ -19,6 +19,9 @@
 #include "llvm/Support/Endian.h"
 
 namespace llvm {
+  template <typename T>
+  class ArrayRef;
+
 namespace object {
 
 struct coff_file_header {
@@ -123,6 +126,10 @@ protected:
   virtual error_code isSectionText(DataRefImpl Sec, bool &Res) const;
   virtual error_code isSectionData(DataRefImpl Sec, bool &Res) const;
   virtual error_code isSectionBSS(DataRefImpl Sec, bool &Res) const;
+  virtual error_code isSectionVirtual(DataRefImpl Sec, bool &Res) const;
+  virtual error_code isSectionZeroInit(DataRefImpl Sec, bool &Res) const;
+  virtual error_code isSectionRequiredForExecution(DataRefImpl Sec,
+                                                   bool &Res) const;
   virtual error_code sectionContainsSymbol(DataRefImpl Sec, DataRefImpl Symb,
                                            bool &Result) const;
   virtual relocation_iterator getSectionRelBegin(DataRefImpl Sec) const;
@@ -177,9 +184,12 @@ public:
     return ec;
   }
   error_code getSymbolName(const coff_symbol *symbol, StringRef &Res) const;
+  error_code getSectionName(const coff_section *Sec, StringRef &Res) const;
+  error_code getSectionContents(const coff_section *Sec,
+                                ArrayRef<uint8_t> &Res) const;
 
   static inline bool classof(const Binary *v) {
-    return v->getType() == isCOFF;
+    return v->isCOFF();
   }
   static inline bool classof(const COFFObjectFile *v) { return true; }
 };

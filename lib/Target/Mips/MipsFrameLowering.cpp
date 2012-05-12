@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MipsAnalyzeImmediate.h"
 #include "MipsFrameLowering.h"
+#include "MipsAnalyzeImmediate.h"
 #include "MipsInstrInfo.h"
 #include "MipsMachineFunction.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
@@ -108,9 +108,6 @@ static void expandLargeImm(unsigned Reg, int64_t Imm, bool IsN64,
     AnalyzeImm.Analyze(Imm, IsN64 ? 64 : 32, false /* LastInstrIsADDiu */);
   MipsAnalyzeImmediate::InstSeq::const_iterator Inst = Seq.begin();
 
-  // FIXME: change this when mips goes MC".
-  BuildMI(MBB, II, DL, TII.get(Mips::NOAT));
-
   // The first instruction can be a LUi, which is different from other
   // instructions (ADDiu, ORI and SLL) in that it does not have a register
   // operand.
@@ -127,7 +124,6 @@ static void expandLargeImm(unsigned Reg, int64_t Imm, bool IsN64,
       .addImm(SignExtend64<16>(Inst->ImmOpnd));
 
   BuildMI(MBB, II, DL, TII.get(ADDu), Reg).addReg(Reg).addReg(ATReg);
-  BuildMI(MBB, II, DL, TII.get(Mips::ATMACRO));
 }
 
 void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
@@ -140,7 +136,6 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
     *static_cast<const MipsInstrInfo*>(MF.getTarget().getInstrInfo());
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
-  bool isPIC = (MF.getTarget().getRelocationModel() == Reloc::PIC_);
   unsigned SP = STI.isABI_N64() ? Mips::SP_64 : Mips::SP;
   unsigned FP = STI.isABI_N64() ? Mips::FP_64 : Mips::FP;
   unsigned ZERO = STI.isABI_N64() ? Mips::ZERO_64 : Mips::ZERO;
@@ -148,30 +143,13 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
   unsigned ADDiu = STI.isABI_N64() ? Mips::DADDiu : Mips::ADDiu;
 
   // First, compute final stack size.
-  unsigned RegSize = STI.isGP32bit() ? 4 : 8;
   unsigned StackAlign = getStackAlignment();
-  unsigned LocalVarAreaOffset = MipsFI->needGPSaveRestore() ?
-    (MFI->getObjectOffset(MipsFI->getGPFI()) + RegSize) :
-    MipsFI->getMaxCallFrameSize();
-  uint64_t StackSize =  RoundUpToAlignment(LocalVarAreaOffset, StackAlign) +
-     RoundUpToAlignment(MFI->getStackSize(), StackAlign);
+  uint64_t StackSize =
+    RoundUpToAlignment(MipsFI->getMaxCallFrameSize(), StackAlign) +
+    RoundUpToAlignment(MFI->getStackSize(), StackAlign);
 
    // Update stack size
   MFI->setStackSize(StackSize);
-
-  BuildMI(MBB, MBBI, dl, TII.get(Mips::NOREORDER));
-  BuildMI(MBB, MBBI, dl, TII.get(Mips::NOMACRO));
-
-  // Emit instructions that set the global base register if the target ABI is
-  // O32.
-  if (isPIC && MipsFI->globalBaseRegSet() && STI.isABI_O32()) {
-    if (MipsFI->globalBaseRegFixed())
-      BuildMI(MBB, llvm::prior(MBBI), dl, TII.get(Mips::CPLOAD))
-        .addReg(RegInfo->getPICCallReg());
-    else
-      // See MipsInstrInfo.td for explanation.
-      BuildMI(MBB, MBBI, dl, TII.get(Mips:: SETGP01), Mips::V0);
-  }
 
   // No need to allocate space on the stack.
   if (StackSize == 0 && !MFI->adjustsStack()) return;
@@ -183,8 +161,10 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
   // Adjust stack.
   if (isInt<16>(-StackSize)) // addi sp, sp, (-stacksize)
     BuildMI(MBB, MBBI, dl, TII.get(ADDiu), SP).addReg(SP).addImm(-StackSize);
-  else // Expand immediate that doesn't fit in 16-bit.
+  else { // Expand immediate that doesn't fit in 16-bit.
+    MipsFI->setEmitNOAT();
     expandLargeImm(SP, -StackSize, STI.isABI_N64(), TII, MBB, MBBI, dl);
+  }
 
   // emit ".cfi_def_cfa_offset StackSize"
   MCSymbol *AdjustSPLabel = MMI.getContext().CreateTempSymbol();
@@ -215,7 +195,7 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
 
       // If Reg is a double precision register, emit two cfa_offsets,
       // one for each of the paired single precision registers.
-      if (Mips::AFGR64RegisterClass->contains(Reg)) {
+      if (Mips::AFGR64RegClass.contains(Reg)) {
         const uint16_t *SubRegs = RegInfo->getSubRegisters(Reg);
         MachineLocation DstML0(MachineLocation::VirtualFP, Offset);
         MachineLocation DstML1(MachineLocation::VirtualFP, Offset + 4);
@@ -227,8 +207,7 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
 
         Moves.push_back(MachineMove(CSLabel, DstML0, SrcML0));
         Moves.push_back(MachineMove(CSLabel, DstML1, SrcML1));
-      }
-      else {
+      } else {
         // Reg is either in CPURegs or FGR32.
         DstML = MachineLocation(MachineLocation::VirtualFP, Offset);
         SrcML = MachineLocation(Reg);
@@ -249,17 +228,6 @@ void MipsFrameLowering::emitPrologue(MachineFunction &MF) const {
     DstML = MachineLocation(FP);
     SrcML = MachineLocation(MachineLocation::VirtualFP);
     Moves.push_back(MachineMove(SetFPLabel, DstML, SrcML));
-  }
-
-  // Restore GP from the saved stack location
-  if (MipsFI->needGPSaveRestore()) {
-    unsigned Offset = MFI->getObjectOffset(MipsFI->getGPFI());
-    BuildMI(MBB, MBBI, dl, TII.get(Mips::CPRESTORE)).addImm(Offset);
-
-    if (Offset >= 0x8000) {
-      BuildMI(MBB, llvm::prior(MBBI), dl, TII.get(Mips::MACRO));
-      BuildMI(MBB, MBBI, dl, TII.get(Mips::NOMACRO));
-    }
   }
 }
 

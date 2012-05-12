@@ -15,9 +15,9 @@
 #ifndef XCOREISELLOWERING_H
 #define XCOREISELLOWERING_H
 
+#include "XCore.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Target/TargetLowering.h"
-#include "XCore.h"
 
 namespace llvm {
 
@@ -160,7 +160,6 @@ namespace llvm {
     virtual SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
     virtual void computeMaskedBitsForTargetNode(const SDValue Op,
-                                                const APInt &Mask,
                                                 APInt &KnownZero,
                                                 APInt &KnownOne,
                                                 const SelectionDAG &DAG,

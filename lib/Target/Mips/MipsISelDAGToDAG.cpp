@@ -99,6 +99,8 @@ private:
     return CurDAG->getTargetConstant(Imm, Node->getValueType(0));
   }
 
+  void ProcessFunctionAfterISel(MachineFunction &MF);
+  bool ReplaceUsesWithZeroReg(MachineRegisterInfo *MRI, const MachineInstr&);
   void InitGlobalBaseReg(MachineFunction &MF);
 
   virtual bool SelectInlineAsmMemoryOperand(const SDValue &Op,
@@ -124,22 +126,17 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
   unsigned V0, V1, GlobalBaseReg = MipsFI->getGlobalBaseReg();
-  bool FixGlobalBaseReg = MipsFI->globalBaseRegFixed();
 
-  if (Subtarget.isABI_O32() && FixGlobalBaseReg)
-    // $gp is the global base register.
-    V0 = V1 = GlobalBaseReg;
-  else {
-    const TargetRegisterClass *RC;
-    RC = Subtarget.isABI_N64() ?
-         Mips::CPU64RegsRegisterClass : Mips::CPURegsRegisterClass;
+  const TargetRegisterClass *RC = Subtarget.isABI_N64() ?
+    (const TargetRegisterClass*)&Mips::CPU64RegsRegClass :
+    (const TargetRegisterClass*)&Mips::CPURegsRegClass;
 
-    V0 = RegInfo.createVirtualRegister(RC);
-    V1 = RegInfo.createVirtualRegister(RC);
-  }
+  V0 = RegInfo.createVirtualRegister(RC);
+  V1 = RegInfo.createVirtualRegister(RC);
 
   if (Subtarget.isABI_N64()) {
     MF.getRegInfo().addLiveIn(Mips::T9_64);
+    MBB.addLiveIn(Mips::T9_64);
 
     // lui $v0, %hi(%neg(%gp_rel(fname)))
     // daddu $v1, $v0, $t9
@@ -150,7 +147,10 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
     BuildMI(MBB, I, DL, TII.get(Mips::DADDu), V1).addReg(V0).addReg(Mips::T9_64);
     BuildMI(MBB, I, DL, TII.get(Mips::DADDiu), GlobalBaseReg).addReg(V1)
       .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_LO);
-  } else if (MF.getTarget().getRelocationModel() == Reloc::Static) {
+    return;
+  }
+
+  if (MF.getTarget().getRelocationModel() == Reloc::Static) {
     // Set global register to __gnu_local_gp.
     //
     // lui   $v0, %hi(__gnu_local_gp)
@@ -159,32 +159,102 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
       .addExternalSymbol("__gnu_local_gp", MipsII::MO_ABS_HI);
     BuildMI(MBB, I, DL, TII.get(Mips::ADDiu), GlobalBaseReg).addReg(V0)
       .addExternalSymbol("__gnu_local_gp", MipsII::MO_ABS_LO);
-  } else {
-    MF.getRegInfo().addLiveIn(Mips::T9);
-
-    if (Subtarget.isABI_N32()) {
-      // lui $v0, %hi(%neg(%gp_rel(fname)))
-      // addu $v1, $v0, $t9
-      // addiu $globalbasereg, $v1, %lo(%neg(%gp_rel(fname)))
-      const GlobalValue *FName = MF.getFunction();
-      BuildMI(MBB, I, DL, TII.get(Mips::LUi), V0)
-        .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_HI);
-      BuildMI(MBB, I, DL, TII.get(Mips::ADDu), V1).addReg(V0).addReg(Mips::T9);
-      BuildMI(MBB, I, DL, TII.get(Mips::ADDiu), GlobalBaseReg).addReg(V1)
-        .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_LO);
-    } else if (!MipsFI->globalBaseRegFixed()) {
-      assert(Subtarget.isABI_O32());
-
-      BuildMI(MBB, I, DL, TII.get(Mips::SETGP2), GlobalBaseReg)
-        .addReg(Mips::T9);
-    }
+    return;
   }
+
+  MF.getRegInfo().addLiveIn(Mips::T9);
+  MBB.addLiveIn(Mips::T9);
+
+  if (Subtarget.isABI_N32()) {
+    // lui $v0, %hi(%neg(%gp_rel(fname)))
+    // addu $v1, $v0, $t9
+    // addiu $globalbasereg, $v1, %lo(%neg(%gp_rel(fname)))
+    const GlobalValue *FName = MF.getFunction();
+    BuildMI(MBB, I, DL, TII.get(Mips::LUi), V0)
+      .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_HI);
+    BuildMI(MBB, I, DL, TII.get(Mips::ADDu), V1).addReg(V0).addReg(Mips::T9);
+    BuildMI(MBB, I, DL, TII.get(Mips::ADDiu), GlobalBaseReg).addReg(V1)
+      .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_LO);
+    return;
+  }
+
+  assert(Subtarget.isABI_O32());
+
+  // For O32 ABI, the following instruction sequence is emitted to initialize
+  // the global base register:
+  //
+  //  0. lui   $2, %hi(_gp_disp)
+  //  1. addiu $2, $2, %lo(_gp_disp)
+  //  2. addu  $globalbasereg, $2, $t9
+  //
+  // We emit only the last instruction here.
+  //
+  // GNU linker requires that the first two instructions appear at the beginning
+  // of a funtion and no instructions be inserted before or between them.
+  // The two instructions are emitted during lowering to MC layer in order to
+  // avoid any reordering.
+  //
+  // Register $2 (Mips::V0) is added to the list of live-in registers to ensure
+  // the value instruction 1 (addiu) defines is valid when instruction 2 (addu)
+  // reads it.
+  MF.getRegInfo().addLiveIn(Mips::V0);
+  MBB.addLiveIn(Mips::V0);
+  BuildMI(MBB, I, DL, TII.get(Mips::ADDu), GlobalBaseReg)
+    .addReg(Mips::V0).addReg(Mips::T9);
+}
+
+bool MipsDAGToDAGISel::ReplaceUsesWithZeroReg(MachineRegisterInfo *MRI,
+                                              const MachineInstr& MI) {
+  unsigned DstReg = 0, ZeroReg = 0;
+
+  // Check if MI is "addiu $dst, $zero, 0" or "daddiu $dst, $zero, 0".
+  if ((MI.getOpcode() == Mips::ADDiu) &&
+      (MI.getOperand(1).getReg() == Mips::ZERO) &&
+      (MI.getOperand(2).getImm() == 0)) {
+    DstReg = MI.getOperand(0).getReg();
+    ZeroReg = Mips::ZERO;
+  } else if ((MI.getOpcode() == Mips::DADDiu) &&
+             (MI.getOperand(1).getReg() == Mips::ZERO_64) &&
+             (MI.getOperand(2).getImm() == 0)) {
+    DstReg = MI.getOperand(0).getReg();
+    ZeroReg = Mips::ZERO_64;
+  }
+
+  if (!DstReg)
+    return false;
+
+  // Replace uses with ZeroReg.
+  for (MachineRegisterInfo::use_iterator U = MRI->use_begin(DstReg),
+       E = MRI->use_end(); U != E; ++U) {
+    MachineOperand &MO = U.getOperand();
+    MachineInstr *MI = MO.getParent();
+
+    // Do not replace if it is a phi's operand or is tied to def operand.
+    if (MI->isPHI() || MI->isRegTiedToDefOperand(U.getOperandNo()) ||
+        MI->isPseudo())
+      continue;
+
+    MO.setReg(ZeroReg);
+  }
+
+  return true;
+}
+
+void MipsDAGToDAGISel::ProcessFunctionAfterISel(MachineFunction &MF) {
+  InitGlobalBaseReg(MF);
+
+  MachineRegisterInfo *MRI = &MF.getRegInfo();
+
+  for (MachineFunction::iterator MFI = MF.begin(), MFE = MF.end(); MFI != MFE;
+       ++MFI)
+    for (MachineBasicBlock::iterator I = MFI->begin(); I != MFI->end(); ++I)
+      ReplaceUsesWithZeroReg(MRI, *I);
 }
 
 bool MipsDAGToDAGISel::runOnMachineFunction(MachineFunction &MF) {
   bool Ret = SelectionDAGISel::runOnMachineFunction(MF);
 
-  InitGlobalBaseReg(MF);
+  ProcessFunctionAfterISel(MF);
 
   return Ret;
 }

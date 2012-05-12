@@ -141,10 +141,9 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
       // a sub and fuse this add with it.
       if (LHS->hasOneUse() && (XorRHS->getValue()+1).isPowerOf2()) {
         IntegerType *IT = cast<IntegerType>(I.getType());
-        APInt Mask = APInt::getAllOnesValue(IT->getBitWidth());
         APInt LHSKnownOne(IT->getBitWidth(), 0);
         APInt LHSKnownZero(IT->getBitWidth(), 0);
-        ComputeMaskedBits(XorLHS, Mask, LHSKnownZero, LHSKnownOne);
+        ComputeMaskedBits(XorLHS, LHSKnownZero, LHSKnownOne);
         if ((XorRHS->getValue() | LHSKnownZero).isAllOnesValue())
           return BinaryOperator::CreateSub(ConstantExpr::getAdd(XorRHS, CI),
                                            XorLHS);
@@ -202,14 +201,13 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
 
   // A+B --> A|B iff A and B have no bits set in common.
   if (IntegerType *IT = dyn_cast<IntegerType>(I.getType())) {
-    APInt Mask = APInt::getAllOnesValue(IT->getBitWidth());
     APInt LHSKnownOne(IT->getBitWidth(), 0);
     APInt LHSKnownZero(IT->getBitWidth(), 0);
-    ComputeMaskedBits(LHS, Mask, LHSKnownZero, LHSKnownOne);
+    ComputeMaskedBits(LHS, LHSKnownZero, LHSKnownOne);
     if (LHSKnownZero != 0) {
       APInt RHSKnownOne(IT->getBitWidth(), 0);
       APInt RHSKnownZero(IT->getBitWidth(), 0);
-      ComputeMaskedBits(RHS, Mask, RHSKnownZero, RHSKnownOne);
+      ComputeMaskedBits(RHS, RHSKnownZero, RHSKnownOne);
       
       // No bits in common -> bitwise or.
       if ((LHSKnownZero|RHSKnownZero).isAllOnesValue())
@@ -331,6 +329,20 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
     }
   }
 
+  // Check for (x & y) + (x ^ y)
+  {
+    Value *A = 0, *B = 0;
+    if (match(RHS, m_Xor(m_Value(A), m_Value(B))) &&
+        (match(LHS, m_And(m_Specific(A), m_Specific(B))) ||
+         match(LHS, m_And(m_Specific(B), m_Specific(A)))))
+      return BinaryOperator::CreateOr(A, B);
+
+    if (match(LHS, m_Xor(m_Value(A), m_Value(B))) &&
+        (match(RHS, m_And(m_Specific(A), m_Specific(B))) ||
+         match(RHS, m_And(m_Specific(B), m_Specific(A)))))
+      return BinaryOperator::CreateOr(A, B);
+  }
+
   return Changed ? &I : 0;
 }
 
@@ -411,7 +423,8 @@ Instruction *InstCombiner::visitFAdd(BinaryOperator &I) {
 /// EmitGEPOffset - Given a getelementptr instruction/constantexpr, emit the
 /// code necessary to compute the offset from the base pointer (without adding
 /// in the base pointer).  Return the result as a signed integer of intptr size.
-Value *InstCombiner::EmitGEPOffset(User *GEP) {
+/// If NoNUW is true, then the NUW flag is not used.
+Value *InstCombiner::EmitGEPOffset(User *GEP, bool NoNUW) {
   TargetData &TD = *getTargetData();
   gep_type_iterator GTI = gep_type_begin(GEP);
   Type *IntPtrTy = TD.getIntPtrType(GEP->getContext());
@@ -419,7 +432,7 @@ Value *InstCombiner::EmitGEPOffset(User *GEP) {
 
   // If the GEP is inbounds, we know that none of the addressing operations will
   // overflow in an unsigned sense.
-  bool isInBounds = cast<GEPOperator>(GEP)->isInBounds();
+  bool isInBounds = cast<GEPOperator>(GEP)->isInBounds() && !NoNUW;
   
   // Build a mask for high order bits.
   unsigned IntPtrWidth = TD.getPointerSizeInBits();

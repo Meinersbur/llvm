@@ -18,7 +18,7 @@
 using namespace llvm;
 
 MachineRegisterInfo::MachineRegisterInfo(const TargetRegisterInfo &TRI)
-  : TRI(&TRI), IsSSA(true) {
+  : TRI(&TRI), IsSSA(true), TracksLiveness(true) {
   VRegInfo.reserve(256);
   RegAllocHints.reserve(256);
   UsedPhysRegs.resize(TRI.getNumRegs());
@@ -161,9 +161,8 @@ void MachineRegisterInfo::replaceRegWith(unsigned FromReg, unsigned ToReg) {
 /// form, so there should only be one definition.
 MachineInstr *MachineRegisterInfo::getVRegDef(unsigned Reg) const {
   // Since we are in SSA form, we can use the first definition.
-  if (!def_empty(Reg))
-    return &*def_begin(Reg);
-  return 0;
+  def_iterator I = def_begin(Reg);
+  return !I.atEnd() ? &*I : 0;
 }
 
 bool MachineRegisterInfo::hasOneUse(unsigned RegNo) const {

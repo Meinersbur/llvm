@@ -11,13 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PTX.h"
 #include "PTXTargetMachine.h"
+#include "PTX.h"
 #include "llvm/PassManager.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
 #include "llvm/Assembly/PrintModulePass.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
@@ -26,6 +25,7 @@
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetData.h"
@@ -37,8 +37,6 @@
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/TargetRegistry.h"
 
 
 using namespace llvm;
@@ -132,7 +130,7 @@ TargetPassConfig *PTXTargetMachine::createPassConfig(PassManagerBase &PM) {
 }
 
 bool PTXPassConfig::addInstSelector() {
-  PM.add(createPTXISelDag(getPTXTargetMachine(), getOptLevel()));
+  PM->add(createPTXISelDag(getPTXTargetMachine(), getOptLevel()));
   return false;
 }
 
@@ -147,21 +145,21 @@ void PTXPassConfig::addOptimizedRegAlloc(FunctionPass *RegAllocPass) {
 
 bool PTXPassConfig::addPostRegAlloc() {
   // PTXMFInfoExtract must after register allocation!
-  //PM.add(createPTXMFInfoExtract(getPTXTargetMachine()));
+  //PM->add(createPTXMFInfoExtract(getPTXTargetMachine()));
   return false;
 }
 
 /// Add passes that optimize machine instructions after register allocation.
 void PTXPassConfig::addMachineLateOptimization() {
   if (addPass(BranchFolderPassID) != &NoPassID)
-    printNoVerify("After BranchFolding");
+    printAndVerify("After BranchFolding");
 
   if (addPass(TailDuplicateID) != &NoPassID)
-    printNoVerify("After TailDuplicate");
+    printAndVerify("After TailDuplicate");
 }
 
 bool PTXPassConfig::addPreEmitPass() {
-  PM.add(createPTXMFInfoExtract(getPTXTargetMachine(), getOptLevel()));
-  PM.add(createPTXFPRoundingModePass(getPTXTargetMachine(), getOptLevel()));
+  PM->add(createPTXMFInfoExtract(getPTXTargetMachine(), getOptLevel()));
+  PM->add(createPTXFPRoundingModePass(getPTXTargetMachine(), getOptLevel()));
   return true;
 }

@@ -143,6 +143,10 @@ namespace llvm {
     /// symbol names.  This defaults to true.
     bool AllowPeriodsInName;
 
+    /// AllowUTF8 - This is true if the assembler accepts UTF-8 input.
+    // FIXME: Make this a more general encoding setting?
+    bool AllowUTF8;
+
     //===--- Data Emission Directives -------------------------------------===//
 
     /// ZeroDirective - this should be set to the directive used to get some
@@ -334,10 +338,6 @@ namespace llvm {
     /// instead of symbolic register names in .cfi_* directives.
     bool DwarfRegNumForCFI;  // Defaults to false;
 
-    //===--- CBE Asm Translation Table -----------------------------------===//
-
-    const char *const *AsmTransCBE;          // Defaults to empty
-
     //===--- Prologue State ----------------------------------------------===//
 
     std::vector<MachineMove> InitialFrameState;
@@ -485,6 +485,9 @@ namespace llvm {
     bool doesAllowPeriodsInName() const {
       return AllowPeriodsInName;
     }
+    bool doesAllowUTF8() const {
+      return AllowUTF8;
+    }
     const char *getZeroDirective() const {
       return ZeroDirective;
     }
@@ -569,9 +572,6 @@ namespace llvm {
     }
     bool useDwarfRegNumForCFI() const {
       return DwarfRegNumForCFI;
-    }
-    const char *const *getAsmCBE() const {
-      return AsmTransCBE;
     }
 
     void addInitialFrameState(MCSymbol *label, const MachineLocation &D,

@@ -7,7 +7,7 @@
   <meta name="author" content="Chris Lattner">
   <meta name="description"
   content="LLVM Assembly Language Reference Manual.">
-  <link rel="stylesheet" href="llvm.css" type="text/css">
+  <link rel="stylesheet" href="_static/llvm.css" type="text/css">
 </head>
 
 <body>
@@ -103,7 +103,8 @@
       <li><a href="#metadata">Metadata Nodes and Metadata Strings</a>
         <ol>
           <li><a href="#tbaa">'<tt>tbaa</tt>' Metadata</a></li>
-          <li><a href="#fpaccuracy">'<tt>fpaccuracy</tt>' Metadata</a></li>
+          <li><a href="#fpmath">'<tt>fpmath</tt>' Metadata</a></li>
+          <li><a href="#range">'<tt>range</tt>' Metadata</a></li>
         </ol>
       </li>
     </ol>
@@ -306,6 +307,8 @@
             '<tt>llvm.annotation.*</tt>' Intrinsic</a></li>
           <li><a href="#int_trap">
             '<tt>llvm.trap</tt>' Intrinsic</a></li>
+          <li><a href="#int_debugger">
+            '<tt>llvm.debugger</tt>' Intrinsic</a></li>
           <li><a href="#int_stackprotector">
             '<tt>llvm.stackprotector</tt>' Intrinsic</a></li>
 	  <li><a href="#int_objectsize">
@@ -490,43 +493,43 @@
 
 <div>
 
-<p>LLVM programs are composed of "Module"s, each of which is a translation unit
-   of the input programs.  Each module consists of functions, global variables,
-   and symbol table entries.  Modules may be combined together with the LLVM
-   linker, which merges function (and global variable) definitions, resolves
-   forward declarations, and merges symbol table entries. Here is an example of
-   the "hello world" module:</p>
+<p>LLVM programs are composed of <tt>Module</tt>s, each of which is a
+   translation unit of the input programs.  Each module consists of functions,
+   global variables, and symbol table entries.  Modules may be combined together
+   with the LLVM linker, which merges function (and global variable)
+   definitions, resolves forward declarations, and merges symbol table
+   entries. Here is an example of the "hello world" module:</p>
 
 <pre class="doc_code">
 <i>; Declare the string constant as a global constant.</i>&nbsp;
-<a href="#identifiers">@.LC0</a> = <a href="#linkage_internal">internal</a>&nbsp;<a href="#globalvars">constant</a>&nbsp;<a href="#t_array">[13 x i8]</a> c"hello world\0A\00"      <i>; [13 x i8]*</i>&nbsp;
+<a href="#identifiers">@.str</a> = <a href="#linkage_private">private</a>&nbsp;<a href="#globalvars">unnamed_addr</a>&nbsp;<a href="#globalvars">constant</a>&nbsp;<a href="#t_array">[13 x i8]</a> c"hello world\0A\00"&nbsp;
 
 <i>; External declaration of the puts function</i>&nbsp;
-<a href="#functionstructure">declare</a> i32 @puts(i8*)                                      <i>; i32 (i8*)* </i>&nbsp;
+<a href="#functionstructure">declare</a> i32 @puts(i8* <a href="#nocapture">nocapture</a>) <a href="#fnattrs">nounwind</a>&nbsp;
 
 <i>; Definition of main function</i>
 define i32 @main() {   <i>; i32()* </i>&nbsp;
   <i>; Convert [13 x i8]* to i8  *...</i>&nbsp;
-  %cast210 = <a href="#i_getelementptr">getelementptr</a> [13 x i8]* @.LC0, i64 0, i64 0   <i>; i8*</i>&nbsp;
+  %cast210 = <a href="#i_getelementptr">getelementptr</a> [13 x i8]* @.str, i64 0, i64 0
 
   <i>; Call puts function to write out the string to stdout.</i>&nbsp;
-  <a href="#i_call">call</a> i32 @puts(i8* %cast210)           <i>; i32</i>&nbsp;
+  <a href="#i_call">call</a> i32 @puts(i8* %cast210)
   <a href="#i_ret">ret</a> i32 0&nbsp;
 }
 
 <i>; Named metadata</i>
-!1 = metadata !{i32 41}
+!1 = metadata !{i32 42}
 !foo = !{!1, null}
 </pre>
 
 <p>This example is made up of a <a href="#globalvars">global variable</a> named
-   "<tt>.LC0</tt>", an external declaration of the "<tt>puts</tt>" function,
+   "<tt>.str</tt>", an external declaration of the "<tt>puts</tt>" function,
    a <a href="#functionstructure">function definition</a> for
    "<tt>main</tt>" and <a href="#namedmetadatastructure">named metadata</a> 
-   "<tt>foo"</tt>.</p>
+   "<tt>foo</tt>".</p>
 
-<p>In general, a module is made up of a list of global values, where both
-   functions and global variables are global values.  Global values are
+<p>In general, a module is made up of a list of global values (where both
+   functions and global variables are global values). Global values are
    represented by a pointer to a memory location (in this case, a pointer to an
    array of char, and a pointer to a function), and have one of the
    following <a href="#linkage">linkage types</a>.</p>
@@ -2999,14 +3002,16 @@ call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
 
 <!-- _______________________________________________________________________ -->
 <h4>
-  <a name="fpaccuracy">'<tt>fpaccuracy</tt>' Metadata</a>
+  <a name="fpmath">'<tt>fpmath</tt>' Metadata</a>
 </h4>
  
 <div>
 
-<p><tt>fpaccuracy</tt> metadata may be attached to any instruction of floating
-   point type.  It expresses the maximum relative error of the result of
-   that instruction, in ULPs. ULP is defined as follows:</p>
+<p><tt>fpmath</tt> metadata may be attached to any instruction of floating point
+  type.  It can be used to express the maximum acceptable error in the result of
+  that instruction, in ULPs, thus potentially allowing the compiler to use a
+  more efficient but less accurate method of computing it.  ULP is defined as
+  follows:</p>
 
 <blockquote>
 
@@ -3018,18 +3023,50 @@ call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
 
 </blockquote>
 
-<p>The maximum relative error may be any rational number.  The metadata node
-   shall consist of a pair of unsigned integers respectively representing
-   the numerator and denominator.  For example, 2.5 ULP:</p>
+<p>The metadata node shall consist of a single positive floating point number
+   representing the maximum relative error, for example:</p>
 
 <div class="doc_code">
 <pre>
-!0 = metadata !{ i32 5, i32 2 }
+!0 = metadata !{ float 2.5 } ; maximum acceptable inaccuracy is 2.5 ULPs
 </pre>
 </div>
 
 </div>
 
+<!-- _______________________________________________________________________ -->
+<h4>
+  <a name="range">'<tt>range</tt>' Metadata</a>
+</h4>
+
+<div>
+<p><tt>range</tt> metadata may be attached only to loads of integer types. It
+   expresses the possible ranges the loaded value is in. The ranges are
+   represented with a flattened list of integers. The loaded value is known to
+   be in the union of the ranges defined by each consecutive pair. Each pair
+   has the following properties:</p>
+<ul>
+   <li>The type must match the type loaded by the instruction.</li>
+   <li>The pair <tt>a,b</tt> represents the range <tt>[a,b)</tt>.</li>
+   <li>Both <tt>a</tt> and <tt>b</tt> are constants.</li>
+   <li>The range is allowed to wrap.</li>
+   <li>The range should not represent the full or empty set. That is,
+       <tt>a!=b</tt>. </li>
+</ul>
+
+<p>Examples:</p>
+<div class="doc_code">
+<pre>
+  %a = load i8* %x, align 1, !range !0 ; Can only be 0 or 1
+  %b = load i8* %y, align 1, !range !1 ; Can only be 255 (-1), 0 or 1
+  %c = load i8* %z, align 1, !range !2 ; Can only be 0, 1, 3, 4 or 5
+...
+!0 = metadata !{ i8 0, i8 2 }
+!1 = metadata !{ i8 255, i8 2 }
+!2 = metadata !{ i8 0, i8 2, i8 3, i8 6 }
+</pre>
+</div>
+</div>
 </div>
 
 </div>
@@ -3081,36 +3118,44 @@ call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
     <tr>
       <td>1</td>
       <td align="left">
-        <dt><b>Error</b></dt>
-        <dd>Emits an error if two values disagree. It is an error to have an ID
-            with both an Error and a Warning behavior.</dd>
+        <dl>
+          <dt><b>Error</b></dt>
+          <dd>Emits an error if two values disagree. It is an error to have an ID
+              with both an Error and a Warning behavior.</dd>
+        </dl>
       </td>
     </tr>
     <tr>
       <td>2</td>
       <td align="left">
-        <dt><b>Warning</b></dt>
-        <dd>Emits a warning if two values disagree.</dd>
+        <dl>
+          <dt><b>Warning</b></dt>
+          <dd>Emits a warning if two values disagree.</dd>
+        </dl>
       </td>
     </tr>
     <tr>
       <td>3</td>
       <td align="left">
-        <dt><b>Require</b></dt>
-        <dd>Emits an error when the specified value is not present or doesn't
-            have the specified value. It is an error for two (or more)
-            <tt>llvm.module.flags</tt> with the same ID to have the Require
-            behavior but different values. There may be multiple Require flags
-            per ID.</dd>
+        <dl>
+          <dt><b>Require</b></dt>
+          <dd>Emits an error when the specified value is not present or doesn't
+              have the specified value. It is an error for two (or more)
+              <tt>llvm.module.flags</tt> with the same ID to have the Require
+              behavior but different values. There may be multiple Require flags
+              per ID.</dd>
+        </dl>
       </td>
     </tr>
     <tr>
       <td>4</td>
       <td align="left">
-        <dt><b>Override</b></dt>
-        <dd>Uses the specified value if the two values disagree. It is an error
-            for two (or more) <tt>llvm.module.flags</tt> with the same ID to
-            have the Override behavior but different values.</dd>
+        <dl>
+          <dt><b>Override</b></dt>
+          <dd>Uses the specified value if the two values disagree. It is an
+              error for two (or more) <tt>llvm.module.flags</tt> with the same
+              ID to have the Override behavior but different values.</dd>
+        </dl>
       </td>
     </tr>
   </tbody>
@@ -3174,9 +3219,10 @@ metadata !{ metadata !"foo", i32 1 }
    following key-value pairs:</p>
 
 <table border="1" cellspacing="0" cellpadding="4">
+  <col width="30%">
   <tbody>
     <tr>
-      <th width="30%">Key</th>
+      <th>Key</th>
       <th>Value</th>
     </tr>
     <tr>
@@ -4861,8 +4907,7 @@ IfUnequal:
    or <tt><a href="#i_resume">resume</a></tt> instructions), the memory is
    reclaimed.  Allocating zero bytes is legal, but the result is undefined.
    The order in which memory is allocated (ie., which way the stack grows) is
-   not specified, and relational comparisons involving '<tt>alloca</tt>'s are
-   undefined.</p>
+   not specified.</p>
 
 <p>
 
@@ -8357,6 +8402,30 @@ LLVM</a>.</p>
 
 <!-- _______________________________________________________________________ -->
 <h4>
+  <a name="int_debugger">'<tt>llvm.debugger</tt>' Intrinsic</a>
+</h4>
+
+<div>
+
+<h5>Syntax:</h5>
+<pre>
+  declare void @llvm.debugger()
+</pre>
+
+<h5>Overview:</h5>
+<p>The '<tt>llvm.debugger</tt>' intrinsic.</p>
+
+<h5>Arguments:</h5>
+<p>None.</p>
+
+<h5>Semantics:</h5>
+<p>This intrinsic is lowered to code which is intended to cause an execution
+   trap with the intention of requesting the attention of a debugger.</p>
+
+</div>
+
+<!-- _______________________________________________________________________ -->
+<h4>
   <a name="int_stackprotector">'<tt>llvm.stackprotector</tt>' Intrinsic</a>
 </h4>
 
@@ -8398,8 +8467,8 @@ LLVM</a>.</p>
 
 <h5>Syntax:</h5>
 <pre>
-  declare i32 @llvm.objectsize.i32(i8* &lt;object&gt;, i1 &lt;type&gt;)
-  declare i64 @llvm.objectsize.i64(i8* &lt;object&gt;, i1 &lt;type&gt;)
+  declare i32 @llvm.objectsize.i32(i8* &lt;object&gt;, i1 &lt;min&gt;, i32 &lt;runtime&gt;)
+  declare i64 @llvm.objectsize.i64(i8* &lt;object&gt;, i1 &lt;min&gt;, i32 &lt;runtime&gt;)
 </pre>
 
 <h5>Overview:</h5>
@@ -8410,17 +8479,21 @@ LLVM</a>.</p>
    an allocation of a specific class, structure, array, or other object.</p>
 
 <h5>Arguments:</h5>
-<p>The <tt>llvm.objectsize</tt> intrinsic takes two arguments. The first
+<p>The <tt>llvm.objectsize</tt> intrinsic takes three arguments. The first
    argument is a pointer to or into the <tt>object</tt>. The second argument
-   is a boolean 0 or 1. This argument determines whether you want the 
-   maximum (0) or minimum (1) bytes remaining. This needs to be a literal 0 or
-   1, variables are not allowed.</p>
+   is a boolean and determines whether <tt>llvm.objectsize</tt> returns 0 (if true)
+   or -1 (if false) when the object size is unknown.
+   The third argument, <tt>runtime</tt>, indicates whether the compiler is allowed
+   to return a non-constant value. The higher the value, the higher the potential
+   run-time performance impact.
+   The second and third arguments only accepts constants.</p>
    
 <h5>Semantics:</h5>
-<p>The <tt>llvm.objectsize</tt> intrinsic is lowered to either a constant
-   representing the size of the object concerned, or <tt>i32/i64 -1 or 0</tt>,
-   depending on the <tt>type</tt> argument, if the size cannot be determined at
-   compile time.</p>
+<p>The <tt>llvm.objectsize</tt> intrinsic is lowered to a constant representing
+   the size of the object concerned. If the size cannot be determined at compile
+   time, <tt>llvm.objectsize</tt> either returns <tt>i32/i64 -1 or 0</tt>
+   (depending on the <tt>min</tt> argument) if <tt>runtime</tt> is 0, or a run-time
+   value (if <tt>runtime</tt> &gt; 0 and an expression could be generated).</p>
 
 </div>
 <!-- _______________________________________________________________________ -->

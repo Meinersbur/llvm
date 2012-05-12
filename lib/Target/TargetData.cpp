@@ -117,8 +117,8 @@ TargetAlignElem::operator==(const TargetAlignElem &rhs) const {
           && TypeBitWidth == rhs.TypeBitWidth);
 }
 
-const TargetAlignElem TargetData::InvalidAlignmentElem =
-                TargetAlignElem::get((AlignTypeEnum) -1, 0, 0, 0);
+const TargetAlignElem
+TargetData::InvalidAlignmentElem = { (AlignTypeEnum)0xFF, 0, 0, 0 };
 
 //===----------------------------------------------------------------------===//
 //                       TargetData Class Implementation
@@ -373,7 +373,7 @@ unsigned TargetData::getAlignmentInfo(AlignTypeEnum AlignType,
       // If the alignment is not a power of 2, round up to the next power of 2.
       // This happens for non-power-of-2 length vectors.
       if (Align & (Align-1))
-        Align = llvm::NextPowerOf2(Align);
+        Align = NextPowerOf2(Align);
       return Align;
     }
   }

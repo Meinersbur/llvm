@@ -341,6 +341,12 @@ static bool CleanupConstantGlobalUsers(Value *V, Constant *Init,
           dyn_cast_or_null<ConstantExpr>(ConstantFoldInstruction(GEP, TD, TLI));
         if (Init && CE && CE->getOpcode() == Instruction::GetElementPtr)
           SubInit = ConstantFoldLoadThroughGEPConstantExpr(Init, CE);
+
+        // If the initializer is an all-null value and we have an inbounds GEP,
+        // we already know what the result of any load from that GEP is.
+        // TODO: Handle splats.
+        if (Init && isa<ConstantAggregateZero>(Init) && GEP->isInBounds())
+          SubInit = Constant::getNullValue(GEP->getType()->getElementType());
       }
       Changed |= CleanupConstantGlobalUsers(GEP, SubInit, TD, TLI);
 
@@ -1864,6 +1870,8 @@ bool GlobalOpt::ProcessInternalGlobal(GlobalVariable *GV,
 /// function, changing them to FastCC.
 static void ChangeCalleesToFastCall(Function *F) {
   for (Value::use_iterator UI = F->use_begin(), E = F->use_end(); UI != E;++UI){
+    if (isa<BlockAddress>(*UI))
+      continue;
     CallSite User(cast<Instruction>(*UI));
     User.setCallingConv(CallingConv::Fast);
   }
@@ -1884,6 +1892,8 @@ static AttrListPtr StripNest(const AttrListPtr &Attrs) {
 static void RemoveNestAttribute(Function *F) {
   F->setAttributes(StripNest(F->getAttributes()));
   for (Value::use_iterator UI = F->use_begin(), E = F->use_end(); UI != E;++UI){
+    if (isa<BlockAddress>(*UI))
+      continue;
     CallSite User(cast<Instruction>(*UI));
     User.setAttributes(StripNest(User.getAttributes()));
   }
@@ -2561,11 +2571,6 @@ bool Evaluator::EvaluateBlock(BasicBlock::iterator CurInst,
           return false;
         delete ValueStack.pop_back_val();
         InstResult = RetVal;
-
-        if (InvokeInst *II = dyn_cast<InvokeInst>(CurInst)) {
-          NextBB = II->getNormalDest();
-          return true;
-        }
       }
     } else if (isa<TerminatorInst>(CurInst)) {
       if (BranchInst *BI = dyn_cast<BranchInst>(CurInst)) {
@@ -2582,8 +2587,7 @@ bool Evaluator::EvaluateBlock(BasicBlock::iterator CurInst,
         ConstantInt *Val =
           dyn_cast<ConstantInt>(getVal(SI->getCondition()));
         if (!Val) return false;  // Cannot determine.
-        unsigned ValTISucc = SI->resolveSuccessorIndex(SI->findCaseValue(Val));
-        NextBB = SI->getSuccessor(ValTISucc);
+        NextBB = SI->findCaseValue(Val).getCaseSuccessor();
       } else if (IndirectBrInst *IBI = dyn_cast<IndirectBrInst>(CurInst)) {
         Value *Val = getVal(IBI->getAddress())->stripPointerCasts();
         if (BlockAddress *BA = dyn_cast<BlockAddress>(Val))
@@ -2609,6 +2613,12 @@ bool Evaluator::EvaluateBlock(BasicBlock::iterator CurInst,
         InstResult = ConstantFoldConstantExpression(CE, TD, TLI);
       
       setVal(CurInst, InstResult);
+    }
+
+    // If we just processed an invoke, we finished evaluating the block.
+    if (InvokeInst *II = dyn_cast<InvokeInst>(CurInst)) {
+      NextBB = II->getNormalDest();
+      return true;
     }
 
     // Advance program counter.
