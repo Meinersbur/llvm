@@ -40,8 +40,11 @@
 #include "llvm/LinkAllPasses.h"
 #include "llvm/LinkAllVMCore.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+//#include "../molly/Pass.cpp"
 #include <memory>
 #include <algorithm>
+#include "polly/RegisterPasses.h"
+#include "polly/LinkAllPasses.h"
 using namespace llvm;
 
 // The OptimizationList is automatically populated with registered Passes by the
@@ -478,6 +481,7 @@ static void AddStandardLinkPasses(PassManagerBase &PM) {
                                  /*RunInliner=*/ !DisableInline);
 }
 
+extern "C" int teststatic();
 
 //===----------------------------------------------------------------------===//
 // main for opt
@@ -485,7 +489,8 @@ static void AddStandardLinkPasses(PassManagerBase &PM) {
 int main(int argc, char **argv) {
   sys::PrintStackTraceOnErrorSignal();
   llvm::PrettyStackTraceProgram X(argc, argv);
-
+  teststatic();
+  intializePollyPass();
   // Enable debug stream buffering.
   EnableDebugBuffering = true;
 
