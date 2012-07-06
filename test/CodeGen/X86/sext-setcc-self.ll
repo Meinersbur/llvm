@@ -1,4 +1,4 @@
-; RUN: llc -march=x86 -mcpu=nehalem < %s | FileCheck %s
+; RUN: llc -march=x86-64 -mcpu=nehalem -asm-verbose=false < %s | FileCheck %s
 
 define <4 x i32> @test_ueq(<4 x float> %in) {
 entry:
