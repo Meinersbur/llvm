@@ -161,10 +161,11 @@ def llvm_vararg_ty     : LLVMType<isVoid>;   // this means vararg here
 //    intrinsic.
 //  * Properties can be set to describe the behavior of the intrinsic.
 //
+class SDPatternOperator;
 class Intrinsic<list<LLVMType> ret_types,
                 list<LLVMType> param_types = [],
                 list<IntrinsicProperty> properties = [],
-                string name = ""> {
+                string name = ""> : SDPatternOperator {
   string LLVMName = name;
   string TargetPrefix = "";   // Set to a prefix for target-specific intrinsics.
   list<LLVMType> RetTypes = ret_types;
@@ -308,7 +309,7 @@ let Properties = [IntrNoMem] in {
 let Properties = [IntrNoMem] in {
   def int_dbg_declare      : Intrinsic<[],
                                        [llvm_metadata_ty, llvm_metadata_ty]>;
-  def int_dbg_value  	   : Intrinsic<[],
+  def int_dbg_value        : Intrinsic<[],
                                        [llvm_metadata_ty, llvm_i64_ty,
                                         llvm_metadata_ty]>;
 }

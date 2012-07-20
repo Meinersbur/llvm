@@ -1,4 +1,4 @@
-//===---- llvm/Support/MDBuilder.h - Builder for LLVM metadata --*- C++ -*-===//
+//===---- llvm/MDBuilder.h - Builder for LLVM metadata ----------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_SUPPORT_MDBUILDER_H
-#define LLVM_SUPPORT_MDBUILDER_H
+#ifndef LLVM_MDBUILDER_H
+#define LLVM_MDBUILDER_H
 
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"

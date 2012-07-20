@@ -539,6 +539,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::VSQRTPSr_Int,    X86::VSQRTPSm_Int,        TB_ALIGN_16 },
     { X86::VUCOMISDrr,      X86::VUCOMISDrm,          0 },
     { X86::VUCOMISSrr,      X86::VUCOMISSrm,          0 },
+    { X86::VBROADCASTSSrr,  X86::VBROADCASTSSrm,      TB_NO_REVERSE },
+
     // AVX 256-bit foldable instructions
     { X86::VMOVAPDYrr,      X86::VMOVAPDYrm,          TB_ALIGN_32 },
     { X86::VMOVAPSYrr,      X86::VMOVAPSYrm,          TB_ALIGN_32 },
@@ -547,6 +549,7 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::VMOVUPSYrr,      X86::VMOVUPSYrm,          0 },
     { X86::VPERMILPDYri,    X86::VPERMILPDYmi,        TB_ALIGN_32 },
     { X86::VPERMILPSYri,    X86::VPERMILPSYmi,        TB_ALIGN_32 },
+
     // AVX2 foldable instructions
     { X86::VPABSBrr256,     X86::VPABSBrm256,         TB_ALIGN_32 },
     { X86::VPABSDrr256,     X86::VPABSDrm256,         TB_ALIGN_32 },
@@ -562,6 +565,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::VSQRTPDYr_Int,   X86::VSQRTPDYm_Int,       TB_ALIGN_32 },
     { X86::VSQRTPSYr,       X86::VSQRTPSYm,           TB_ALIGN_32 },
     { X86::VSQRTPSYr_Int,   X86::VSQRTPSYm_Int,       TB_ALIGN_32 },
+    { X86::VBROADCASTSSYrr, X86::VBROADCASTSSYrm,     TB_NO_REVERSE },
+    { X86::VBROADCASTSDYrr, X86::VBROADCASTSDYrm,     TB_NO_REVERSE },
   };
 
   for (unsigned i = 0, e = array_lengthof(OpTbl1); i != e; ++i) {
@@ -2011,6 +2016,13 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
                         .addReg(Dest, RegState::Define |
                                 getDeadRegState(isDead)),
                         Src, isKill, Src2, isKill2);
+
+      // Preserve undefness of the operands.
+      bool isUndef = MI->getOperand(1).isUndef();
+      bool isUndef2 = MI->getOperand(2).isUndef();
+      NewMI->getOperand(1).setIsUndef(isUndef);
+      NewMI->getOperand(3).setIsUndef(isUndef2);
+
       if (LV && isKill2)
         LV->replaceKillInstruction(Src2, MI, NewMI);
       break;
@@ -2227,7 +2239,7 @@ X86InstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
   }
 }
 
-static X86::CondCode GetCondFromBranchOpc(unsigned BrOpc) {
+static X86::CondCode getCondFromBranchOpc(unsigned BrOpc) {
   switch (BrOpc) {
   default: return X86::COND_INVALID;
   case X86::JE_4:  return X86::COND_E;
@@ -2246,6 +2258,84 @@ static X86::CondCode GetCondFromBranchOpc(unsigned BrOpc) {
   case X86::JNP_4: return X86::COND_NP;
   case X86::JO_4:  return X86::COND_O;
   case X86::JNO_4: return X86::COND_NO;
+  }
+}
+
+/// getCondFromSETOpc - return condition code of a SET opcode.
+static X86::CondCode getCondFromSETOpc(unsigned Opc) {
+  switch (Opc) {
+  default: return X86::COND_INVALID;
+  case X86::SETAr:  case X86::SETAm:  return X86::COND_A;
+  case X86::SETAEr: case X86::SETAEm: return X86::COND_AE;
+  case X86::SETBr:  case X86::SETBm:  return X86::COND_B;
+  case X86::SETBEr: case X86::SETBEm: return X86::COND_BE;
+  case X86::SETEr:  case X86::SETEm:  return X86::COND_E;
+  case X86::SETGr:  case X86::SETGm:  return X86::COND_G;
+  case X86::SETGEr: case X86::SETGEm: return X86::COND_GE;
+  case X86::SETLr:  case X86::SETLm:  return X86::COND_L;
+  case X86::SETLEr: case X86::SETLEm: return X86::COND_LE;
+  case X86::SETNEr: case X86::SETNEm: return X86::COND_NE;
+  case X86::SETNOr: case X86::SETNOm: return X86::COND_NO;
+  case X86::SETNPr: case X86::SETNPm: return X86::COND_NP;
+  case X86::SETNSr: case X86::SETNSm: return X86::COND_NS;
+  case X86::SETOr:  case X86::SETOm:  return X86::COND_O;
+  case X86::SETPr:  case X86::SETPm:  return X86::COND_P;
+  case X86::SETSr:  case X86::SETSm:  return X86::COND_S;
+  }
+}
+
+/// getCondFromCmovOpc - return condition code of a CMov opcode.
+static X86::CondCode getCondFromCMovOpc(unsigned Opc) {
+  switch (Opc) {
+  default: return X86::COND_INVALID;
+  case X86::CMOVA16rm:  case X86::CMOVA16rr:  case X86::CMOVA32rm:
+  case X86::CMOVA32rr:  case X86::CMOVA64rm:  case X86::CMOVA64rr:
+    return X86::COND_A;
+  case X86::CMOVAE16rm: case X86::CMOVAE16rr: case X86::CMOVAE32rm:
+  case X86::CMOVAE32rr: case X86::CMOVAE64rm: case X86::CMOVAE64rr:
+    return X86::COND_AE;
+  case X86::CMOVB16rm:  case X86::CMOVB16rr:  case X86::CMOVB32rm:
+  case X86::CMOVB32rr:  case X86::CMOVB64rm:  case X86::CMOVB64rr:
+    return X86::COND_B;
+  case X86::CMOVBE16rm: case X86::CMOVBE16rr: case X86::CMOVBE32rm:
+  case X86::CMOVBE32rr: case X86::CMOVBE64rm: case X86::CMOVBE64rr:
+    return X86::COND_BE;
+  case X86::CMOVE16rm:  case X86::CMOVE16rr:  case X86::CMOVE32rm:
+  case X86::CMOVE32rr:  case X86::CMOVE64rm:  case X86::CMOVE64rr:
+    return X86::COND_E;
+  case X86::CMOVG16rm:  case X86::CMOVG16rr:  case X86::CMOVG32rm:
+  case X86::CMOVG32rr:  case X86::CMOVG64rm:  case X86::CMOVG64rr:
+    return X86::COND_G;
+  case X86::CMOVGE16rm: case X86::CMOVGE16rr: case X86::CMOVGE32rm:
+  case X86::CMOVGE32rr: case X86::CMOVGE64rm: case X86::CMOVGE64rr:
+    return X86::COND_GE;
+  case X86::CMOVL16rm:  case X86::CMOVL16rr:  case X86::CMOVL32rm:
+  case X86::CMOVL32rr:  case X86::CMOVL64rm:  case X86::CMOVL64rr:
+    return X86::COND_L;
+  case X86::CMOVLE16rm: case X86::CMOVLE16rr: case X86::CMOVLE32rm:
+  case X86::CMOVLE32rr: case X86::CMOVLE64rm: case X86::CMOVLE64rr:
+    return X86::COND_LE;
+  case X86::CMOVNE16rm: case X86::CMOVNE16rr: case X86::CMOVNE32rm:
+  case X86::CMOVNE32rr: case X86::CMOVNE64rm: case X86::CMOVNE64rr:
+    return X86::COND_NE;
+  case X86::CMOVNO16rm: case X86::CMOVNO16rr: case X86::CMOVNO32rm:
+  case X86::CMOVNO32rr: case X86::CMOVNO64rm: case X86::CMOVNO64rr:
+    return X86::COND_NO;
+  case X86::CMOVNP16rm: case X86::CMOVNP16rr: case X86::CMOVNP32rm:
+  case X86::CMOVNP32rr: case X86::CMOVNP64rm: case X86::CMOVNP64rr:
+    return X86::COND_NP;
+  case X86::CMOVNS16rm: case X86::CMOVNS16rr: case X86::CMOVNS32rm:
+  case X86::CMOVNS32rr: case X86::CMOVNS64rm: case X86::CMOVNS64rr:
+    return X86::COND_NS;
+  case X86::CMOVO16rm:  case X86::CMOVO16rr:  case X86::CMOVO32rm:
+  case X86::CMOVO32rr:  case X86::CMOVO64rm:  case X86::CMOVO64rr:
+    return X86::COND_O;
+  case X86::CMOVP16rm:  case X86::CMOVP16rr:  case X86::CMOVP32rm:
+  case X86::CMOVP32rr:  case X86::CMOVP64rm:  case X86::CMOVP64rr:
+    return X86::COND_P;
+  case X86::CMOVS16rm:  case X86::CMOVS16rr:  case X86::CMOVS32rm:
+  case X86::CMOVS32rr:  case X86::CMOVS64rm:  case X86::CMOVS64rr:
+    return X86::COND_S;
   }
 }
 
@@ -2295,10 +2385,57 @@ X86::CondCode X86::GetOppositeBranchCondition(X86::CondCode CC) {
   }
 }
 
-/// getCMovFromCond - Return a cmov(rr) opcode for the given condition and
-/// register size in bytes.
-static unsigned getCMovFromCond(X86::CondCode CC, unsigned RegBytes) {
-  static const unsigned Opc[16][3] = {
+/// getSwappedCondition - assume the flags are set by MI(a,b), return
+/// the condition code if we modify the instructions such that flags are
+/// set by MI(b,a).
+static X86::CondCode getSwappedCondition(X86::CondCode CC) {
+  switch (CC) {
+  default: return X86::COND_INVALID;
+  case X86::COND_E:  return X86::COND_E;
+  case X86::COND_NE: return X86::COND_NE;
+  case X86::COND_L:  return X86::COND_G;
+  case X86::COND_LE: return X86::COND_GE;
+  case X86::COND_G:  return X86::COND_L;
+  case X86::COND_GE: return X86::COND_LE;
+  case X86::COND_B:  return X86::COND_A;
+  case X86::COND_BE: return X86::COND_AE;
+  case X86::COND_A:  return X86::COND_B;
+  case X86::COND_AE: return X86::COND_BE;
+  }
+}
+
+/// getSETFromCond - Return a set opcode for the given condition and
+/// whether it has memory operand.
+static unsigned getSETFromCond(X86::CondCode CC,
+                               bool HasMemoryOperand) {
+  static const unsigned Opc[16][2] = {
+    { X86::SETAr,  X86::SETAm  },
+    { X86::SETAEr, X86::SETAEm },
+    { X86::SETBr,  X86::SETBm  },
+    { X86::SETBEr, X86::SETBEm },
+    { X86::SETEr,  X86::SETEm  },
+    { X86::SETGr,  X86::SETGm  },
+    { X86::SETGEr, X86::SETGEm },
+    { X86::SETLr,  X86::SETLm  },
+    { X86::SETLEr, X86::SETLEm },
+    { X86::SETNEr, X86::SETNEm },
+    { X86::SETNOr, X86::SETNOm },
+    { X86::SETNPr, X86::SETNPm },
+    { X86::SETNSr, X86::SETNSm },
+    { X86::SETOr,  X86::SETOm  },
+    { X86::SETPr,  X86::SETPm  },
+    { X86::SETSr,  X86::SETSm  }
+  };
+
+  assert(CC < 16 && "Can only handle standard cond codes");
+  return Opc[CC][HasMemoryOperand ? 1 : 0];
+}
+
+/// getCMovFromCond - Return a cmov opcode for the given condition,
+/// register size in bytes, and operand type.
+static unsigned getCMovFromCond(X86::CondCode CC, unsigned RegBytes,
+                                bool HasMemoryOperand) {
+  static const unsigned Opc[32][3] = {
     { X86::CMOVA16rr,  X86::CMOVA32rr,  X86::CMOVA64rr  },
     { X86::CMOVAE16rr, X86::CMOVAE32rr, X86::CMOVAE64rr },
     { X86::CMOVB16rr,  X86::CMOVB32rr,  X86::CMOVB64rr  },
@@ -2314,15 +2451,32 @@ static unsigned getCMovFromCond(X86::CondCode CC, unsigned RegBytes) {
     { X86::CMOVNS16rr, X86::CMOVNS32rr, X86::CMOVNS64rr },
     { X86::CMOVO16rr,  X86::CMOVO32rr,  X86::CMOVO64rr  },
     { X86::CMOVP16rr,  X86::CMOVP32rr,  X86::CMOVP64rr  },
-    { X86::CMOVS16rr,  X86::CMOVS32rr,  X86::CMOVS64rr  }
+    { X86::CMOVS16rr,  X86::CMOVS32rr,  X86::CMOVS64rr  },
+    { X86::CMOVA16rm,  X86::CMOVA32rm,  X86::CMOVA64rm  },
+    { X86::CMOVAE16rm, X86::CMOVAE32rm, X86::CMOVAE64rm },
+    { X86::CMOVB16rm,  X86::CMOVB32rm,  X86::CMOVB64rm  },
+    { X86::CMOVBE16rm, X86::CMOVBE32rm, X86::CMOVBE64rm },
+    { X86::CMOVE16rm,  X86::CMOVE32rm,  X86::CMOVE64rm  },
+    { X86::CMOVG16rm,  X86::CMOVG32rm,  X86::CMOVG64rm  },
+    { X86::CMOVGE16rm, X86::CMOVGE32rm, X86::CMOVGE64rm },
+    { X86::CMOVL16rm,  X86::CMOVL32rm,  X86::CMOVL64rm  },
+    { X86::CMOVLE16rm, X86::CMOVLE32rm, X86::CMOVLE64rm },
+    { X86::CMOVNE16rm, X86::CMOVNE32rm, X86::CMOVNE64rm },
+    { X86::CMOVNO16rm, X86::CMOVNO32rm, X86::CMOVNO64rm },
+    { X86::CMOVNP16rm, X86::CMOVNP32rm, X86::CMOVNP64rm },
+    { X86::CMOVNS16rm, X86::CMOVNS32rm, X86::CMOVNS64rm },
+    { X86::CMOVO16rm,  X86::CMOVO32rm,  X86::CMOVO64rm  },
+    { X86::CMOVP16rm,  X86::CMOVP32rm,  X86::CMOVP64rm  },
+    { X86::CMOVS16rm,  X86::CMOVS32rm,  X86::CMOVS64rm  }
   };
 
   assert(CC < 16 && "Can only handle standard cond codes");
+  unsigned Idx = HasMemoryOperand ? 16+CC : CC;
   switch(RegBytes) {
   default: llvm_unreachable("Illegal register size!");
-  case 2: return Opc[CC][0];
-  case 4: return Opc[CC][1];
-  case 8: return Opc[CC][2];
+  case 2: return Opc[Idx][0];
+  case 4: return Opc[Idx][1];
+  case 8: return Opc[Idx][2];
   }
 }
 
@@ -2392,7 +2546,7 @@ bool X86InstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
     }
 
     // Handle conditional branches.
-    X86::CondCode BranchCode = GetCondFromBranchOpc(I->getOpcode());
+    X86::CondCode BranchCode = getCondFromBranchOpc(I->getOpcode());
     if (BranchCode == X86::COND_INVALID)
       return true;  // Can't handle indirect branch.
 
@@ -2490,7 +2644,7 @@ unsigned X86InstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
     if (I->isDebugValue())
       continue;
     if (I->getOpcode() != X86::JMP_4 &&
-        GetCondFromBranchOpc(I->getOpcode()) == X86::COND_INVALID)
+        getCondFromBranchOpc(I->getOpcode()) == X86::COND_INVALID)
       break;
     // Remove the branch.
     I->eraseFromParent();
@@ -2595,7 +2749,8 @@ void X86InstrInfo::insertSelect(MachineBasicBlock &MBB,
    MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
    assert(Cond.size() == 1 && "Invalid Cond array");
    unsigned Opc = getCMovFromCond((X86::CondCode)Cond[0].getImm(),
-                                  MRI.getRegClass(DstReg)->getSize());
+                                  MRI.getRegClass(DstReg)->getSize(),
+                                  false/*HasMemoryOperand*/);
    BuildMI(MBB, I, DL, get(Opc), DstReg).addReg(FalseReg).addReg(TrueReg);
 }
 
@@ -2891,129 +3046,19 @@ analyzeCompare(const MachineInstr *MI, unsigned &SrcReg, unsigned &SrcReg2,
     CmpMask = ~0;
     CmpValue = 0;
     return true;
+  case X86::TEST8rr:
+  case X86::TEST16rr:
+  case X86::TEST32rr:
+  case X86::TEST64rr:
+    SrcReg = MI->getOperand(0).getReg();
+    if (MI->getOperand(1).getReg() != SrcReg) return false;
+    // Compare against zero.
+    SrcReg2 = 0;
+    CmpMask = ~0;
+    CmpValue = 0;
+    return true;
   }
   return false;
-}
-
-/// getSwappedConditionForSET - assume the flags are set by MI(a,b), return
-/// the opcode if we modify the instructions such that flags are
-/// set by MI(b,a).
-static unsigned getSwappedConditionForSET(unsigned SETOpc) {
-  switch (SETOpc) {
-  default: return 0;
-  case X86::SETEr:  return X86::SETEr;
-  case X86::SETEm:  return X86::SETEm;
-  case X86::SETNEr: return X86::SETNEr;
-  case X86::SETNEm: return X86::SETNEm;
-  case X86::SETLr:  return X86::SETGr;
-  case X86::SETLm:  return X86::SETGm;
-  case X86::SETLEr: return X86::SETGEr;
-  case X86::SETLEm: return X86::SETGEm;
-  case X86::SETGr:  return X86::SETLr;
-  case X86::SETGm:  return X86::SETLm;
-  case X86::SETGEr: return X86::SETLEr;
-  case X86::SETGEm: return X86::SETLEm;
-  case X86::SETBr:  return X86::SETAr;
-  case X86::SETBm:  return X86::SETAm;
-  case X86::SETBEr: return X86::SETAEr;
-  case X86::SETBEm: return X86::SETAEm;
-  case X86::SETAr:  return X86::SETBr;
-  case X86::SETAm:  return X86::SETBm;
-  case X86::SETAEr: return X86::SETBEr;
-  case X86::SETAEm: return X86::SETBEm;
-  }
-}
-
-/// getSwappedConditionForBranch - assume the flags are set by MI(a,b), return
-/// the opcode if we modify the instructions such that flags are
-/// set by MI(b,a).
-static unsigned getSwappedConditionForBranch(unsigned BranchOpc) {
-  switch (BranchOpc) {
-  default: return 0;
-  case X86::JE_4:  return X86::JE_4;
-  case X86::JNE_4: return X86::JNE_4;
-  case X86::JL_4:  return X86::JG_4;
-  case X86::JLE_4: return X86::JGE_4;
-  case X86::JG_4:  return X86::JL_4;
-  case X86::JGE_4: return X86::JLE_4;
-  case X86::JB_4:  return X86::JA_4;
-  case X86::JBE_4: return X86::JAE_4;
-  case X86::JA_4:  return X86::JB_4;
-  case X86::JAE_4: return X86::JBE_4;
-  }
-}
-
-/// getSwappedConditionForCMov - assume the flags are set by MI(a,b), return
-/// the opcode if we modify the instructions such that flags are
-/// set by MI(b,a).
-static unsigned getSwappedConditionForCMov(unsigned CMovOpc) {
-  switch (CMovOpc) {
-  default: return 0;
-  case X86::CMOVE16rm:  return X86::CMOVE16rm;
-  case X86::CMOVE16rr:  return X86::CMOVE16rr;
-  case X86::CMOVE32rm:  return X86::CMOVE32rm;
-  case X86::CMOVE32rr:  return X86::CMOVE32rr;
-  case X86::CMOVE64rm:  return X86::CMOVE64rm;
-  case X86::CMOVE64rr:  return X86::CMOVE64rr;
-  case X86::CMOVNE16rm: return X86::CMOVNE16rm;
-  case X86::CMOVNE16rr: return X86::CMOVNE16rr;
-  case X86::CMOVNE32rm: return X86::CMOVNE32rm;
-  case X86::CMOVNE32rr: return X86::CMOVNE32rr;
-  case X86::CMOVNE64rm: return X86::CMOVNE64rm;
-  case X86::CMOVNE64rr: return X86::CMOVNE64rr;
-
-  case X86::CMOVL16rm:  return X86::CMOVG16rm;
-  case X86::CMOVL16rr:  return X86::CMOVG16rr;
-  case X86::CMOVL32rm:  return X86::CMOVG32rm;
-  case X86::CMOVL32rr:  return X86::CMOVG32rr;
-  case X86::CMOVL64rm:  return X86::CMOVG64rm;
-  case X86::CMOVL64rr:  return X86::CMOVG64rr;
-  case X86::CMOVLE16rm: return X86::CMOVGE16rm;
-  case X86::CMOVLE16rr: return X86::CMOVGE16rr;
-  case X86::CMOVLE32rm: return X86::CMOVGE32rm;
-  case X86::CMOVLE32rr: return X86::CMOVGE32rr;
-  case X86::CMOVLE64rm: return X86::CMOVGE64rm;
-  case X86::CMOVLE64rr: return X86::CMOVGE64rr;
-
-  case X86::CMOVG16rm:  return X86::CMOVL16rm;
-  case X86::CMOVG16rr:  return X86::CMOVL16rr;
-  case X86::CMOVG32rm:  return X86::CMOVL32rm;
-  case X86::CMOVG32rr:  return X86::CMOVL32rr;
-  case X86::CMOVG64rm:  return X86::CMOVL64rm;
-  case X86::CMOVG64rr:  return X86::CMOVL64rr;
-  case X86::CMOVGE16rm: return X86::CMOVLE16rm;
-  case X86::CMOVGE16rr: return X86::CMOVLE16rr;
-  case X86::CMOVGE32rm: return X86::CMOVLE32rm;
-  case X86::CMOVGE32rr: return X86::CMOVLE32rr;
-  case X86::CMOVGE64rm: return X86::CMOVLE64rm;
-  case X86::CMOVGE64rr: return X86::CMOVLE64rr;
-
-  case X86::CMOVB16rm:  return X86::CMOVA16rm;
-  case X86::CMOVB16rr:  return X86::CMOVA16rr;
-  case X86::CMOVB32rm:  return X86::CMOVA32rm;
-  case X86::CMOVB32rr:  return X86::CMOVA32rr;
-  case X86::CMOVB64rm:  return X86::CMOVA64rm;
-  case X86::CMOVB64rr:  return X86::CMOVA64rr;
-  case X86::CMOVBE16rm: return X86::CMOVAE16rm;
-  case X86::CMOVBE16rr: return X86::CMOVAE16rr;
-  case X86::CMOVBE32rm: return X86::CMOVAE32rm;
-  case X86::CMOVBE32rr: return X86::CMOVAE32rr;
-  case X86::CMOVBE64rm: return X86::CMOVAE64rm;
-  case X86::CMOVBE64rr: return X86::CMOVAE64rr;
-
-  case X86::CMOVA16rm:  return X86::CMOVB16rm;
-  case X86::CMOVA16rr:  return X86::CMOVB16rr;
-  case X86::CMOVA32rm:  return X86::CMOVB32rm;
-  case X86::CMOVA32rr:  return X86::CMOVB32rr;
-  case X86::CMOVA64rm:  return X86::CMOVB64rm;
-  case X86::CMOVA64rr:  return X86::CMOVB64rr;
-  case X86::CMOVAE16rm: return X86::CMOVBE16rm;
-  case X86::CMOVAE16rr: return X86::CMOVBE16rr;
-  case X86::CMOVAE32rm: return X86::CMOVBE32rm;
-  case X86::CMOVAE32rr: return X86::CMOVBE32rr;
-  case X86::CMOVAE64rm: return X86::CMOVBE64rm;
-  case X86::CMOVAE64rr: return X86::CMOVBE64rr;
-  }
 }
 
 /// isRedundantFlagInstr - check whether the first instruction, whose only
@@ -3059,6 +3104,40 @@ inline static bool isRedundantFlagInstr(MachineInstr *FlagI, unsigned SrcReg,
   return false;
 }
 
+/// isDefConvertible - check whether the definition can be converted
+/// to remove a comparison against zero.
+inline static bool isDefConvertible(MachineInstr *MI) {
+  switch (MI->getOpcode()) {
+  default: return false;
+  case X86::SUB64ri32: case X86::SUB64ri8: case X86::SUB32ri:
+  case X86::SUB32ri8:  case X86::SUB16ri:  case X86::SUB16ri8:
+  case X86::SUB8ri:    case X86::SUB64rr:  case X86::SUB32rr:
+  case X86::SUB16rr:   case X86::SUB8rr:   case X86::SUB64rm:
+  case X86::SUB32rm:   case X86::SUB16rm:  case X86::SUB8rm:
+  case X86::ADD64ri32: case X86::ADD64ri8: case X86::ADD32ri:
+  case X86::ADD32ri8:  case X86::ADD16ri:  case X86::ADD16ri8:
+  case X86::ADD8ri:    case X86::ADD64rr:  case X86::ADD32rr:
+  case X86::ADD16rr:   case X86::ADD8rr:   case X86::ADD64rm:
+  case X86::ADD32rm:   case X86::ADD16rm:  case X86::ADD8rm:
+  case X86::AND64ri32: case X86::AND64ri8: case X86::AND32ri:
+  case X86::AND32ri8:  case X86::AND16ri:  case X86::AND16ri8:
+  case X86::AND8ri:    case X86::AND64rr:  case X86::AND32rr:
+  case X86::AND16rr:   case X86::AND8rr:   case X86::AND64rm:
+  case X86::AND32rm:   case X86::AND16rm:  case X86::AND8rm:
+  case X86::XOR64ri32: case X86::XOR64ri8: case X86::XOR32ri:
+  case X86::XOR32ri8:  case X86::XOR16ri:  case X86::XOR16ri8:
+  case X86::XOR8ri:    case X86::XOR64rr:  case X86::XOR32rr:
+  case X86::XOR16rr:   case X86::XOR8rr:   case X86::XOR64rm:
+  case X86::XOR32rm:   case X86::XOR16rm:  case X86::XOR8rm:
+  case X86::OR64ri32:  case X86::OR64ri8:  case X86::OR32ri:
+  case X86::OR32ri8:   case X86::OR16ri:   case X86::OR16ri8:
+  case X86::OR8ri:     case X86::OR64rr:   case X86::OR32rr:
+  case X86::OR16rr:    case X86::OR8rr:    case X86::OR64rm:
+  case X86::OR32rm:    case X86::OR16rm:   case X86::OR8rm:
+    return true;
+  }
+}
+
 /// optimizeCompareInstr - Check if there exists an earlier instruction that
 /// operates on the same source operands and sets flags in the same way as
 /// Compare; remove Compare if possible.
@@ -3073,11 +3152,18 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
   // CmpInstr is the first instruction of the BB.
   MachineBasicBlock::iterator I = CmpInstr, Def = MI;
 
+  // If we are comparing against zero, check whether we can use MI to update
+  // EFLAGS. If MI is not in the same BB as CmpInstr, do not optimize.
+  bool IsCmpZero = (SrcReg2 == 0 && CmpValue == 0);
+  if (IsCmpZero && (MI->getParent() != CmpInstr->getParent() ||
+      !isDefConvertible(MI)))
+    return false;
+
   // We are searching for an earlier instruction that can make CmpInstr
   // redundant and that instruction will be saved in Sub.
   MachineInstr *Sub = NULL;
   const TargetRegisterInfo *TRI = &getRegisterInfo();
-  
+
   // We iterate backward, starting from the instruction before CmpInstr and
   // stop when reaching the definition of a source register or done with the BB.
   // RI points to the instruction before CmpInstr.
@@ -3088,23 +3174,39 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
       RE = CmpInstr->getParent() == MI->getParent() ?
            MachineBasicBlock::reverse_iterator(++Def) /* points to MI */ :
            CmpInstr->getParent()->rend();
+  MachineInstr *Movr0Inst = 0;
   for (; RI != RE; ++RI) {
     MachineInstr *Instr = &*RI;
     // Check whether CmpInstr can be made redundant by the current instruction.
-    if (isRedundantFlagInstr(CmpInstr, SrcReg, SrcReg2, CmpValue, Instr)) {
+    if (!IsCmpZero &&
+        isRedundantFlagInstr(CmpInstr, SrcReg, SrcReg2, CmpValue, Instr)) {
       Sub = Instr;
       break;
     }
 
     if (Instr->modifiesRegister(X86::EFLAGS, TRI) ||
-        Instr->readsRegister(X86::EFLAGS, TRI))
+        Instr->readsRegister(X86::EFLAGS, TRI)) {
       // This instruction modifies or uses EFLAGS.
+
+      // MOV32r0 etc. are implemented with xor which clobbers condition code.
+      // They are safe to move up, if the definition to EFLAGS is dead and
+      // earlier instructions do not read or write EFLAGS.
+      if (!Movr0Inst && (Instr->getOpcode() == X86::MOV8r0 ||
+           Instr->getOpcode() == X86::MOV16r0 ||
+           Instr->getOpcode() == X86::MOV32r0 ||
+           Instr->getOpcode() == X86::MOV64r0) &&
+          Instr->registerDefIsDead(X86::EFLAGS, TRI)) {
+        Movr0Inst = Instr;
+        continue;
+      }
+
       // We can't remove CmpInstr.
       return false;
+    }
   }
 
   // Return false if no candidates exist.
-  if (!Sub)
+  if (!IsCmpZero && !Sub)
     return false;
 
   bool IsSwapped = (SrcReg2 != 0 && Sub->getOperand(1).getReg() == SrcReg2 &&
@@ -3128,13 +3230,51 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
       continue;
 
     // EFLAGS is used by this instruction.
-    if (IsSwapped) {
+    X86::CondCode OldCC;
+    bool OpcIsSET = false;
+    if (IsCmpZero || IsSwapped) {
+      // We decode the condition code from opcode.
+      if (Instr.isBranch())
+        OldCC = getCondFromBranchOpc(Instr.getOpcode());
+      else {
+        OldCC = getCondFromSETOpc(Instr.getOpcode());
+        if (OldCC != X86::COND_INVALID)
+          OpcIsSET = true;
+        else
+          OldCC = getCondFromCMovOpc(Instr.getOpcode());
+      }
+      if (OldCC == X86::COND_INVALID) return false;
+    }
+    if (IsCmpZero) {
+      switch (OldCC) {
+      default: break;
+      case X86::COND_A: case X86::COND_AE:
+      case X86::COND_B: case X86::COND_BE:
+      case X86::COND_G: case X86::COND_GE:
+      case X86::COND_L: case X86::COND_LE:
+      case X86::COND_O: case X86::COND_NO:
+        // CF and OF are used, we can't perform this optimization.
+        return false;
+      }
+    } else if (IsSwapped) {
       // If we have SUB(r1, r2) and CMP(r2, r1), the condition code needs
       // to be changed from r2 > r1 to r1 < r2, from r2 < r1 to r1 > r2, etc.
-      unsigned NewOpc = getSwappedConditionForSET(Instr.getOpcode());
-      if (!NewOpc) NewOpc = getSwappedConditionForBranch(Instr.getOpcode());
-      if (!NewOpc) NewOpc = getSwappedConditionForCMov(Instr.getOpcode());
-      if (!NewOpc) return false;
+      // We swap the condition code and synthesize the new opcode.
+      X86::CondCode NewCC = getSwappedCondition(OldCC);
+      if (NewCC == X86::COND_INVALID) return false;
+
+      // Synthesize the new opcode.
+      bool HasMemoryOperand = Instr.hasOneMemOperand();
+      unsigned NewOpc;
+      if (Instr.isBranch())
+        NewOpc = GetCondBranchFromCond(NewCC);
+      else if(OpcIsSET)
+        NewOpc = getSETFromCond(NewCC, HasMemoryOperand);
+      else {
+        unsigned DstReg = Instr.getOperand(0).getReg();
+        NewOpc = getCMovFromCond(NewCC, MRI->getRegClass(DstReg)->getSize(),
+                                 HasMemoryOperand);
+      }
 
       // Push the MachineInstr to OpsToUpdate.
       // If it is safe to remove CmpInstr, the condition code of these
@@ -3149,7 +3289,7 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
 
   // If EFLAGS is not killed nor re-defined, we should check whether it is
   // live-out. If it is live-out, do not optimize.
-  if (IsSwapped && !IsSafe) {
+  if ((IsCmpZero || IsSwapped) && !IsSafe) {
     MachineBasicBlock *MBB = CmpInstr->getParent();
     for (MachineBasicBlock::succ_iterator SI = MBB->succ_begin(),
              SE = MBB->succ_end(); SI != SE; ++SI)
@@ -3157,11 +3297,20 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
         return false;
   }
 
+  // The instruction to be updated is either Sub or MI.
+  Sub = IsCmpZero ? MI : Sub;
+  // Move Movr0Inst to the place right before Sub.
+  if (Movr0Inst) {
+    Sub->getParent()->remove(Movr0Inst);
+    Sub->getParent()->insert(MachineBasicBlock::iterator(Sub), Movr0Inst);
+  }
+
   // Make sure Sub instruction defines EFLAGS.
-  assert(Sub->getNumOperands() >= 4 && Sub->getOperand(3).isReg() &&
-         Sub->getOperand(3).getReg() == X86::EFLAGS &&
-         "EFLAGS should be the 4th operand of SUBrr or SUBri.");
-  Sub->getOperand(3).setIsDef(true);
+  assert(Sub->getNumOperands() >= 2 &&
+         Sub->getOperand(Sub->getNumOperands()-1).isReg() &&
+         Sub->getOperand(Sub->getNumOperands()-1).getReg() == X86::EFLAGS &&
+         "EFLAGS should be the last operand of SUB, ADD, OR, XOR, AND");
+  Sub->getOperand(Sub->getNumOperands()-1).setIsDef(true);
   CmpInstr->eraseFromParent();
 
   // Modify the condition code of instructions in OpsToUpdate.
