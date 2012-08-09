@@ -33,13 +33,6 @@
 #include <cctype>
 using namespace llvm;
 
-/// We are in the process of implementing a new TypeLegalization action
-/// - the promotion of vector elements. This feature is disabled by default
-/// and only enabled using this flag.
-static cl::opt<bool>
-AllowPromoteIntElem("promote-elements", cl::Hidden, cl::init(true),
-  cl::desc("Allow promotion of integer vector element types"));
-
 /// InitLibcallNames - Set default libcall names.
 ///
 static void InitLibcallNames(const char **Names) {
@@ -522,8 +515,7 @@ static void InitCmpLibcallCCs(ISD::CondCode *CCs) {
 /// NOTE: The constructor takes ownership of TLOF.
 TargetLowering::TargetLowering(const TargetMachine &tm,
                                const TargetLoweringObjectFile *tlof)
-  : TM(tm), TD(TM.getTargetData()), TLOF(*tlof),
-  mayPromoteElements(AllowPromoteIntElem) {
+  : TM(tm), TD(TM.getTargetData()), TLOF(*tlof) {
   // All operations default to being supported.
   memset(OpActions, 0, sizeof(OpActions));
   memset(LoadExtActions, 0, sizeof(LoadExtActions));
@@ -620,6 +612,7 @@ TargetLowering::TargetLowering(const TargetMachine &tm,
   MinStackArgumentAlignment = 1;
   ShouldFoldAtomicFences = false;
   InsertFencesForAtomic = false;
+  SupportJumpTables = true;
 
   InitLibcallNames(LibcallRoutineNames);
   InitCmpLibcallCCs(CmpLibcallCCs);
@@ -829,11 +822,8 @@ void TargetLowering::computeRegisterProperties() {
     unsigned NElts = VT.getVectorNumElements();
     if (NElts != 1) {
       bool IsLegalWiderType = false;
-      // If we allow the promotion of vector elements using a flag,
-      // then return TypePromoteInteger on vector elements.
       // First try to promote the elements of integer vectors. If no legal
       // promotion was found, fallback to the widen-vector method.
-      if (mayPromoteElements)
       for (unsigned nVT = i+1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
         EVT SVT = (MVT::SimpleValueType)nVT;
         // Promote vectors of integers to vectors with the same number
@@ -997,13 +987,11 @@ unsigned TargetLowering::getVectorTypeBreakdown(LLVMContext &Context, EVT VT,
 /// TODO: Move this out of TargetLowering.cpp.
 void llvm::GetReturnInfo(Type* ReturnType, Attributes attr,
                          SmallVectorImpl<ISD::OutputArg> &Outs,
-                         const TargetLowering &TLI,
-                         SmallVectorImpl<uint64_t> *Offsets) {
+                         const TargetLowering &TLI) {
   SmallVector<EVT, 4> ValueVTs;
   ComputeValueVTs(TLI, ReturnType, ValueVTs);
   unsigned NumValues = ValueVTs.size();
   if (NumValues == 0) return;
-  unsigned Offset = 0;
 
   for (unsigned j = 0, f = NumValues; j != f; ++j) {
     EVT VT = ValueVTs[j];
@@ -1026,8 +1014,6 @@ void llvm::GetReturnInfo(Type* ReturnType, Attributes attr,
 
     unsigned NumParts = TLI.getNumRegisters(ReturnType->getContext(), VT);
     EVT PartVT = TLI.getRegisterType(ReturnType->getContext(), VT);
-    unsigned PartSize = TLI.getTargetData()->getTypeAllocSize(
-                        PartVT.getTypeForEVT(ReturnType->getContext()));
 
     // 'inreg' on function refers to return value
     ISD::ArgFlagsTy Flags = ISD::ArgFlagsTy();
@@ -1042,10 +1028,6 @@ void llvm::GetReturnInfo(Type* ReturnType, Attributes attr,
 
     for (unsigned i = 0; i < NumParts; ++i) {
       Outs.push_back(ISD::OutputArg(Flags, PartVT, /*isFixed=*/true));
-      if (Offsets) {
-        Offsets->push_back(Offset);
-        Offset += PartSize;
-      }
     }
   }
 }
@@ -2016,7 +1998,7 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         }
       }
 
-      // Make sure we're not loosing bits from the constant.
+      // Make sure we're not losing bits from the constant.
       if (MinBits < C1.getBitWidth() && MinBits > C1.getActiveBits()) {
         EVT MinVT = EVT::getIntegerVT(*DAG.getContext(), MinBits);
         if (isTypeDesirableForOp(ISD::SETCC, MinVT)) {
@@ -2340,6 +2322,55 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           }
         }
       }
+
+    if (C1.getMinSignedBits() <= 64 &&
+        !isLegalICmpImmediate(C1.getSExtValue())) {
+      // (X & -256) == 256 -> (X >> 8) == 1
+      if ((Cond == ISD::SETEQ || Cond == ISD::SETNE) &&
+          N0.getOpcode() == ISD::AND && N0.hasOneUse()) {
+        if (ConstantSDNode *AndRHS =
+            dyn_cast<ConstantSDNode>(N0.getOperand(1))) {
+          const APInt &AndRHSC = AndRHS->getAPIntValue();
+          if ((-AndRHSC).isPowerOf2() && (AndRHSC & C1) == C1) {
+            unsigned ShiftBits = AndRHSC.countTrailingZeros();
+            EVT ShiftTy = DCI.isBeforeLegalize() ?
+              getPointerTy() : getShiftAmountTy(N0.getValueType());
+            EVT CmpTy = N0.getValueType();
+            SDValue Shift = DAG.getNode(ISD::SRL, dl, CmpTy, N0.getOperand(0),
+                                        DAG.getConstant(ShiftBits, ShiftTy));
+            SDValue CmpRHS = DAG.getConstant(C1.lshr(ShiftBits), CmpTy);
+            return DAG.getSetCC(dl, VT, Shift, CmpRHS, Cond);
+          }
+        }
+      } else if (Cond == ISD::SETULT || Cond == ISD::SETUGE ||
+                 Cond == ISD::SETULE || Cond == ISD::SETUGT) {
+        bool AdjOne = (Cond == ISD::SETULE || Cond == ISD::SETUGT);
+        // X <  0x100000000 -> (X >> 32) <  1
+        // X >= 0x100000000 -> (X >> 32) >= 1
+        // X <= 0x0ffffffff -> (X >> 32) <  1
+        // X >  0x0ffffffff -> (X >> 32) >= 1
+        unsigned ShiftBits;
+        APInt NewC = C1;
+        ISD::CondCode NewCond = Cond;
+        if (AdjOne) {
+          ShiftBits = C1.countTrailingOnes();
+          NewC = NewC + 1;
+          NewCond = (Cond == ISD::SETULE) ? ISD::SETULT : ISD::SETUGE;
+        } else {
+          ShiftBits = C1.countTrailingZeros();
+        }
+        NewC = NewC.lshr(ShiftBits);
+        if (ShiftBits && isLegalICmpImmediate(NewC.getSExtValue())) {
+          EVT ShiftTy = DCI.isBeforeLegalize() ?
+            getPointerTy() : getShiftAmountTy(N0.getValueType());
+          EVT CmpTy = N0.getValueType();
+          SDValue Shift = DAG.getNode(ISD::SRL, dl, CmpTy, N0,
+                                      DAG.getConstant(ShiftBits, ShiftTy));
+          SDValue CmpRHS = DAG.getConstant(NewC, CmpTy);
+          return DAG.getSetCC(dl, VT, Shift, CmpRHS, NewCond);
+        }
+      }
+    }
   }
 
   if (isa<ConstantFPSDNode>(N0.getNode())) {
@@ -2408,25 +2439,33 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   }
 
   if (N0 == N1) {
+    // The sext(setcc()) => setcc() optimization relies on the appropriate
+    // constant being emitted.
+    uint64_t EqVal;
+    switch (getBooleanContents(N0.getValueType().isVector())) {
+    case UndefinedBooleanContent:
+    case ZeroOrOneBooleanContent:
+      EqVal = ISD::isTrueWhenEqual(Cond);
+      break;
+    case ZeroOrNegativeOneBooleanContent:
+      EqVal = ISD::isTrueWhenEqual(Cond) ? -1 : 0;
+      break;
+    }
+
     // We can always fold X == X for integer setcc's.
     if (N0.getValueType().isInteger()) {
-      switch (getBooleanContents(N0.getValueType().isVector())) {
-      case UndefinedBooleanContent: 
-      case ZeroOrOneBooleanContent: 
-        return DAG.getConstant(ISD::isTrueWhenEqual(Cond), VT);
-      case ZeroOrNegativeOneBooleanContent:
-        return DAG.getConstant(ISD::isTrueWhenEqual(Cond) ? -1 : 0, VT);
-      }
+      return DAG.getConstant(EqVal, VT);
     }
     unsigned UOF = ISD::getUnorderedFlavor(Cond);
     if (UOF == 2)   // FP operators that are undefined on NaNs.
-      return DAG.getConstant(ISD::isTrueWhenEqual(Cond), VT);
+      return DAG.getConstant(EqVal, VT);
     if (UOF == unsigned(ISD::isTrueWhenEqual(Cond)))
-      return DAG.getConstant(UOF, VT);
+      return DAG.getConstant(EqVal, VT);
     // Otherwise, we can't fold it.  However, we can simplify it to SETUO/SETO
     // if it is not already.
     ISD::CondCode NewCond = UOF == 0 ? ISD::SETO : ISD::SETUO;
-    if (NewCond != Cond)
+    if (NewCond != Cond && (DCI.isBeforeLegalizeOps() ||
+          getCondCodeAction(NewCond, N0.getValueType()) == Legal))
       return DAG.getSetCC(dl, VT, N0, N1, NewCond);
   }
 
@@ -2995,10 +3034,12 @@ TargetLowering::AsmOperandInfoVector TargetLowering::ParseConstraints(
       AsmOperandInfo &Input = ConstraintOperands[OpInfo.MatchingInput];
 
       if (OpInfo.ConstraintVT != Input.ConstraintVT) {
-	std::pair<unsigned, const TargetRegisterClass*> MatchRC =
-	  getRegForInlineAsmConstraint(OpInfo.ConstraintCode, OpInfo.ConstraintVT);
-	std::pair<unsigned, const TargetRegisterClass*> InputRC =
-	  getRegForInlineAsmConstraint(Input.ConstraintCode, Input.ConstraintVT);
+        std::pair<unsigned, const TargetRegisterClass*> MatchRC =
+          getRegForInlineAsmConstraint(OpInfo.ConstraintCode,
+                                       OpInfo.ConstraintVT);
+        std::pair<unsigned, const TargetRegisterClass*> InputRC =
+          getRegForInlineAsmConstraint(Input.ConstraintCode,
+                                       Input.ConstraintVT);
         if ((OpInfo.ConstraintVT.isInteger() !=
              Input.ConstraintVT.isInteger()) ||
             (MatchRC.second != InputRC.second)) {

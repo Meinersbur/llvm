@@ -78,6 +78,7 @@ STATISTIC(NumReuse,      "Number of extension results reused");
 STATISTIC(NumBitcasts,   "Number of bitcasts eliminated");
 STATISTIC(NumCmps,       "Number of compares eliminated");
 STATISTIC(NumImmFold,    "Number of move immediate folded");
+STATISTIC(NumLoadFold,   "Number of loads folded");
 
 namespace {
   class PeepholeOptimizer : public MachineFunctionPass {
@@ -114,6 +115,7 @@ namespace {
     bool foldImmediate(MachineInstr *MI, MachineBasicBlock *MBB,
                        SmallSet<unsigned, 4> &ImmDefRegs,
                        DenseMap<unsigned, MachineInstr*> &ImmDefMIs);
+    bool isLoadFoldable(MachineInstr *MI, unsigned &FoldAsLoadDefReg);
   };
 }
 
@@ -145,16 +147,30 @@ optimizeExtInstr(MachineInstr *MI, MachineBasicBlock *MBB,
       TargetRegisterInfo::isPhysicalRegister(SrcReg))
     return false;
 
-  MachineRegisterInfo::use_nodbg_iterator UI = MRI->use_nodbg_begin(SrcReg);
-  if (++UI == MRI->use_nodbg_end())
+  if (MRI->hasOneNonDBGUse(SrcReg))
     // No other uses.
     return false;
+
+  // Ensure DstReg can get a register class that actually supports
+  // sub-registers. Don't change the class until we commit.
+  const TargetRegisterClass *DstRC = MRI->getRegClass(DstReg);
+  DstRC = TM->getRegisterInfo()->getSubClassWithSubReg(DstRC, SubIdx);
+  if (!DstRC)
+    return false;
+
+  // The ext instr may be operating on a sub-register of SrcReg as well.
+  // PPC::EXTSW is a 32 -> 64-bit sign extension, but it reads a 64-bit
+  // register.
+  // If UseSrcSubIdx is Set, SubIdx also applies to SrcReg, and only uses of
+  // SrcReg:SubIdx should be replaced.
+  bool UseSrcSubIdx = TM->getRegisterInfo()->
+    getSubClassWithSubReg(MRI->getRegClass(SrcReg), SubIdx) != 0;
 
   // The source has other uses. See if we can replace the other uses with use of
   // the result of the extension.
   SmallPtrSet<MachineBasicBlock*, 4> ReachedBBs;
-  UI = MRI->use_nodbg_begin(DstReg);
-  for (MachineRegisterInfo::use_nodbg_iterator UE = MRI->use_nodbg_end();
+  for (MachineRegisterInfo::use_nodbg_iterator
+       UI = MRI->use_nodbg_begin(DstReg), UE = MRI->use_nodbg_end();
        UI != UE; ++UI)
     ReachedBBs.insert(UI->getParent());
 
@@ -165,8 +181,8 @@ optimizeExtInstr(MachineInstr *MI, MachineBasicBlock *MBB,
   SmallVector<MachineOperand*, 8> ExtendedUses;
 
   bool ExtendLife = true;
-  UI = MRI->use_nodbg_begin(SrcReg);
-  for (MachineRegisterInfo::use_nodbg_iterator UE = MRI->use_nodbg_end();
+  for (MachineRegisterInfo::use_nodbg_iterator
+       UI = MRI->use_nodbg_begin(SrcReg), UE = MRI->use_nodbg_end();
        UI != UE; ++UI) {
     MachineOperand &UseMO = UI.getOperand();
     MachineInstr *UseMI = &*UI;
@@ -177,6 +193,10 @@ optimizeExtInstr(MachineInstr *MI, MachineBasicBlock *MBB,
       ExtendLife = false;
       continue;
     }
+
+    // Only accept uses of SrcReg:SubIdx.
+    if (UseSrcSubIdx && UseMO.getSubReg() != SubIdx)
+      continue;
 
     // It's an error to translate this:
     //
@@ -232,9 +252,9 @@ optimizeExtInstr(MachineInstr *MI, MachineBasicBlock *MBB,
     // Look for PHI uses of the extended result, we don't want to extend the
     // liveness of a PHI input. It breaks all kinds of assumptions down
     // stream. A PHI use is expected to be the kill of its source values.
-    UI = MRI->use_nodbg_begin(DstReg);
     for (MachineRegisterInfo::use_nodbg_iterator
-           UE = MRI->use_nodbg_end(); UI != UE; ++UI)
+         UI = MRI->use_nodbg_begin(DstReg), UE = MRI->use_nodbg_end();
+         UI != UE; ++UI)
       if (UI->isPHI())
         PHIBBs.insert(UI->getParent());
 
@@ -247,14 +267,20 @@ optimizeExtInstr(MachineInstr *MI, MachineBasicBlock *MBB,
         continue;
 
       // About to add uses of DstReg, clear DstReg's kill flags.
-      if (!Changed)
+      if (!Changed) {
         MRI->clearKillFlags(DstReg);
+        MRI->constrainRegClass(DstReg, DstRC);
+      }
 
       unsigned NewVR = MRI->createVirtualRegister(RC);
-      BuildMI(*UseMBB, UseMI, UseMI->getDebugLoc(),
-              TII->get(TargetOpcode::COPY), NewVR)
+      MachineInstr *Copy = BuildMI(*UseMBB, UseMI, UseMI->getDebugLoc(),
+                                   TII->get(TargetOpcode::COPY), NewVR)
         .addReg(DstReg, 0, SubIdx);
-
+      // SubIdx applies to both SrcReg and DstReg when UseSrcSubIdx is set.
+      if (UseSrcSubIdx) {
+        Copy->getOperand(0).setSubReg(SubIdx);
+        Copy->getOperand(0).setIsUndef();
+      }
       UseMO->setReg(NewVR);
       ++NumReuse;
       Changed = true;
@@ -344,18 +370,43 @@ bool PeepholeOptimizer::optimizeCmpInstr(MachineInstr *MI,
                                          MachineBasicBlock *MBB) {
   // If this instruction is a comparison against zero and isn't comparing a
   // physical register, we can try to optimize it.
-  unsigned SrcReg;
+  unsigned SrcReg, SrcReg2;
   int CmpMask, CmpValue;
-  if (!TII->AnalyzeCompare(MI, SrcReg, CmpMask, CmpValue) ||
-      TargetRegisterInfo::isPhysicalRegister(SrcReg))
+  if (!TII->analyzeCompare(MI, SrcReg, SrcReg2, CmpMask, CmpValue) ||
+      TargetRegisterInfo::isPhysicalRegister(SrcReg) ||
+      (SrcReg2 != 0 && TargetRegisterInfo::isPhysicalRegister(SrcReg2)))
     return false;
 
   // Attempt to optimize the comparison instruction.
-  if (TII->OptimizeCompareInstr(MI, SrcReg, CmpMask, CmpValue, MRI)) {
+  if (TII->optimizeCompareInstr(MI, SrcReg, SrcReg2, CmpMask, CmpValue, MRI)) {
     ++NumCmps;
     return true;
   }
 
+  return false;
+}
+
+/// isLoadFoldable - Check whether MI is a candidate for folding into a later
+/// instruction. We only fold loads to virtual registers and the virtual
+/// register defined has a single use.
+bool PeepholeOptimizer::isLoadFoldable(MachineInstr *MI,
+                                       unsigned &FoldAsLoadDefReg) {
+  if (!MI->canFoldAsLoad() || !MI->mayLoad())
+    return false;
+  const MCInstrDesc &MCID = MI->getDesc();
+  if (MCID.getNumDefs() != 1)
+    return false;
+
+  unsigned Reg = MI->getOperand(0).getReg();
+  // To reduce compilation time, we check MRI->hasOneUse when inserting
+  // loads. It should be checked when processing uses of the load, since
+  // uses can be removed during peephole.
+  if (!MI->getOperand(0).getSubReg() &&
+      TargetRegisterInfo::isVirtualRegister(Reg) &&
+      MRI->hasOneUse(Reg)) {
+    FoldAsLoadDefReg = Reg;
+    return true;
+  }
   return false;
 }
 
@@ -416,6 +467,7 @@ bool PeepholeOptimizer::runOnMachineFunction(MachineFunction &MF) {
   SmallPtrSet<MachineInstr*, 8> LocalMIs;
   SmallSet<unsigned, 4> ImmDefRegs;
   DenseMap<unsigned, MachineInstr*> ImmDefMIs;
+  unsigned FoldAsLoadDefReg;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     MachineBasicBlock *MBB = &*I;
 
@@ -423,6 +475,7 @@ bool PeepholeOptimizer::runOnMachineFunction(MachineFunction &MF) {
     LocalMIs.clear();
     ImmDefRegs.clear();
     ImmDefMIs.clear();
+    FoldAsLoadDefReg = 0;
 
     bool First = true;
     MachineBasicBlock::iterator PMII;
@@ -431,12 +484,17 @@ bool PeepholeOptimizer::runOnMachineFunction(MachineFunction &MF) {
       MachineInstr *MI = &*MII;
       LocalMIs.insert(MI);
 
+      // If there exists an instruction which belongs to the following
+      // categories, we will discard the load candidate.
       if (MI->isLabel() || MI->isPHI() || MI->isImplicitDef() ||
           MI->isKill() || MI->isInlineAsm() || MI->isDebugValue() ||
           MI->hasUnmodeledSideEffects()) {
+        FoldAsLoadDefReg = 0;
         ++MII;
         continue;
       }
+      if (MI->mayStore() || MI->isCall())
+        FoldAsLoadDefReg = 0;
 
       if (MI->isBitcast()) {
         if (optimizeBitcastInstr(MI, MBB)) {
@@ -464,6 +522,31 @@ bool PeepholeOptimizer::runOnMachineFunction(MachineFunction &MF) {
           Changed |= foldImmediate(MI, MBB, ImmDefRegs, ImmDefMIs);
       }
 
+      // Check whether MI is a load candidate for folding into a later
+      // instruction. If MI is not a candidate, check whether we can fold an
+      // earlier load into MI.
+      if (!isLoadFoldable(MI, FoldAsLoadDefReg) && FoldAsLoadDefReg) {
+        // We need to fold load after optimizeCmpInstr, since optimizeCmpInstr
+        // can enable folding by converting SUB to CMP.
+        MachineInstr *DefMI = 0;
+        MachineInstr *FoldMI = TII->optimizeLoadInstr(MI, MRI,
+                                                      FoldAsLoadDefReg, DefMI);
+        if (FoldMI) {
+          // Update LocalMIs since we replaced MI with FoldMI and deleted DefMI.
+          LocalMIs.erase(MI);
+          LocalMIs.erase(DefMI);
+          LocalMIs.insert(FoldMI);
+          MI->eraseFromParent();
+          DefMI->eraseFromParent();
+          ++NumLoadFold;
+
+          // MI is replaced with FoldMI.
+          Changed = true;
+          PMII = FoldMI;
+          MII = llvm::next(PMII);
+          continue;
+        }
+      }
       First = false;
       PMII = MII;
       ++MII;

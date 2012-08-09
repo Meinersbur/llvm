@@ -125,14 +125,19 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
   MachineRegisterInfo &RegInfo = MF.getRegInfo();
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
-  unsigned V0, V1, GlobalBaseReg = MipsFI->getGlobalBaseReg();
+  unsigned V0, V1, V2, GlobalBaseReg = MipsFI->getGlobalBaseReg();
+  const TargetRegisterClass *RC;
 
-  const TargetRegisterClass *RC = Subtarget.isABI_N64() ?
-    (const TargetRegisterClass*)&Mips::CPU64RegsRegClass :
-    (const TargetRegisterClass*)&Mips::CPURegsRegClass;
+  if (Subtarget.isABI_N64())
+    RC = (const TargetRegisterClass*)&Mips::CPU64RegsRegClass;
+  else if (Subtarget.inMips16Mode())
+    RC = (const TargetRegisterClass*)&Mips::CPU16RegsRegClass;
+  else
+    RC = (const TargetRegisterClass*)&Mips::CPURegsRegClass;
 
   V0 = RegInfo.createVirtualRegister(RC);
   V1 = RegInfo.createVirtualRegister(RC);
+  V2 = RegInfo.createVirtualRegister(RC);
 
   if (Subtarget.isABI_N64()) {
     MF.getRegInfo().addLiveIn(Mips::T9_64);
@@ -144,9 +149,21 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
     const GlobalValue *FName = MF.getFunction();
     BuildMI(MBB, I, DL, TII.get(Mips::LUi64), V0)
       .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_HI);
-    BuildMI(MBB, I, DL, TII.get(Mips::DADDu), V1).addReg(V0).addReg(Mips::T9_64);
+    BuildMI(MBB, I, DL, TII.get(Mips::DADDu), V1).addReg(V0)
+      .addReg(Mips::T9_64);
     BuildMI(MBB, I, DL, TII.get(Mips::DADDiu), GlobalBaseReg).addReg(V1)
       .addGlobalAddress(FName, 0, MipsII::MO_GPOFF_LO);
+    return;
+  }
+
+  if (Subtarget.inMips16Mode()) {
+    BuildMI(MBB, I, DL, TII.get(Mips::LiRxImmX16), V0)
+      .addExternalSymbol("_gp_disp", MipsII::MO_ABS_HI);
+    BuildMI(MBB, I, DL, TII.get(Mips::AddiuRxPcImmX16), V1)
+      .addExternalSymbol("_gp_disp", MipsII::MO_ABS_LO);
+    BuildMI(MBB, I, DL, TII.get(Mips::SllX16), V2).addReg(V0).addImm(16);
+    BuildMI(MBB, I, DL, TII.get(Mips::AdduRxRyRz16), GlobalBaseReg)
+      .addReg(V1).addReg(V2);
     return;
   }
 
@@ -190,7 +207,7 @@ void MipsDAGToDAGISel::InitGlobalBaseReg(MachineFunction &MF) {
   // We emit only the last instruction here.
   //
   // GNU linker requires that the first two instructions appear at the beginning
-  // of a funtion and no instructions be inserted before or between them.
+  // of a function and no instructions be inserted before or between them.
   // The two instructions are emitted during lowering to MC layer in order to
   // avoid any reordering.
   //
@@ -272,21 +289,6 @@ bool MipsDAGToDAGISel::
 SelectAddr(SDNode *Parent, SDValue Addr, SDValue &Base, SDValue &Offset) {
   EVT ValTy = Addr.getValueType();
 
-  // If Parent is an unaligned f32 load or store, select a (base + index)
-  // floating point load/store instruction (luxc1 or suxc1).
-  const LSBaseSDNode* LS = 0;
-
-  if (Parent && (LS = dyn_cast<LSBaseSDNode>(Parent))) {
-    EVT VT = LS->getMemoryVT();
-
-    if (VT.getSizeInBits() / 8 > LS->getAlignment()) {
-      assert(TLI.allowsUnalignedMemoryAccesses(VT) &&
-             "Unaligned loads/stores not supported for this type.");
-      if (VT == MVT::f32)
-        return false;
-    }
-  }
-
   // if Address is FI, get the TargetFrameIndex.
   if (FrameIndexSDNode *FIN = dyn_cast<FrameIndexSDNode>(Addr)) {
     Base   = CurDAG->getTargetFrameIndex(FIN->getIndex(), ValTy);
@@ -335,17 +337,20 @@ SelectAddr(SDNode *Parent, SDValue Addr, SDValue &Base, SDValue &Offset) {
     //  lui $2, %hi($CPI1_0)
     //  lwc1 $f0, %lo($CPI1_0)($2)
     if (Addr.getOperand(1).getOpcode() == MipsISD::Lo) {
-      SDValue LoVal = Addr.getOperand(1);
-      if (isa<ConstantPoolSDNode>(LoVal.getOperand(0)) ||
-          isa<GlobalAddressSDNode>(LoVal.getOperand(0))) {
+      SDValue LoVal = Addr.getOperand(1), Opnd0 = LoVal.getOperand(0);
+      if (isa<ConstantPoolSDNode>(Opnd0) || isa<GlobalAddressSDNode>(Opnd0) ||
+          isa<JumpTableSDNode>(Opnd0)) {
         Base = Addr.getOperand(0);
-        Offset = LoVal.getOperand(0);
+        Offset = Opnd0;
         return true;
       }
     }
 
     // If an indexed floating point load/store can be emitted, return false.
-    if (LS && (LS->getMemoryVT() == MVT::f32 || LS->getMemoryVT() == MVT::f64) &&
+    const LSBaseSDNode *LS = dyn_cast<LSBaseSDNode>(Parent);
+
+    if (LS &&
+        (LS->getMemoryVT() == MVT::f32 || LS->getMemoryVT() == MVT::f64) &&
         Subtarget.hasMips32r2Or64())
       return false;
   }

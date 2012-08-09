@@ -55,14 +55,15 @@ HexagonSubtarget::HexagonSubtarget(StringRef TT, StringRef CPU, StringRef FS):
   case HexagonSubtarget::V5:
     break;
   default:
-    llvm_unreachable("Unknown Architecture Version.");
+    // If the programmer has not specified a Hexagon version, default
+    // to -mv4.
+    CPUString = "hexagonv4";
+    HexagonArchVersion = HexagonSubtarget::V4;
+    break;
   }
 
   // Initialize scheduling itinerary for the specified CPU.
   InstrItins = getInstrItineraryForCPU(CPUString);
-
-  // Max issue per cycle == bundle width.
-  InstrItins.IssueWidth = 4;
 
   if (EnableMemOps)
     UseMemOps = true;

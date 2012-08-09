@@ -38,8 +38,6 @@ const char *Triple::getArchTypeName(ArchType Kind) {
   case x86_64:  return "x86_64";
   case xcore:   return "xcore";
   case mblaze:  return "mblaze";
-  case ptx32:   return "ptx32";
-  case ptx64:   return "ptx64";
   case nvptx:   return "nvptx";
   case nvptx64: return "nvptx64";
   case le32:    return "le32";
@@ -64,7 +62,12 @@ const char *Triple::getArchTypePrefix(ArchType Kind) {
 
   case mblaze:  return "mblaze";
 
-  case hexagon:   return "hexagon";
+  case mips:
+  case mipsel:
+  case mips64:
+  case mips64el:return "mips";
+
+  case hexagon: return "hexagon";
 
   case r600:    return "r600";
 
@@ -76,8 +79,6 @@ const char *Triple::getArchTypePrefix(ArchType Kind) {
 
   case xcore:   return "xcore";
 
-  case ptx32:   return "ptx";
-  case ptx64:   return "ptx";
   case nvptx:   return "nvptx";
   case nvptx64: return "nvptx";
   case le32:    return "le32";
@@ -123,6 +124,7 @@ const char *Triple::getOSTypeName(OSType Kind) {
   case RTEMS: return "rtems";
   case NativeClient: return "nacl";
   case CNK: return "cnk";
+  case Bitrig: return "bitrig";
   }
 
   llvm_unreachable("Invalid OSType");
@@ -164,8 +166,6 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
     .Case("x86", x86)
     .Case("x86-64", x86_64)
     .Case("xcore", xcore)
-    .Case("ptx32", ptx32)
-    .Case("ptx64", ptx64)
     .Case("nvptx", nvptx)
     .Case("nvptx64", nvptx64)
     .Case("le32", le32)
@@ -198,8 +198,6 @@ Triple::ArchType Triple::getArchTypeForDarwinArchName(StringRef Str) {
     .Cases("arm", "armv4t", "armv5", "armv6", Triple::arm)
     .Cases("armv7", "armv7f", "armv7k", "armv7s", "xscale", Triple::arm)
     .Case("r600", Triple::r600)
-    .Case("ptx32", Triple::ptx32)
-    .Case("ptx64", Triple::ptx64)
     .Case("nvptx", Triple::nvptx)
     .Case("nvptx64", Triple::nvptx64)
     .Case("amdil", Triple::amdil)
@@ -223,8 +221,6 @@ const char *Triple::getArchNameForAssembler() {
     .Cases("armv6", "thumbv6", "armv6")
     .Cases("armv7", "thumbv7", "armv7")
     .Case("r600", "r600")
-    .Case("ptx32", "ptx32")
-    .Case("ptx64", "ptx64")
     .Case("nvptx", "nvptx")
     .Case("nvptx64", "nvptx64")
     .Case("le32", "le32")
@@ -259,8 +255,6 @@ static Triple::ArchType parseArch(StringRef ArchName) {
     .Case("sparcv9", Triple::sparcv9)
     .Case("tce", Triple::tce)
     .Case("xcore", Triple::xcore)
-    .Case("ptx32", Triple::ptx32)
-    .Case("ptx64", Triple::ptx64)
     .Case("nvptx", Triple::nvptx)
     .Case("nvptx64", Triple::nvptx64)
     .Case("le32", Triple::le32)
@@ -300,6 +294,7 @@ static Triple::OSType parseOS(StringRef OSName) {
     .StartsWith("rtems", Triple::RTEMS)
     .StartsWith("nacl", Triple::NativeClient)
     .StartsWith("cnk", Triple::CNK)
+    .StartsWith("bitrig", Triple::Bitrig)
     .Default(Triple::UnknownOS);
 }
 
@@ -689,7 +684,6 @@ static unsigned getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::mipsel:
   case llvm::Triple::nvptx:
   case llvm::Triple::ppc:
-  case llvm::Triple::ptx32:
   case llvm::Triple::r600:
   case llvm::Triple::sparc:
   case llvm::Triple::tce:
@@ -702,7 +696,6 @@ static unsigned getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::mips64el:
   case llvm::Triple::nvptx64:
   case llvm::Triple::ppc64:
-  case llvm::Triple::ptx64:
   case llvm::Triple::sparcv9:
   case llvm::Triple::x86_64:
     return 64;
@@ -740,7 +733,6 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::mipsel:
   case Triple::nvptx:
   case Triple::ppc:
-  case Triple::ptx32:
   case Triple::r600:
   case Triple::sparc:
   case Triple::tce:
@@ -754,7 +746,6 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::mips64el:  T.setArch(Triple::mipsel);  break;
   case Triple::nvptx64:   T.setArch(Triple::nvptx);   break;
   case Triple::ppc64:     T.setArch(Triple::ppc);   break;
-  case Triple::ptx64:     T.setArch(Triple::ptx32);   break;
   case Triple::sparcv9:   T.setArch(Triple::sparc);   break;
   case Triple::x86_64:    T.setArch(Triple::x86);     break;
   }
@@ -783,7 +774,6 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::mips64el:
   case Triple::nvptx64:
   case Triple::ppc64:
-  case Triple::ptx64:
   case Triple::sparcv9:
   case Triple::x86_64:
     // Already 64-bit.
@@ -793,7 +783,6 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::mipsel:  T.setArch(Triple::mips64el);  break;
   case Triple::nvptx:   T.setArch(Triple::nvptx64);   break;
   case Triple::ppc:     T.setArch(Triple::ppc64);     break;
-  case Triple::ptx32:   T.setArch(Triple::ptx64);     break;
   case Triple::sparc:   T.setArch(Triple::sparcv9);   break;
   case Triple::x86:     T.setArch(Triple::x86_64);    break;
   }

@@ -366,6 +366,7 @@ class VPSI<bits<8> o, Format F, dag outs, dag ins, string asm,
 // 
 //   SDI    - SSE2 instructions with XD prefix.
 //   SDIi8  - SSE2 instructions with ImmT == Imm8 and XD prefix.
+//   S2SI   - SSE2 instructions with XS prefix.
 //   SSDIi8 - SSE2 instructions with ImmT == Imm8 and XS prefix.
 //   PDI    - SSE2 instructions with TB and OpSize prefixes.
 //   PDIi8  - SSE2 instructions with ImmT == Imm8 and TB and OpSize prefixes.
@@ -378,7 +379,10 @@ class SDI<bits<8> o, Format F, dag outs, dag ins, string asm,
 class SDIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
             list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
       : Ii8<o, F, outs, ins, asm, pattern, itin>, XD, Requires<[HasSSE2]>;
-class SSDIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
+class S2SI<bits<8> o, Format F, dag outs, dag ins, string asm,
+           list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
+      : I<o, F, outs, ins, asm, pattern, itin>, XS, Requires<[HasSSE2]>;
+class S2SIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
              list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
       : Ii8<o, F, outs, ins, asm, pattern>, XS, Requires<[HasSSE2]>;
 class PDI<bits<8> o, Format F, dag outs, dag ins, string asm,
@@ -392,6 +396,10 @@ class PDIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
 class VSDI<bits<8> o, Format F, dag outs, dag ins, string asm,
            list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
       : I<o, F, outs, ins, !strconcat("v", asm), pattern, itin>, XD,
+        Requires<[HasAVX]>;
+class VS2SI<bits<8> o, Format F, dag outs, dag ins, string asm,
+            list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
+      : I<o, F, outs, ins, !strconcat("v", asm), pattern, itin>, XS,
         Requires<[HasAVX]>;
 class VPDI<bits<8> o, Format F, dag outs, dag ins, string asm,
            list<dag> pattern, InstrItinClass itin = IIC_DEFAULT>
@@ -511,22 +519,22 @@ class AESAI<bits<8> o, Format F, dag outs, dag ins, string asm,
       : Ii8<o, F, outs, ins, asm, pattern, itin, SSEPackedInt>, TA,
         Requires<[HasAES]>;
 
-// CLMUL Instruction Templates
-class CLMULIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
+// PCLMUL Instruction Templates
+class PCLMULIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
                list<dag>pattern, InstrItinClass itin = IIC_DEFAULT>
       : Ii8<o, F, outs, ins, asm, pattern, itin, SSEPackedInt>, TA,
-        OpSize, Requires<[HasCLMUL]>;
+        OpSize, Requires<[HasPCLMUL]>;
 
-class AVXCLMULIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
+class AVXPCLMULIi8<bits<8> o, Format F, dag outs, dag ins, string asm,
                   list<dag>pattern, InstrItinClass itin = IIC_DEFAULT>
       : Ii8<o, F, outs, ins, asm, pattern, itin, SSEPackedInt>, TA,
-        OpSize, VEX_4V, Requires<[HasAVX, HasCLMUL]>;
+        OpSize, VEX_4V, Requires<[HasAVX, HasPCLMUL]>;
 
 // FMA3 Instruction Templates
 class FMA3<bits<8> o, Format F, dag outs, dag ins, string asm,
            list<dag>pattern, InstrItinClass itin = IIC_DEFAULT>
       : I<o, F, outs, ins, asm, pattern, itin>, T8,
-        OpSize, VEX_4V, Requires<[HasFMA3]>;
+        OpSize, VEX_4V, Requires<[HasFMA]>;
 
 // FMA4 Instruction Templates
 class FMA4<bits<8> o, Format F, dag outs, dag ins, string asm,

@@ -83,8 +83,10 @@ CodeGenRegister::CodeGenRegister(Record *R, unsigned Enum)
     EnumValue(Enum),
     CostPerUse(R->getValueAsInt("CostPerUse")),
     CoveredBySubRegs(R->getValueAsBit("CoveredBySubRegs")),
+    NumNativeRegUnits(0),
     SubRegsComplete(false),
-    SuperRegsComplete(false)
+    SuperRegsComplete(false),
+    TopoSig(~0u)
 {}
 
 void CodeGenRegister::buildObjectGraph(CodeGenRegBank &RegBank) {
@@ -107,6 +109,15 @@ void CodeGenRegister::buildObjectGraph(CodeGenRegBank &RegBank) {
   // This is used by computeSecondarySubRegs() to find candidates.
   if (CoveredBySubRegs && !ExplicitSubRegs.empty())
     ExplicitSubRegs.front()->LeadingSuperRegs.push_back(this);
+
+  // Add ad hoc alias links. This is a symmetric relationship between two
+  // registers, so build a symmetric graph by adding links in both ends.
+  std::vector<Record*> Aliases = TheDef->getValueAsListOfDefs("Aliases");
+  for (unsigned i = 0, e = Aliases.size(); i != e; ++i) {
+    CodeGenRegister *Reg = RegBank.getReg(Aliases[i]);
+    ExplicitAliases.push_back(Reg);
+    Reg->ExplicitAliases.push_back(this);
+  }
 }
 
 const std::string &CodeGenRegister::getName() const {
@@ -176,16 +187,7 @@ bool CodeGenRegister::inheritRegUnits(CodeGenRegBank &RegBank) {
   unsigned OldNumUnits = RegUnits.size();
   for (SubRegMap::const_iterator I = SubRegs.begin(), E = SubRegs.end();
        I != E; ++I) {
-    // Strangely a register may have itself as a subreg (self-cycle) e.g. XMM.
-    // Only create a unit if no other subregs have units.
     CodeGenRegister *SR = I->second;
-    if (SR == this) {
-      // RegUnits are only empty during computeSubRegs, prior to computing
-      // weight.
-      if (RegUnits.empty())
-        RegUnits.push_back(RegBank.newRegUnit(0));
-      continue;
-    }
     // Merge the subregister's units into this register's RegUnits.
     mergeRegUnits(RegUnits, SR->RegUnits);
   }
@@ -255,44 +257,6 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
     }
   }
 
-  // Process the composites.
-  ListInit *Comps = TheDef->getValueAsListInit("CompositeIndices");
-  for (unsigned i = 0, e = Comps->size(); i != e; ++i) {
-    DagInit *Pat = dynamic_cast<DagInit*>(Comps->getElement(i));
-    if (!Pat)
-      throw TGError(TheDef->getLoc(), "Invalid dag '" +
-                    Comps->getElement(i)->getAsString() +
-                    "' in CompositeIndices");
-    DefInit *BaseIdxInit = dynamic_cast<DefInit*>(Pat->getOperator());
-    if (!BaseIdxInit || !BaseIdxInit->getDef()->isSubClassOf("SubRegIndex"))
-      throw TGError(TheDef->getLoc(), "Invalid SubClassIndex in " +
-                    Pat->getAsString());
-    CodeGenSubRegIndex *BaseIdx = RegBank.getSubRegIdx(BaseIdxInit->getDef());
-
-    // Resolve list of subreg indices into R2.
-    CodeGenRegister *R2 = this;
-    for (DagInit::const_arg_iterator di = Pat->arg_begin(),
-         de = Pat->arg_end(); di != de; ++di) {
-      DefInit *IdxInit = dynamic_cast<DefInit*>(*di);
-      if (!IdxInit || !IdxInit->getDef()->isSubClassOf("SubRegIndex"))
-        throw TGError(TheDef->getLoc(), "Invalid SubClassIndex in " +
-                      Pat->getAsString());
-      CodeGenSubRegIndex *Idx = RegBank.getSubRegIdx(IdxInit->getDef());
-      const SubRegMap &R2Subs = R2->computeSubRegs(RegBank);
-      SubRegMap::const_iterator ni = R2Subs.find(Idx);
-      if (ni == R2Subs.end())
-        throw TGError(TheDef->getLoc(), "Composite " + Pat->getAsString() +
-                      " refers to bad index in " + R2->getName());
-      R2 = ni->second;
-    }
-
-    // Insert composite index. Allow overriding inherited indices etc.
-    SubRegs[BaseIdx] = R2;
-
-    // R2 is no longer an orphan.
-    Orphans.erase(R2);
-  }
-
   // Now Orphans contains the inherited subregisters without a direct index.
   // Create inferred indexes for all missing entries.
   // Work backwards in the Indices vector in order to compose subregs bottom-up.
@@ -307,7 +271,7 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
   //   dsub_2 -> ssub_0
   //
   // We pick the latter composition because another register may have [dsub_0,
-  // dsub_1, dsub_2] subregs without neccessarily having a qsub_1 subreg.  The
+  // dsub_1, dsub_2] subregs without necessarily having a qsub_1 subreg.  The
   // dsub_2 -> ssub_0 composition can be shared.
   while (!Indices.empty() && !Orphans.empty()) {
     CodeGenSubRegIndex *Idx = Indices.pop_back_val();
@@ -322,14 +286,25 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
   // Compute the inverse SubReg -> Idx map.
   for (SubRegMap::const_iterator SI = SubRegs.begin(), SE = SubRegs.end();
        SI != SE; ++SI) {
-    // Ignore idempotent sub-register indices.
-    if (SI->second == this)
+    if (SI->second == this) {
+      SMLoc Loc;
+      if (TheDef)
+        Loc = TheDef->getLoc();
+      throw TGError(Loc, "Register " + getName() +
+                    " has itself as a sub-register");
+    }
+    // Ensure that every sub-register has a unique name.
+    DenseMap<const CodeGenRegister*, CodeGenSubRegIndex*>::iterator Ins =
+      SubReg2Idx.insert(std::make_pair(SI->second, SI->first)).first;
+    if (Ins->second == SI->first)
       continue;
-    // Is is possible to have multiple names for the same sub-register.
-    // For example, XMM0 appears as sub_xmm, sub_sd, and sub_ss in YMM0.
-    // Eventually, this degeneration should go away, but for now we simply give
-    // precedence to the explicit sub-register index over the inherited ones.
-    SubReg2Idx.insert(std::make_pair(SI->second, SI->first));
+    // Trouble: Two different names for SI->second.
+    SMLoc Loc;
+    if (TheDef)
+      Loc = TheDef->getLoc();
+    throw TGError(Loc, "Sub-register can't have two names: " +
+                  SI->second->getName() + " available as " +
+                  SI->first->getName() + " and " + Ins->second->getName());
   }
 
   // Derive possible names for sub-register concatenations from any explicit
@@ -350,20 +325,53 @@ CodeGenRegister::computeSubRegs(CodeGenRegBank &RegBank) {
     RegBank.addConcatSubRegIndex(Parts, ExplicitSubRegIndices[i]);
   }
 
-  // Initialize RegUnitList. A register with no subregisters creates its own
-  // unit. Otherwise, it inherits all its subregister's units. Because
-  // getSubRegs is called recursively, this processes the register hierarchy in
-  // postorder.
+  // Initialize RegUnitList. Because getSubRegs is called recursively, this
+  // processes the register hierarchy in postorder.
   //
-  // TODO: We currently assume all register units correspond to a named "leaf"
-  // register. We should also unify register units for ad-hoc register
-  // aliases. This can be done by iteratively merging units for aliasing
-  // registers using a worklist.
-  assert(RegUnits.empty() && "Should only initialize RegUnits once");
-  if (SubRegs.empty())
-    RegUnits.push_back(RegBank.newRegUnit(0));
-  else
-    inheritRegUnits(RegBank);
+  // Inherit all sub-register units. It is good enough to look at the explicit
+  // sub-registers, the other registers won't contribute any more units.
+  for (unsigned i = 0, e = ExplicitSubRegs.size(); i != e; ++i) {
+    CodeGenRegister *SR = ExplicitSubRegs[i];
+    // Explicit sub-registers are usually disjoint, so this is a good way of
+    // computing the union. We may pick up a few duplicates that will be
+    // eliminated below.
+    unsigned N = RegUnits.size();
+    RegUnits.append(SR->RegUnits.begin(), SR->RegUnits.end());
+    std::inplace_merge(RegUnits.begin(), RegUnits.begin() + N, RegUnits.end());
+  }
+  RegUnits.erase(std::unique(RegUnits.begin(), RegUnits.end()), RegUnits.end());
+
+  // Absent any ad hoc aliasing, we create one register unit per leaf register.
+  // These units correspond to the maximal cliques in the register overlap
+  // graph which is optimal.
+  //
+  // When there is ad hoc aliasing, we simply create one unit per edge in the
+  // undirected ad hoc aliasing graph. Technically, we could do better by
+  // identifying maximal cliques in the ad hoc graph, but cliques larger than 2
+  // are extremely rare anyway (I've never seen one), so we don't bother with
+  // the added complexity.
+  for (unsigned i = 0, e = ExplicitAliases.size(); i != e; ++i) {
+    CodeGenRegister *AR = ExplicitAliases[i];
+    // Only visit each edge once.
+    if (AR->SubRegsComplete)
+      continue;
+    // Create a RegUnit representing this alias edge, and add it to both
+    // registers.
+    unsigned Unit = RegBank.newRegUnit(this, AR);
+    RegUnits.push_back(Unit);
+    AR->RegUnits.push_back(Unit);
+  }
+
+  // Finally, create units for leaf registers without ad hoc aliases. Note that
+  // a leaf register with ad hoc aliases doesn't get its own unit - it isn't
+  // necessary. This means the aliasing leaf registers can share a single unit.
+  if (RegUnits.empty())
+    RegUnits.push_back(RegBank.newRegUnit(this));
+
+  // We have now computed the native register units. More may be adopted later
+  // for balancing purposes.
+  NumNativeRegUnits = RegUnits.size();
+
   return SubRegs;
 }
 
@@ -448,7 +456,7 @@ void CodeGenRegister::computeSecondarySubRegs(CodeGenRegBank &RegBank) {
   }
 }
 
-void CodeGenRegister::computeSuperRegs() {
+void CodeGenRegister::computeSuperRegs(CodeGenRegBank &RegBank) {
   // Only visit each register once.
   if (SuperRegsComplete)
     return;
@@ -458,18 +466,24 @@ void CodeGenRegister::computeSuperRegs() {
   // lists will be topologically ordered.
   for (SubRegMap::const_iterator I = SubRegs.begin(), E = SubRegs.end();
        I != E; ++I)
-    I->second->computeSuperRegs();
+    I->second->computeSuperRegs(RegBank);
 
   // Now add this as a super-register on all sub-registers.
+  // Also compute the TopoSigId in post-order.
+  TopoSigId Id;
   for (SubRegMap::const_iterator I = SubRegs.begin(), E = SubRegs.end();
        I != E; ++I) {
-    if (I->second == this)
-      continue;
+    // Topological signature computed from SubIdx, TopoId(SubReg).
+    // Loops and idempotent indices have TopoSig = ~0u.
+    Id.push_back(I->first->EnumValue);
+    Id.push_back(I->second->TopoSig);
+
     // Don't add duplicate entries.
     if (!I->second->SuperRegs.empty() && I->second->SuperRegs.back() == this)
       continue;
     I->second->SuperRegs.push_back(this);
   }
+  TopoSig = RegBank.getTopoSig(Id);
 }
 
 void
@@ -484,8 +498,56 @@ CodeGenRegister::addSubRegsPreOrder(SetVector<const CodeGenRegister*> &OSet,
   // Add any secondary sub-registers that weren't part of the explicit tree.
   for (SubRegMap::const_iterator I = SubRegs.begin(), E = SubRegs.end();
        I != E; ++I)
-    if (I->second != this)
-      OSet.insert(I->second);
+    OSet.insert(I->second);
+}
+
+// Compute overlapping registers.
+//
+// The standard set is all super-registers and all sub-registers, but the
+// target description can add arbitrary overlapping registers via the 'Aliases'
+// field. This complicates things, but we can compute overlapping sets using
+// the following rules:
+//
+// 1. The relation overlap(A, B) is reflexive and symmetric but not transitive.
+//
+// 2. overlap(A, B) implies overlap(A, S) for all S in supers(B).
+//
+// Alternatively:
+//
+//    overlap(A, B) iff there exists:
+//    A' in { A, subregs(A) } and B' in { B, subregs(B) } such that:
+//    A' = B' or A' in aliases(B') or B' in aliases(A').
+//
+// Here subregs(A) is the full flattened sub-register set returned by
+// A.getSubRegs() while aliases(A) is simply the special 'Aliases' field in the
+// description of register A.
+//
+// This also implies that registers with a common sub-register are considered
+// overlapping. This can happen when forming register pairs:
+//
+//    P0 = (R0, R1)
+//    P1 = (R1, R2)
+//    P2 = (R2, R3)
+//
+// In this case, we will infer an overlap between P0 and P1 because of the
+// shared sub-register R1. There is no overlap between P0 and P2.
+//
+void CodeGenRegister::computeOverlaps(CodeGenRegister::Set &Overlaps,
+                                      const CodeGenRegBank &RegBank) const {
+  assert(!RegUnits.empty() && "Compute register units before overlaps.");
+
+  // Register units are assigned such that the overlapping registers are the
+  // super-registers of the root registers of the register units.
+  for (unsigned rui = 0, rue = RegUnits.size(); rui != rue; ++rui) {
+    const RegUnit &RU = RegBank.getRegUnit(RegUnits[rui]);
+    ArrayRef<const CodeGenRegister*> Roots = RU.getRoots();
+    for (unsigned ri = 0, re = Roots.size(); ri != re; ++ri) {
+      const CodeGenRegister *Root = Roots[ri];
+      Overlaps.insert(Root);
+      ArrayRef<const CodeGenRegister*> Supers = Root->getSuperRegs();
+      Overlaps.insert(Supers.begin(), Supers.end());
+    }
+  }
 }
 
 // Get the sum of this register's unit weights.
@@ -493,7 +555,7 @@ unsigned CodeGenRegister::getWeight(const CodeGenRegBank &RegBank) const {
   unsigned Weight = 0;
   for (RegUnitList::const_iterator I = RegUnits.begin(), E = RegUnits.end();
        I != E; ++I) {
-    Weight += RegBank.getRegUnitWeight(*I);
+    Weight += RegBank.getRegUnit(*I).Weight;
   }
   return Weight;
 }
@@ -612,7 +674,10 @@ struct TupleExpander : SetTheory::Expander {
 //===----------------------------------------------------------------------===//
 
 CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank, Record *R)
-  : TheDef(R), Name(R->getName()), EnumValue(-1) {
+  : TheDef(R),
+    Name(R->getName()),
+    TopoSigs(RegBank.getNumTopoSigs()),
+    EnumValue(-1) {
   // Rename anonymous register classes.
   if (R->getName().size() > 9 && R->getName()[9] == '.') {
     static unsigned AnonCounter = 0;
@@ -637,7 +702,9 @@ CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank, Record *R)
   // Default allocation order always contains all registers.
   for (unsigned i = 0, e = Elements->size(); i != e; ++i) {
     Orders[0].push_back((*Elements)[i]);
-    Members.insert(RegBank.getReg((*Elements)[i]));
+    const CodeGenRegister *Reg = RegBank.getReg((*Elements)[i]);
+    Members.insert(Reg);
+    TopoSigs.set(Reg->getTopoSig());
   }
 
   // Alternative allocation orders may be subsets.
@@ -669,15 +736,20 @@ CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank, Record *R)
 // Create an inferred register class that was missing from the .td files.
 // Most properties will be inherited from the closest super-class after the
 // class structure has been computed.
-CodeGenRegisterClass::CodeGenRegisterClass(StringRef Name, Key Props)
+CodeGenRegisterClass::CodeGenRegisterClass(CodeGenRegBank &RegBank,
+                                           StringRef Name, Key Props)
   : Members(*Props.Members),
     TheDef(0),
     Name(Name),
+    TopoSigs(RegBank.getNumTopoSigs()),
     EnumValue(-1),
     SpillSize(Props.SpillSize),
     SpillAlignment(Props.SpillAlignment),
     CopyCost(0),
     Allocatable(true) {
+  for (CodeGenRegister::Set::iterator I = Members.begin(), E = Members.end();
+       I != E; ++I)
+    TopoSigs.set((*I)->getTopoSig());
 }
 
 // Compute inherited propertied for a synthesized register class.
@@ -814,7 +886,7 @@ void CodeGenRegisterClass::computeSubClasses(CodeGenRegBank &RegBank) {
       RC.SubClasses |= SubRC->SubClasses;
     }
 
-    // Sweep up missed clique members.  They will be immediately preceeding RC.
+    // Sweep up missed clique members.  They will be immediately preceding RC.
     for (unsigned s = rci - 1; s && testSubClass(&RC, RegClasses[s - 1]); --s)
       RC.SubClasses.set(s - 1);
   }
@@ -906,7 +978,6 @@ CodeGenRegBank::CodeGenRegBank(RecordKeeper &Records) : Records(Records) {
 
   // Precompute all sub-register maps.
   // This will create Composite entries for all inferred sub-register indices.
-  NumRegUnits = 0;
   for (unsigned i = 0, e = Registers.size(); i != e; ++i)
     Registers[i]->computeSubRegs(*this);
 
@@ -918,11 +989,11 @@ CodeGenRegBank::CodeGenRegBank(RecordKeeper &Records) : Records(Records) {
   // After the sub-register graph is complete, compute the topologically
   // ordered SuperRegs list.
   for (unsigned i = 0, e = Registers.size(); i != e; ++i)
-    Registers[i]->computeSuperRegs();
+    Registers[i]->computeSuperRegs(*this);
 
   // Native register units are associated with a leaf register. They've all been
   // discovered now.
-  NumNativeRegUnits = NumRegUnits;
+  NumNativeRegUnits = RegUnits.size();
 
   // Read in register class definitions.
   std::vector<Record*> RCs = Records.getAllDerivedDefinitions("RegisterClass");
@@ -986,7 +1057,7 @@ CodeGenRegBank::getOrCreateSubClass(const CodeGenRegisterClass *RC,
     return FoundI->second;
 
   // Sub-class doesn't exist, create a new one.
-  CodeGenRegisterClass *NewRC = new CodeGenRegisterClass(Name, K);
+  CodeGenRegisterClass *NewRC = new CodeGenRegisterClass(*this, Name, K);
   addToMaps(NewRC);
   return NewRC;
 }
@@ -1032,8 +1103,18 @@ getConcatSubRegIndex(const SmallVector<CodeGenSubRegIndex*, 8> &Parts) {
 }
 
 void CodeGenRegBank::computeComposites() {
+  // Keep track of TopoSigs visited. We only need to visit each TopoSig once,
+  // and many registers will share TopoSigs on regular architectures.
+  BitVector TopoSigs(getNumTopoSigs());
+
   for (unsigned i = 0, e = Registers.size(); i != e; ++i) {
     CodeGenRegister *Reg1 = Registers[i];
+
+    // Skip identical subreg structures already processed.
+    if (TopoSigs.test(Reg1->getTopoSig()))
+      continue;
+    TopoSigs.set(Reg1->getTopoSig());
+
     const CodeGenRegister::SubRegMap &SRM1 = Reg1->getSubRegs();
     for (CodeGenRegister::SubRegMap::const_iterator i1 = SRM1.begin(),
          e1 = SRM1.end(); i1 != e1; ++i1) {
@@ -1181,7 +1262,7 @@ static void computeUberWeights(std::vector<UberRegSet> &UberSets,
         Reg = UnitI.getReg();
         Weight = 0;
       }
-      unsigned UWeight = RegBank.getRegUnitWeight(*UnitI);
+      unsigned UWeight = RegBank.getRegUnit(*UnitI).Weight;
       if (!UWeight) {
         UWeight = 1;
         RegBank.increaseRegUnitWeight(*UnitI, UWeight);
@@ -1276,11 +1357,6 @@ static bool normalizeWeight(CodeGenRegister *Reg,
 // The goal is that two registers in the same class will have the same weight,
 // where each register's weight is defined as sum of its units' weights.
 void CodeGenRegBank::computeRegUnitWeights() {
-  assert(RegUnitWeights.empty() && "Only initialize RegUnitWeights once");
-
-  // Only allocatable units will be initialized to nonzero weight.
-  RegUnitWeights.resize(NumRegUnits);
-
   std::vector<UberRegSet> UberSets;
   std::vector<UberRegSet*> RegSets(Registers.size());
   computeUberSets(UberSets, RegSets, *this);
@@ -1457,80 +1533,6 @@ void CodeGenRegBank::computeRegUnitSets() {
   }
 }
 
-// Compute sets of overlapping registers.
-//
-// The standard set is all super-registers and all sub-registers, but the
-// target description can add arbitrary overlapping registers via the 'Aliases'
-// field. This complicates things, but we can compute overlapping sets using
-// the following rules:
-//
-// 1. The relation overlap(A, B) is reflexive and symmetric but not transitive.
-//
-// 2. overlap(A, B) implies overlap(A, S) for all S in supers(B).
-//
-// Alternatively:
-//
-//    overlap(A, B) iff there exists:
-//    A' in { A, subregs(A) } and B' in { B, subregs(B) } such that:
-//    A' = B' or A' in aliases(B') or B' in aliases(A').
-//
-// Here subregs(A) is the full flattened sub-register set returned by
-// A.getSubRegs() while aliases(A) is simply the special 'Aliases' field in the
-// description of register A.
-//
-// This also implies that registers with a common sub-register are considered
-// overlapping. This can happen when forming register pairs:
-//
-//    P0 = (R0, R1)
-//    P1 = (R1, R2)
-//    P2 = (R2, R3)
-//
-// In this case, we will infer an overlap between P0 and P1 because of the
-// shared sub-register R1. There is no overlap between P0 and P2.
-//
-void CodeGenRegBank::
-computeOverlaps(std::map<const CodeGenRegister*, CodeGenRegister::Set> &Map) {
-  assert(Map.empty());
-
-  // Collect overlaps that don't follow from rule 2.
-  for (unsigned i = 0, e = Registers.size(); i != e; ++i) {
-    CodeGenRegister *Reg = Registers[i];
-    CodeGenRegister::Set &Overlaps = Map[Reg];
-
-    // Reg overlaps itself.
-    Overlaps.insert(Reg);
-
-    // All super-registers overlap.
-    const CodeGenRegister::SuperRegList &Supers = Reg->getSuperRegs();
-    Overlaps.insert(Supers.begin(), Supers.end());
-
-    // Form symmetrical relations from the special Aliases[] lists.
-    std::vector<Record*> RegList = Reg->TheDef->getValueAsListOfDefs("Aliases");
-    for (unsigned i2 = 0, e2 = RegList.size(); i2 != e2; ++i2) {
-      CodeGenRegister *Reg2 = getReg(RegList[i2]);
-      CodeGenRegister::Set &Overlaps2 = Map[Reg2];
-      const CodeGenRegister::SuperRegList &Supers2 = Reg2->getSuperRegs();
-      // Reg overlaps Reg2 which implies it overlaps supers(Reg2).
-      Overlaps.insert(Reg2);
-      Overlaps.insert(Supers2.begin(), Supers2.end());
-      Overlaps2.insert(Reg);
-      Overlaps2.insert(Supers.begin(), Supers.end());
-    }
-  }
-
-  // Apply rule 2. and inherit all sub-register overlaps.
-  for (unsigned i = 0, e = Registers.size(); i != e; ++i) {
-    CodeGenRegister *Reg = Registers[i];
-    CodeGenRegister::Set &Overlaps = Map[Reg];
-    const CodeGenRegister::SubRegMap &SRM = Reg->getSubRegs();
-    for (CodeGenRegister::SubRegMap::const_iterator i2 = SRM.begin(),
-         e2 = SRM.end(); i2 != e2; ++i2) {
-      CodeGenRegister::Set &Overlaps2 = Map[i2->second];
-      Overlaps.insert(Overlaps2.begin(), Overlaps2.end());
-    }
-  }
-}
-
 void CodeGenRegBank::computeDerivedInfo() {
   computeComposites();
 
@@ -1634,6 +1636,7 @@ void CodeGenRegBank::inferMatchingSuperRegClass(CodeGenRegisterClass *RC,
                                                 unsigned FirstSubRegRC) {
   SmallVector<std::pair<const CodeGenRegister*,
                         const CodeGenRegister*>, 16> SSPairs;
+  BitVector TopoSigs(getNumTopoSigs());
 
   // Iterate in SubRegIndex numerical order to visit synthetic indices last.
   for (unsigned sri = 0, sre = SubRegIndices.size(); sri != sre; ++sri) {
@@ -1646,12 +1649,14 @@ void CodeGenRegBank::inferMatchingSuperRegClass(CodeGenRegisterClass *RC,
 
     // Build list of (Super, Sub) pairs for this SubIdx.
     SSPairs.clear();
+    TopoSigs.reset();
     for (CodeGenRegister::Set::const_iterator RI = RC->getMembers().begin(),
          RE = RC->getMembers().end(); RI != RE; ++RI) {
       const CodeGenRegister *Super = *RI;
       const CodeGenRegister *Sub = Super->getSubRegs().find(SubIdx)->second;
       assert(Sub && "Missing sub-register");
       SSPairs.push_back(std::make_pair(Super, Sub));
+      TopoSigs.set(Sub->getTopoSig());
     }
 
     // Iterate over sub-register class candidates.  Ignore classes created by
@@ -1659,6 +1664,9 @@ void CodeGenRegBank::inferMatchingSuperRegClass(CodeGenRegisterClass *RC,
     for (unsigned rci = FirstSubRegRC, rce = RegClasses.size(); rci != rce;
          ++rci) {
       CodeGenRegisterClass *SubRC = RegClasses[rci];
+      // Topological shortcut: SubRC members have the wrong shape.
+      if (!TopoSigs.anyCommon(SubRC->getTopoSigs()))
+        continue;
       // Compute the subset of RC that maps into SubRC.
       CodeGenRegister::Set SubSet;
       for (unsigned i = 0, e = SSPairs.size(); i != e; ++i)

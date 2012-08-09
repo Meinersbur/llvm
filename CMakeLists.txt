@@ -83,7 +83,6 @@ set(LLVM_ALL_TARGETS
   MSP430
   NVPTX
   PowerPC
-  PTX
   Sparc
   X86
   XCore
@@ -99,6 +98,9 @@ else( MSVC )
   set(LLVM_TARGETS_TO_BUILD "all"
     CACHE STRING "Semicolon-separated list of targets to build, or \"all\".")
 endif( MSVC )
+
+set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
+  CACHE STRING "Semicolon-separated list of experimental targets to build.")
 
 option(BUILD_SHARED_LIBS
   "Build all libraries as shared libraries instead of static" OFF)
@@ -136,6 +138,11 @@ foreach(c ${LLVM_TARGETS_TO_BUILD})
     set(LLVM_ENUM_TARGETS "${LLVM_ENUM_TARGETS}LLVM_TARGET(${c})\n")
   endif()
 endforeach(c)
+
+set(LLVM_TARGETS_TO_BUILD
+  ${LLVM_TARGETS_TO_BUILD}
+  ${LLVM_EXPERIMENTAL_TARGETS_TO_BUILD}
+  )
 
 set(llvm_builded_incs_dir ${LLVM_BINARY_DIR}/include/llvm)
 
@@ -402,6 +409,8 @@ add_subdirectory(utils/count)
 add_subdirectory(utils/not)
 add_subdirectory(utils/llvm-lit)
 add_subdirectory(utils/yaml-bench)
+add_subdirectory(utils/obj2yaml)
+add_subdirectory(utils/yaml2obj)
 
 add_subdirectory(projects)
 
@@ -426,6 +435,20 @@ if( LLVM_INCLUDE_TESTS )
     # Windows.
     add_subdirectory(utils/KillTheDoctor)
   endif()
+
+  # Add a global check rule now that all subdirectories have been traversed
+  # and we know the total set of lit testsuites.
+  get_property(LLVM_LIT_TESTSUITES GLOBAL PROPERTY LLVM_LIT_TESTSUITES)
+  get_property(LLVM_LIT_PARAMS GLOBAL PROPERTY LLVM_LIT_PARAMS)
+  get_property(LLVM_LIT_DEPENDS GLOBAL PROPERTY LLVM_LIT_DEPENDS)
+  get_property(LLVM_LIT_EXTRA_ARGS GLOBAL PROPERTY LLVM_LIT_EXTRA_ARGS)
+  add_lit_target(check-all
+    "Running all regression tests"
+    ${LLVM_LIT_TESTSUITES}
+    PARAMS ${LLVM_LIT_PARAMS}
+    DEPENDS ${LLVM_LIT_DEPENDS}
+    ARGS ${LLVM_LIT_EXTRA_ARGS}
+    )
 endif()
 
 add_subdirectory(cmake/modules)

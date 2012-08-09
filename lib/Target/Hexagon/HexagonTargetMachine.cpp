@@ -28,10 +28,6 @@ static cl::
 opt<bool> DisableHardwareLoops(
                         "disable-hexagon-hwloops", cl::Hidden,
                         cl::desc("Disable Hardware Loops for Hexagon target"));
-static cl::
-opt<bool> DisableCExtOpt(
-                        "disable-hexagon-cextopt", cl::Hidden,
-                        cl::desc("Disable Optimization of Constant Extenders"));
 
 /// HexagonTargetMachineModule - Note that this is used on hosts that
 /// cannot link in a library unless there are references into the
@@ -106,50 +102,47 @@ TargetPassConfig *HexagonTargetMachine::createPassConfig(PassManagerBase &PM) {
 }
 
 bool HexagonPassConfig::addInstSelector() {
-  PM->add(createHexagonRemoveExtendOps(getHexagonTargetMachine()));
-  PM->add(createHexagonISelDag(getHexagonTargetMachine()));
-  PM->add(createHexagonPeephole());
+  addPass(createHexagonRemoveExtendOps(getHexagonTargetMachine()));
+  addPass(createHexagonISelDag(getHexagonTargetMachine()));
+  addPass(createHexagonPeephole());
   return false;
 }
 
 
 bool HexagonPassConfig::addPreRegAlloc() {
-  if (!DisableCExtOpt) {
-    PM->add(createHexagonOptimizeConstExt(getHexagonTargetMachine()));
-  }
   if (!DisableHardwareLoops) {
-    PM->add(createHexagonHardwareLoops());
+    addPass(createHexagonHardwareLoops());
   }
   return false;
 }
 
 bool HexagonPassConfig::addPostRegAlloc() {
-  PM->add(createHexagonCFGOptimizer(getHexagonTargetMachine()));
+  addPass(createHexagonCFGOptimizer(getHexagonTargetMachine()));
   return true;
 }
 
 
 bool HexagonPassConfig::addPreSched2() {
-  addPass(IfConverterID);
+  addPass(&IfConverterID);
   return true;
 }
 
 bool HexagonPassConfig::addPreEmitPass() {
 
   if (!DisableHardwareLoops) {
-    PM->add(createHexagonFixupHwLoops());
+    addPass(createHexagonFixupHwLoops());
   }
 
-  PM->add(createHexagonNewValueJump());
+  addPass(createHexagonNewValueJump());
 
   // Expand Spill code for predicate registers.
-  PM->add(createHexagonExpandPredSpillCode(getHexagonTargetMachine()));
+  addPass(createHexagonExpandPredSpillCode(getHexagonTargetMachine()));
 
   // Split up TFRcondsets into conditional transfers.
-  PM->add(createHexagonSplitTFRCondSets(getHexagonTargetMachine()));
+  addPass(createHexagonSplitTFRCondSets(getHexagonTargetMachine()));
 
   // Create Packets.
-  PM->add(createHexagonPacketizer());
+  addPass(createHexagonPacketizer());
 
   return false;
 }

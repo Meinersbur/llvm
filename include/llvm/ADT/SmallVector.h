@@ -463,18 +463,25 @@ public:
   }
 
   iterator erase(iterator I) {
+    assert(I >= this->begin() && "Iterator to erase is out of bounds.");
+    assert(I < this->end() && "Erasing at past-the-end iterator.");
+
     iterator N = I;
     // Shift all elts down one.
-    std::copy(I+1, this->end(), I);
+    this->move(I+1, this->end(), I);
     // Drop the last elt.
     this->pop_back();
     return(N);
   }
 
   iterator erase(iterator S, iterator E) {
+    assert(S >= this->begin() && "Range to erase is out of bounds.");
+    assert(S <= E && "Trying to erase invalid range.");
+    assert(E <= this->end() && "Trying to erase past the end.");
+
     iterator N = S;
     // Shift all elts down.
-    iterator I = std::copy(E, this->end(), S);
+    iterator I = this->move(E, this->end(), S);
     // Drop the last elts.
     this->destroy_range(I, this->end());
     this->setEnd(I);
@@ -487,6 +494,9 @@ public:
       this->push_back(::std::move(Elt));
       return this->end()-1;
     }
+
+    assert(I >= this->begin() && "Insertion iterator is out of bounds.");
+    assert(I <= this->end() && "Inserting past the end of the vector.");
 
     if (this->EndX < this->CapacityX) {
     Retry:
@@ -517,6 +527,9 @@ public:
       return this->end()-1;
     }
 
+    assert(I >= this->begin() && "Insertion iterator is out of bounds.");
+    assert(I <= this->end() && "Inserting past the end of the vector.");
+
     if (this->EndX < this->CapacityX) {
     Retry:
       ::new ((void*) this->end()) T(this->back());
@@ -540,13 +553,16 @@ public:
   }
 
   iterator insert(iterator I, size_type NumToInsert, const T &Elt) {
-    if (I == this->end()) {  // Important special case for empty vector.
-      append(NumToInsert, Elt);
-      return this->end()-1;
-    }
-
     // Convert iterator to elt# to avoid invalidating iterator when we reserve()
     size_t InsertElt = I - this->begin();
+
+    if (I == this->end()) {  // Important special case for empty vector.
+      append(NumToInsert, Elt);
+      return this->begin()+InsertElt;
+    }
+
+    assert(I >= this->begin() && "Insertion iterator is out of bounds.");
+    assert(I <= this->end() && "Inserting past the end of the vector.");
 
     // Ensure there is enough space.
     reserve(static_cast<unsigned>(this->size() + NumToInsert));
@@ -572,11 +588,11 @@ public:
     // Otherwise, we're inserting more elements than exist already, and we're
     // not inserting at the end.
 
-    // Copy over the elements that we're about to overwrite.
+    // Move over the elements that we're about to overwrite.
     T *OldEnd = this->end();
     this->setEnd(this->end() + NumToInsert);
     size_t NumOverwritten = OldEnd-I;
-    this->uninitialized_copy(I, OldEnd, this->end()-NumOverwritten);
+    this->uninitialized_move(I, OldEnd, this->end()-NumOverwritten);
 
     // Replace the overwritten part.
     std::fill_n(I, NumOverwritten, Elt);
@@ -588,14 +604,18 @@ public:
 
   template<typename ItTy>
   iterator insert(iterator I, ItTy From, ItTy To) {
-    if (I == this->end()) {  // Important special case for empty vector.
-      append(From, To);
-      return this->end()-1;
-    }
-
-    size_t NumToInsert = std::distance(From, To);
     // Convert iterator to elt# to avoid invalidating iterator when we reserve()
     size_t InsertElt = I - this->begin();
+
+    if (I == this->end()) {  // Important special case for empty vector.
+      append(From, To);
+      return this->begin()+InsertElt;
+    }
+
+    assert(I >= this->begin() && "Insertion iterator is out of bounds.");
+    assert(I <= this->end() && "Inserting past the end of the vector.");
+
+    size_t NumToInsert = std::distance(From, To);
 
     // Ensure there is enough space.
     reserve(static_cast<unsigned>(this->size() + NumToInsert));
@@ -621,16 +641,16 @@ public:
     // Otherwise, we're inserting more elements than exist already, and we're
     // not inserting at the end.
 
-    // Copy over the elements that we're about to overwrite.
+    // Move over the elements that we're about to overwrite.
     T *OldEnd = this->end();
     this->setEnd(this->end() + NumToInsert);
     size_t NumOverwritten = OldEnd-I;
-    this->uninitialized_copy(I, OldEnd, this->end()-NumOverwritten);
+    this->uninitialized_move(I, OldEnd, this->end()-NumOverwritten);
 
     // Replace the overwritten part.
-    for (; NumOverwritten > 0; --NumOverwritten) {
-      *I = *From;
-      ++I; ++From;
+    for (T *J = I; NumOverwritten > 0; --NumOverwritten) {
+      *J = *From;
+      ++J; ++From;
     }
 
     // Insert the non-overwritten middle part.
@@ -898,7 +918,8 @@ public:
 template <typename T>
 class SmallVector<T,0> : public SmallVectorImpl<T> {
 public:
-  SmallVector() : SmallVectorImpl<T>(0) {}
+  SmallVector() : SmallVectorImpl<T>(0) {
+  }
 
   explicit SmallVector(unsigned Size, const T &Value = T())
     : SmallVectorImpl<T>(0) {
@@ -911,13 +932,26 @@ public:
   }
 
   SmallVector(const SmallVector &RHS) : SmallVectorImpl<T>(0) {
+    if (!RHS.empty())
+      SmallVectorImpl<T>::operator=(RHS);
+  }
+
+  const SmallVector &operator=(const SmallVector &RHS) {
     SmallVectorImpl<T>::operator=(RHS);
+    return *this;
   }
 
-  SmallVector &operator=(const SmallVectorImpl<T> &RHS) {
-    return SmallVectorImpl<T>::operator=(RHS);
+#if LLVM_USE_RVALUE_REFERENCES
+  SmallVector(SmallVector &&RHS) : SmallVectorImpl<T>(0) {
+    if (!RHS.empty())
+      SmallVectorImpl<T>::operator=(::std::move(RHS));
   }
 
+  const SmallVector &operator=(SmallVector &&RHS) {
+    SmallVectorImpl<T>::operator=(::std::move(RHS));
+    return *this;
+  }
+#endif
 };
 
 template<typename T, unsigned N>

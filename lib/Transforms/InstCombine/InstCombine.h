@@ -11,11 +11,11 @@
 #define INSTCOMBINE_INSTCOMBINE_H
 
 #include "InstCombineWorklist.h"
+#include "llvm/IRBuilder.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Operator.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Support/IRBuilder.h"
 #include "llvm/Support/InstVisitor.h"
 #include "llvm/Support/TargetFolder.h"
 
@@ -187,7 +187,7 @@ public:
   Instruction *visitPHINode(PHINode &PN);
   Instruction *visitGetElementPtrInst(GetElementPtrInst &GEP);
   Instruction *visitAllocaInst(AllocaInst &AI);
-  Instruction *visitMalloc(Instruction &FI);
+  Instruction *visitAllocSite(Instruction &FI);
   Instruction *visitFree(CallInst &FI);
   Instruction *visitLoadInst(LoadInst &LI);
   Instruction *visitStoreInst(StoreInst &SI);
@@ -226,7 +226,7 @@ private:
                                  bool DoXform = true);
   Instruction *transformSExtICmp(ICmpInst *ICI, Instruction &CI);
   bool WillNotOverflowSignedAdd(Value *LHS, Value *RHS);
-  Value *EmitGEPOffset(User *GEP, bool NoNUW = false);
+  Value *EmitGEPOffset(User *GEP);
 
 public:
   // InsertNewInstBefore - insert an instruction New before instruction Old
