@@ -128,21 +128,21 @@ if( LLVM_TARGETS_TO_BUILD STREQUAL "all" )
   set( LLVM_TARGETS_TO_BUILD ${LLVM_ALL_TARGETS} )
 endif()
 
+set(LLVM_TARGETS_TO_BUILD
+   ${LLVM_TARGETS_TO_BUILD}
+   ${LLVM_EXPERIMENTAL_TARGETS_TO_BUILD})
+
 set(LLVM_ENUM_TARGETS "")
 foreach(c ${LLVM_TARGETS_TO_BUILD})
   list(FIND LLVM_ALL_TARGETS ${c} idx)
-  if( idx LESS 0 )
+  list(FIND LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ${c} idy)
+  if( idx LESS 0 AND idy LESS 0 )
     message(FATAL_ERROR "The target `${c}' does not exist.
     It should be one of\n${LLVM_ALL_TARGETS}")
   else()
     set(LLVM_ENUM_TARGETS "${LLVM_ENUM_TARGETS}LLVM_TARGET(${c})\n")
   endif()
 endforeach(c)
-
-set(LLVM_TARGETS_TO_BUILD
-  ${LLVM_TARGETS_TO_BUILD}
-  ${LLVM_EXPERIMENTAL_TARGETS_TO_BUILD}
-  )
 
 set(llvm_builded_incs_dir ${LLVM_BINARY_DIR}/include/llvm)
 
@@ -249,6 +249,14 @@ option(LLVM_INCLUDE_TESTS "Generate build targets for the LLVM unit tests." ON)
 # BEFORE this include, otherwise options will not be correctly set on
 # first cmake run
 include(config-ix)
+
+# By default, we target the host, but this can be overridden at CMake
+# invocation time.
+set(LLVM_DEFAULT_TARGET_TRIPLE "${LLVM_HOST_TRIPLE}" CACHE STRING
+  "Default target for which LLVM will generate code." )
+set(TARGET_TRIPLE "${LLVM_DEFAULT_TARGET_TRIPLE}" CACHE STRING
+  "Default target for which LLVM will generate code." )
+
 include(HandleLLVMOptions)
 
 # Verify that we can find a Python interpreter,

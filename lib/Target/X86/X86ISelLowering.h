@@ -137,10 +137,6 @@ namespace llvm {
       /// relative displacements.
       WrapperRIP,
 
-      /// MOVQ2DQ - Copies a 64-bit value from an MMX vector to the low word
-      /// of an XMM vector, with the high word zero filled.
-      MOVQ2DQ,
-
       /// MOVDQ2Q - Copies a 64-bit value from the low word of an XMM vector
       /// to an MMX vector.  If you think this is too close to the previous
       /// mnemonic, so do I; blame Intel.
@@ -199,6 +195,9 @@ namespace llvm {
       ///
       FMAX, FMIN,
 
+      /// FMAXC, FMINC - Commutative FMIN and FMAX.
+      FMAXC, FMINC,
+
       /// FRSQRT, FRCP - Floating point reciprocal-sqrt and reciprocal
       /// approximation.  Note that these typically require refinement
       /// in order to obtain suitable precision.
@@ -230,6 +229,9 @@ namespace llvm {
 
       // VSEXT_MOVL - Vector move low and sign extend.
       VSEXT_MOVL,
+
+      // VFPEXT - Vector FP extend.
+      VFPEXT,
 
       // VSHL, VSRL - 128-bit vector logical left / right shift
       VSHLDQ, VSRLDQ,
@@ -832,6 +834,8 @@ namespace llvm {
     SDValue LowerVectorBroadcast(SDValue &Op, SelectionDAG &DAG) const;
     SDValue NormalizeVectorShuffle(SDValue Op, SelectionDAG &DAG) const;
 
+    SDValue LowerVectorFpExtend(SDValue &Op, SelectionDAG &DAG) const;
+
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
                            CallingConv::ID CallConv, bool isVarArg,
@@ -862,9 +866,6 @@ namespace llvm {
                    bool isVarArg,
                    const SmallVectorImpl<ISD::OutputArg> &Outs,
                    LLVMContext &Context) const;
-
-    void ReplaceATOMIC_BINARY_64(SDNode *N, SmallVectorImpl<SDValue> &Results,
-                                 SelectionDAG &DAG, unsigned NewOp) const;
 
     /// Utility function to emit string processing sse4.2 instructions
     /// that return in xmm0.
