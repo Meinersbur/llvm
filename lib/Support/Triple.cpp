@@ -42,6 +42,7 @@ const char *Triple::getArchTypeName(ArchType Kind) {
   case nvptx64: return "nvptx64";
   case le32:    return "le32";
   case amdil:   return "amdil";
+  case spir:    return "spir";
   }
 
   llvm_unreachable("Invalid ArchType!");
@@ -83,6 +84,7 @@ const char *Triple::getArchTypePrefix(ArchType Kind) {
   case nvptx64: return "nvptx";
   case le32:    return "le32";
   case amdil:   return "amdil";
+  case spir:    return "spir";
   }
 }
 
@@ -95,6 +97,7 @@ const char *Triple::getVendorTypeName(VendorType Kind) {
   case SCEI: return "scei";
   case BGP: return "bgp";
   case BGQ: return "bgq";
+  case Freescale: return "fsl";
   }
 
   llvm_unreachable("Invalid VendorType!");
@@ -124,6 +127,7 @@ const char *Triple::getOSTypeName(OSType Kind) {
   case RTEMS: return "rtems";
   case NativeClient: return "nacl";
   case CNK: return "cnk";
+  case Bitrig: return "bitrig";
   }
 
   llvm_unreachable("Invalid OSType");
@@ -137,7 +141,7 @@ const char *Triple::getEnvironmentTypeName(EnvironmentType Kind) {
   case GNUEABI: return "gnueabi";
   case EABI: return "eabi";
   case MachO: return "macho";
-  case ANDROIDEABI: return "androideabi";
+  case Android: return "android";
   }
 
   llvm_unreachable("Invalid EnvironmentType!");
@@ -169,6 +173,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
     .Case("nvptx64", nvptx64)
     .Case("le32", le32)
     .Case("amdil", amdil)
+    .Case("spir", spir)
     .Default(UnknownArch);
 }
 
@@ -200,6 +205,7 @@ Triple::ArchType Triple::getArchTypeForDarwinArchName(StringRef Str) {
     .Case("nvptx", Triple::nvptx)
     .Case("nvptx64", Triple::nvptx64)
     .Case("amdil", Triple::amdil)
+    .Case("spir", Triple::spir)
     .Default(Triple::UnknownArch);
 }
 
@@ -224,6 +230,7 @@ const char *Triple::getArchNameForAssembler() {
     .Case("nvptx64", "nvptx64")
     .Case("le32", "le32")
     .Case("amdil", "amdil")
+    .Case("spir", "spir")
     .Default(NULL);
 }
 
@@ -258,6 +265,7 @@ static Triple::ArchType parseArch(StringRef ArchName) {
     .Case("nvptx64", Triple::nvptx64)
     .Case("le32", Triple::le32)
     .Case("amdil", Triple::amdil)
+    .Case("spir", Triple::spir)
     .Default(Triple::UnknownArch);
 }
 
@@ -268,6 +276,7 @@ static Triple::VendorType parseVendor(StringRef VendorName) {
     .Case("scei", Triple::SCEI)
     .Case("bgp", Triple::BGP)
     .Case("bgq", Triple::BGQ)
+    .Case("fsl", Triple::Freescale)
     .Default(Triple::UnknownVendor);
 }
 
@@ -293,6 +302,7 @@ static Triple::OSType parseOS(StringRef OSName) {
     .StartsWith("rtems", Triple::RTEMS)
     .StartsWith("nacl", Triple::NativeClient)
     .StartsWith("cnk", Triple::CNK)
+    .StartsWith("bitrig", Triple::Bitrig)
     .Default(Triple::UnknownOS);
 }
 
@@ -303,7 +313,7 @@ static Triple::EnvironmentType parseEnvironment(StringRef EnvironmentName) {
     .StartsWith("gnueabi", Triple::GNUEABI)
     .StartsWith("gnu", Triple::GNU)
     .StartsWith("macho", Triple::MachO)
-    .StartsWith("androideabi", Triple::ANDROIDEABI)
+    .StartsWith("android", Triple::Android)
     .Default(Triple::UnknownEnvironment);
 }
 
@@ -666,6 +676,7 @@ void Triple::setOSAndEnvironmentName(StringRef Str) {
 
 static unsigned getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   switch (Arch) {
+  case llvm::Triple::spir:
   case llvm::Triple::UnknownArch:
     return 0;
 
@@ -722,6 +733,7 @@ Triple Triple::get32BitArchVariant() const {
     break;
 
   case Triple::amdil:
+  case Triple::spir:
   case Triple::arm:
   case Triple::cellspu:
   case Triple::hexagon:
@@ -768,6 +780,7 @@ Triple Triple::get64BitArchVariant() const {
     T.setArch(UnknownArch);
     break;
 
+  case Triple::spir:
   case Triple::mips64:
   case Triple::mips64el:
   case Triple::nvptx64:

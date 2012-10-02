@@ -7,18 +7,24 @@ Programming Documentation
    :hidden:
 
    CodingStandards
+   CommandLine
+   Atomics
 
 * `LLVM Language Reference Manual <LangRef.html>`_
 
   Defines the LLVM intermediate representation and the assembly form of the
   different nodes.
 
+* :ref:`atomics`
+
+  Information about LLVM's concurrency model.
+
 * `The LLVM Programmers Manual <ProgrammersManual.html>`_
 
   Introduction to the general layout of the LLVM sourcebase, important classes
   and APIs, and some tips & tricks.
 
-* `CommandLine library Reference Manual <CommandLine.html>`_
+* :ref:`commandline`
 
   Provides information on using the command line parsing library.
 

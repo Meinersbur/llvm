@@ -72,13 +72,15 @@ X86RegisterInfo::X86RegisterInfo(X86TargetMachine &tm,
     SlotSize = 8;
     StackPtr = X86::RSP;
     FramePtr = X86::RBP;
-    BasePtr = X86::RBX;
   } else {
     SlotSize = 4;
     StackPtr = X86::ESP;
     FramePtr = X86::EBP;
-    BasePtr = X86::EBX;
   }
+  // Use a callee-saved register as the base pointer.  These registers must
+  // not conflict with any ABI requirements.  For example, in 32-bit mode PIC
+  // requires GOT in the EBX register before function calls via PLT GOT pointer.
+  BasePtr = Is64Bit ? X86::RBX : X86::ESI;
 }
 
 /// getCompactUnwindRegNum - This function maps the register to the number for
@@ -366,7 +368,7 @@ bool X86RegisterInfo::hasBasePointer(const MachineFunction &MF) const {
    if (!EnableBasePointer)
      return false;
 
-   // When we need stack realignment and there are dynamic allocas, we can't 
+   // When we need stack realignment and there are dynamic allocas, we can't
    // reference off of the stack pointer, so we reserve a base pointer.
    if (needsStackRealignment(MF) && MFI->hasVarSizedObjects())
      return true;
@@ -397,7 +399,7 @@ bool X86RegisterInfo::needsStackRealignment(const MachineFunction &MF) const {
   const Function *F = MF.getFunction();
   unsigned StackAlign = TM.getFrameLowering()->getStackAlignment();
   bool requiresRealignment = ((MFI->getMaxAlignment() > StackAlign) ||
-                               F->hasFnAttr(Attribute::StackAlignment));
+                               F->getFnAttributes().hasStackAlignmentAttr());
 
   // If we've requested that we force align the stack do so now.
   if (ForceStackAlign)
@@ -520,7 +522,7 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
 
 void
 X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
-                                     int SPAdj, RegScavenger *RS) const{
+                                     int SPAdj, RegScavenger *RS) const {
   assert(SPAdj == 0 && "Unexpected");
 
   unsigned i = 0;
@@ -588,9 +590,10 @@ unsigned X86RegisterInfo::getEHHandlerRegister() const {
 }
 
 namespace llvm {
-unsigned getX86SubSuperRegister(unsigned Reg, EVT VT, bool High) {
-  switch (VT.getSimpleVT().SimpleTy) {
-  default: return Reg;
+unsigned getX86SubSuperRegister(unsigned Reg, MVT::SimpleValueType VT,
+                                bool High) {
+  switch (VT) {
+  default: llvm_unreachable("Unexpected VT");
   case MVT::i8:
     if (High) {
       switch (Reg) {
@@ -606,7 +609,7 @@ unsigned getX86SubSuperRegister(unsigned Reg, EVT VT, bool High) {
       }
     } else {
       switch (Reg) {
-      default: return 0;
+      default: llvm_unreachable("Unexpected register");
       case X86::AH: case X86::AL: case X86::AX: case X86::EAX: case X86::RAX:
         return X86::AL;
       case X86::DH: case X86::DL: case X86::DX: case X86::EDX: case X86::RDX:
@@ -643,7 +646,7 @@ unsigned getX86SubSuperRegister(unsigned Reg, EVT VT, bool High) {
     }
   case MVT::i16:
     switch (Reg) {
-    default: return Reg;
+    default: llvm_unreachable("Unexpected register");
     case X86::AH: case X86::AL: case X86::AX: case X86::EAX: case X86::RAX:
       return X86::AX;
     case X86::DH: case X86::DL: case X86::DX: case X86::EDX: case X86::RDX:
@@ -679,7 +682,7 @@ unsigned getX86SubSuperRegister(unsigned Reg, EVT VT, bool High) {
     }
   case MVT::i32:
     switch (Reg) {
-    default: return Reg;
+    default: llvm_unreachable("Unexpected register");
     case X86::AH: case X86::AL: case X86::AX: case X86::EAX: case X86::RAX:
       return X86::EAX;
     case X86::DH: case X86::DL: case X86::DX: case X86::EDX: case X86::RDX:
@@ -731,7 +734,7 @@ unsigned getX86SubSuperRegister(unsigned Reg, EVT VT, bool High) {
       }
     }
     switch (Reg) {
-    default: return Reg;
+    default: llvm_unreachable("Unexpected register");
     case X86::AH: case X86::AL: case X86::AX: case X86::EAX: case X86::RAX:
       return X86::RAX;
     case X86::DH: case X86::DL: case X86::DX: case X86::EDX: case X86::RDX:

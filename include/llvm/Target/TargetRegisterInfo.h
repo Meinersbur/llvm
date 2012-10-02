@@ -152,7 +152,7 @@ public:
   }
 
   /// getSuperRegIndices - Returns a 0-terminated list of sub-register indices
-  /// that projec some super-register class into this register class. The list
+  /// that project some super-register class into this register class. The list
   /// has an entry for each Idx such that:
   ///
   ///   There exists SuperRC where:
@@ -221,13 +221,17 @@ public:
 private:
   const TargetRegisterInfoDesc *InfoDesc;     // Extra desc array for codegen
   const char *const *SubRegIndexNames;        // Names of subreg indexes.
+  // Pointer to array of lane masks, one per sub-reg index.
+  const unsigned *SubRegIndexLaneMasks;
+
   regclass_iterator RegClassBegin, RegClassEnd;   // List of regclasses
 
 protected:
   TargetRegisterInfo(const TargetRegisterInfoDesc *ID,
                      regclass_iterator RegClassBegin,
                      regclass_iterator RegClassEnd,
-                     const char *const *subregindexnames);
+                     const char *const *SRINames,
+                     const unsigned *SRILaneMasks);
   virtual ~TargetRegisterInfo();
 public:
 
@@ -327,8 +331,34 @@ public:
   /// getSubRegIndexName - Return the human-readable symbolic target-specific
   /// name for the specified SubRegIndex.
   const char *getSubRegIndexName(unsigned SubIdx) const {
-    assert(SubIdx && "This is not a subregister index");
+    assert(SubIdx && SubIdx < getNumSubRegIndices() &&
+           "This is not a subregister index");
     return SubRegIndexNames[SubIdx-1];
+  }
+
+  /// getSubRegIndexLaneMask - Return a bitmask representing the parts of a
+  /// register that are covered by SubIdx.
+  ///
+  /// Lane masks for sub-register indices are similar to register units for
+  /// physical registers. The individual bits in a lane mask can't be assigned
+  /// any specific meaning. They can be used to check if two sub-register
+  /// indices overlap.
+  ///
+  /// If the target has a register such that:
+  ///
+  ///   getSubReg(Reg, A) overlaps getSubReg(Reg, B)
+  ///
+  /// then:
+  ///
+  ///   getSubRegIndexLaneMask(A) & getSubRegIndexLaneMask(B) != 0
+  ///
+  /// The converse is not necessarily true. If two lane masks have a common
+  /// bit, the corresponding sub-registers may not overlap, but it can be
+  /// assumed that they usually will.
+  unsigned getSubRegIndexLaneMask(unsigned SubIdx) const {
+    // SubIdx == 0 is allowed, it has the lane mask ~0u.
+    assert(SubIdx < getNumSubRegIndices() && "This is not a subregister index");
+    return SubRegIndexLaneMasks[SubIdx];
   }
 
   /// regsOverlap - Returns true if the two registers are equal or alias each
@@ -346,6 +376,14 @@ public:
       if (*RUA < *RUB) ++RUA;
       else             ++RUB;
     } while (RUA.isValid() && RUB.isValid());
+    return false;
+  }
+
+  /// hasRegUnit - Returns true if Reg contains RegUnit.
+  bool hasRegUnit(unsigned Reg, unsigned RegUnit) const {
+    for (MCRegUnitIterator Units(Reg, this); Units.isValid(); ++Units)
+      if (*Units == RegUnit)
+        return true;
     return false;
   }
 

@@ -10,10 +10,12 @@ Subsystem Documentation
    BitCodeFormat
    BranchWeightMetadata
    Bugpoint
+   CodeGenerator
    ExceptionHandling
    LinkTimeOptimization
    SegmentedStacks
    TableGenFundamentals
+   DebuggingJITedCode
 
 * `Writing an LLVM Pass <WritingAnLLVMPass.html>`_
     
@@ -22,9 +24,9 @@ Subsystem Documentation
 * `Writing an LLVM Backend <WritingAnLLVMBackend.html>`_
     
    Information on how to write LLVM backends for machine targets.
-    
-* `The LLVM Target-Independent Code Generator <CodeGenerator.html>`_
-    
+
+* :ref:`code_generator`
+
    The design and implementation of the LLVM code generator.  Useful if you are
    working on retargetting LLVM to a new architecture, designing a new codegen
    pass, or enhancing existing components.
@@ -77,7 +79,7 @@ Subsystem Documentation
     
    How to build your programs with link-time optimization on Linux.
     
-* `The GDB JIT interface <DebuggingJITedCode.html>`_
+* :ref:`debugging-jited-code`
     
    How to debug JITed code with GDB.
     

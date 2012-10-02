@@ -45,11 +45,7 @@ class MipsFunctionInfo : public MachineFunctionInfo {
   // Range of frame object indices.
   // InArgFIRange: Range of indices of all frame objects created during call to
   //               LowerFormalArguments.
-  // OutArgFIRange: Range of indices of all frame objects created during call to
-  //                LowerCall except for the frame object for restoring $gp.
-  std::pair<int, int> InArgFIRange, OutArgFIRange;
-  int GlobalRegFI;
-  mutable int DynAllocFI; // Frame index of dynamically allocated stack area.
+  std::pair<int, int> InArgFIRange;
   unsigned MaxCallFrameSize;
 
   bool EmitNOAT;
@@ -58,7 +54,6 @@ public:
   MipsFunctionInfo(MachineFunction& MF)
   : MF(MF), SRetReturnReg(0), GlobalBaseReg(0),
     VarArgsFrameIndex(0), InArgFIRange(std::make_pair(-1, 0)),
-    OutArgFIRange(std::make_pair(-1, 0)), GlobalRegFI(0), DynAllocFI(0),
     MaxCallFrameSize(0), EmitNOAT(false)
   {}
 
@@ -66,44 +61,6 @@ public:
     return FI <= InArgFIRange.first && FI >= InArgFIRange.second;
   }
   void setLastInArgFI(int FI) { InArgFIRange.second = FI; }
-
-  bool isOutArgFI(int FI) const {
-    return FI <= OutArgFIRange.first && FI >= OutArgFIRange.second;
-  }
-  void extendOutArgFIRange(int FirstFI, int LastFI) {
-    if (!OutArgFIRange.second)
-      // this must be the first time this function was called.
-      OutArgFIRange.first = FirstFI;
-    OutArgFIRange.second = LastFI;
-  }
-
-  bool isGlobalRegFI(int FI) const {
-    return GlobalRegFI && (FI == GlobalRegFI);
-  }
-
-  int getGlobalRegFI() const {
-    return GlobalRegFI;
-  }
-
-  int initGlobalRegFI() {
-    const TargetMachine &TM = MF.getTarget();
-    unsigned RegSize = TM.getSubtarget<MipsSubtarget>().isABI_N64() ? 8 : 4;
-    int64_t StackAlignment = TM.getFrameLowering()->getStackAlignment();
-    uint64_t Offset = RoundUpToAlignment(MaxCallFrameSize, StackAlignment);
-
-    GlobalRegFI = MF.getFrameInfo()->CreateFixedObject(RegSize, Offset, true);
-    return GlobalRegFI;
-  }
-
-  // The first call to this function creates a frame object for dynamically
-  // allocated stack area.
-  int getDynAllocFI() const {
-    if (!DynAllocFI)
-      DynAllocFI = MF.getFrameInfo()->CreateFixedObject(4, 0, true);
-
-    return DynAllocFI;
-  }
-  bool isDynAllocFI(int FI) const { return DynAllocFI && DynAllocFI == FI; }
 
   unsigned getSRetReturnReg() const { return SRetReturnReg; }
   void setSRetReturnReg(unsigned Reg) { SRetReturnReg = Reg; }

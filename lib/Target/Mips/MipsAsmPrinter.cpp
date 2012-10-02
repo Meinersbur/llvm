@@ -15,6 +15,7 @@
 #define DEBUG_TYPE "mips-asm-printer"
 #include "Mips.h"
 #include "MipsAsmPrinter.h"
+#include "MipsDirectObjLower.h"
 #include "MipsInstrInfo.h"
 #include "MipsMCInstLower.h"
 #include "InstPrinter/MipsInstPrinter.h"
@@ -49,6 +50,13 @@ bool MipsAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   return true;
 }
 
+bool MipsAsmPrinter::lowerOperand(const MachineOperand &MO, MCOperand &MCOp) {
+  MCOp = MCInstLowering.LowerOperand(MO);
+  return MCOp.isValid();
+}
+
+#include "MipsGenMCPseudoLowering.inc"
+
 void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   if (MI->isDebugValue()) {
     SmallString<128> Str;
@@ -58,24 +66,9 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     return;
   }
 
-  // Direct object specific instruction lowering
-  if (!OutStreamer.hasRawTextSupport())
-    switch (MI->getOpcode()) {
-    case Mips::DSLL:
-    case Mips::DSRL:
-    case Mips::DSRA:
-      assert(MI->getNumOperands() == 3 &&
-             "Invalid no. of machine operands for shift!");
-      assert(MI->getOperand(2).isImm());
-      int64_t Shift = MI->getOperand(2).getImm();
-      if (Shift > 31) {
-        MCInst TmpInst0;
-        MCInstLowering.LowerLargeShift(MI, TmpInst0, Shift - 32);
-        OutStreamer.EmitInstruction(TmpInst0);
-        return;
-      }
-      break;
-    }
+  // Do any auto-generated pseudo lowerings.
+  if (emitPseudoExpansionLowering(OutStreamer, MI))
+    return;
 
   MachineBasicBlock::const_instr_iterator I = MI;
   MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();
@@ -83,8 +76,25 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   do {
     MCInst TmpInst0;
     MCInstLowering.Lower(I++, TmpInst0);
+
+    // Direct object specific instruction lowering
+    if (!OutStreamer.hasRawTextSupport()){
+      switch (TmpInst0.getOpcode()) {
+      // If shift amount is >= 32 it the inst needs to be lowered further
+      case Mips::DSLL:
+      case Mips::DSRL:
+      case Mips::DSRA:
+        Mips::LowerLargeShift(TmpInst0);
+        break;
+        // Double extract instruction is chosen by pos and size operands
+      case Mips::DEXT:
+      case Mips::DINS:
+        Mips::LowerDextDins(TmpInst0);
+      }
+    }
+
     OutStreamer.EmitInstruction(TmpInst0);
-  } while ((I != E) && I->isInsideBundle());
+  } while ((I != E) && I->isInsideBundle()); // Delay slot check
 }
 
 //===----------------------------------------------------------------------===//
@@ -214,7 +224,7 @@ const char *MipsAsmPrinter::getCurrentABIString() const {
   case MipsSubtarget::N32:  return "abiN32";
   case MipsSubtarget::N64:  return "abi64";
   case MipsSubtarget::EABI: return "eabi32"; // TODO: handle eabi64
-  default: llvm_unreachable("Unknown Mips ABI");;
+  default: llvm_unreachable("Unknown Mips ABI");
   }
 }
 

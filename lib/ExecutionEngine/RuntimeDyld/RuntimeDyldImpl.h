@@ -161,6 +161,8 @@ protected:
   inline unsigned getMaxStubSize() {
     if (Arch == Triple::arm || Arch == Triple::thumb)
       return 8; // 32-bit instruction and 32-bit address
+    else if (Arch == Triple::mipsel)
+      return 16;
     else
       return 0;
   }
@@ -173,6 +175,10 @@ protected:
     ErrorStr = Msg.str();
     HasError = true;
     return true;
+  }
+
+  uint64_t getSectionLoadAddress(unsigned SectionID) {
+    return Sections[SectionID].LoadAddress;
   }
 
   uint8_t *getSectionAddress(unsigned SectionID) {
@@ -221,7 +227,10 @@ protected:
   void resolveRelocationEntry(const RelocationEntry &RE, uint64_t Value);
 
   /// \brief A object file specific relocation resolver
-  /// \param Address Address to apply the relocation action
+  /// \param LocalAddress The address to apply the relocation action
+  /// \param FinalAddress If the linker prepare code for remote executon then
+  ///                     FinalAddress has the remote address to apply the
+  ///                     relocation action, otherwise is same as LocalAddress
   /// \param Value Target symbol address to apply the relocation action
   /// \param Type object file specific relocation type
   /// \param Addend A constant addend used to compute the value to be stored
@@ -265,11 +274,20 @@ public:
     return getSectionAddress(Loc.first) + Loc.second;
   }
 
+  uint64_t getSymbolLoadAddress(StringRef Name) {
+    // FIXME: Just look up as a function for now. Overly simple of course.
+    // Work in progress.
+    if (GlobalSymbolTable.find(Name) == GlobalSymbolTable.end())
+      return 0;
+    SymbolLoc Loc = GlobalSymbolTable.lookup(Name);
+    return getSectionLoadAddress(Loc.first) + Loc.second;
+  }
+
   void resolveRelocations();
 
   void reassignSectionAddress(unsigned SectionID, uint64_t Addr);
 
-  void mapSectionAddress(void *LocalAddress, uint64_t TargetAddress);
+  void mapSectionAddress(const void *LocalAddress, uint64_t TargetAddress);
 
   // Is the linker in an error state?
   bool hasError() { return HasError; }

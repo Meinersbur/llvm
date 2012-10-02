@@ -122,10 +122,12 @@ char ScalarEvolution::ID = 0;
 // Implementation of the SCEV class.
 //
 
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 void SCEV::dump() const {
   print(dbgs());
   dbgs() << '\n';
 }
+#endif
 
 void SCEV::print(raw_ostream &OS) const {
   switch (getSCEVType()) {
@@ -5369,6 +5371,12 @@ SolveQuadraticEquation(const SCEVAddRecExpr *AddRec, ScalarEvolution &SE) {
     APInt SqrtTerm(B);
     SqrtTerm *= B;
     SqrtTerm -= Four * (A * C);
+
+    if (SqrtTerm.isNegative()) {
+      // The loop is provably infinite.
+      const SCEV *CNC = SE.getCouldNotCompute();
+      return std::make_pair(CNC, CNC);
+    }
 
     // Compute sqrt(B^2-4ac). This is guaranteed to be the nearest
     // integer value or else APInt::sqrt() will assert.

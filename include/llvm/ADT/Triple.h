@@ -65,7 +65,8 @@ public:
     nvptx,   // NVPTX: 32-bit
     nvptx64, // NVPTX: 64-bit
     le32,    // le32: generic little-endian 32-bit CPU (PNaCl / Emscripten)
-    amdil   // amdil: amd IL
+    amdil,   // amdil: amd IL
+    spir     // SPIR: standard portable IR for OpenCL
   };
   enum VendorType {
     UnknownVendor,
@@ -74,7 +75,8 @@ public:
     PC,
     SCEI,
     BGP,
-    BGQ
+    BGQ,
+    Freescale
   };
   enum OSType {
     UnknownOS,
@@ -98,7 +100,8 @@ public:
     Minix,
     RTEMS,
     NativeClient,
-    CNK         // BG/P Compute-Node Kernel
+    CNK,         // BG/P Compute-Node Kernel
+    Bitrig
   };
   enum EnvironmentType {
     UnknownEnvironment,
@@ -108,7 +111,7 @@ public:
     GNUEABIHF,
     EABI,
     MachO,
-    ANDROIDEABI
+    Android
   };
 
 private:
@@ -340,7 +343,7 @@ public:
   /// to a known type.
   void setEnvironment(EnvironmentType Kind);
 
-  /// setTriple - Set all components to the new triple \arg Str.
+  /// setTriple - Set all components to the new triple \p Str.
   void setTriple(const Twine &Str);
 
   /// setArchName - Set the architecture (first) component of the
@@ -391,11 +394,10 @@ public:
   /// @name Static helpers for IDs.
   /// @{
 
-  /// getArchTypeName - Get the canonical name for the \arg Kind
-  /// architecture.
+  /// getArchTypeName - Get the canonical name for the \p Kind architecture.
   static const char *getArchTypeName(ArchType Kind);
 
-  /// getArchTypePrefix - Get the "prefix" canonical name for the \arg Kind
+  /// getArchTypePrefix - Get the "prefix" canonical name for the \p Kind
   /// architecture. This is the prefix used by the architecture specific
   /// builtins, and is suitable for passing to \see
   /// Intrinsic::getIntrinsicForGCCBuiltin().
@@ -403,15 +405,13 @@ public:
   /// \return - The architecture prefix, or 0 if none is defined.
   static const char *getArchTypePrefix(ArchType Kind);
 
-  /// getVendorTypeName - Get the canonical name for the \arg Kind
-  /// vendor.
+  /// getVendorTypeName - Get the canonical name for the \p Kind vendor.
   static const char *getVendorTypeName(VendorType Kind);
 
-  /// getOSTypeName - Get the canonical name for the \arg Kind operating
-  /// system.
+  /// getOSTypeName - Get the canonical name for the \p Kind operating system.
   static const char *getOSTypeName(OSType Kind);
 
-  /// getEnvironmentTypeName - Get the canonical name for the \arg Kind
+  /// getEnvironmentTypeName - Get the canonical name for the \p Kind
   /// environment.
   static const char *getEnvironmentTypeName(EnvironmentType Kind);
 

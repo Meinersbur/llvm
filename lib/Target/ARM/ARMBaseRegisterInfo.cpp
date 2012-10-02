@@ -62,8 +62,20 @@ ARMBaseRegisterInfo::ARMBaseRegisterInfo(const ARMBaseInstrInfo &tii,
 
 const uint16_t*
 ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
+  bool ghcCall = false;
+ 
+  if (MF) {
+    const Function *F = MF->getFunction();
+    ghcCall = (F ? F->getCallingConv() == CallingConv::GHC : false);
+  }
+ 
+  if (ghcCall) {
+      return CSR_GHC_SaveList;
+  }
+  else {
   return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
     ? CSR_iOS_SaveList : CSR_AAPCS_SaveList;
+  }
 }
 
 const uint32_t*
@@ -464,7 +476,7 @@ ARMBaseRegisterInfo::UpdateRegAllocHint(unsigned Reg, unsigned NewReg,
 bool
 ARMBaseRegisterInfo::avoidWriteAfterWrite(const TargetRegisterClass *RC) const {
   // CortexA9 has a Write-after-write hazard for NEON registers.
-  if (!STI.isCortexA9())
+  if (!STI.isLikeA9())
     return false;
 
   switch (RC->getID()) {
@@ -550,7 +562,7 @@ needsStackRealignment(const MachineFunction &MF) const {
   const Function *F = MF.getFunction();
   unsigned StackAlign = MF.getTarget().getFrameLowering()->getStackAlignment();
   bool requiresRealignment = ((MFI->getMaxAlignment() > StackAlign) ||
-                               F->hasFnAttr(Attribute::StackAlignment));
+                               F->getFnAttributes().hasStackAlignmentAttr());
 
   return requiresRealignment && canRealignStack(MF);
 }

@@ -88,6 +88,10 @@ PrintMachineInstrs("print-machineinstrs", cl::ValueOptional,
                    cl::desc("Print machine instrs"),
                    cl::value_desc("pass-name"), cl::init("option-unspecified"));
 
+// Experimental option to run live inteerval analysis early.
+static cl::opt<bool> EarlyLiveIntervals("early-live-intervals", cl::Hidden,
+    cl::desc("Run live interval analysis earlier in the pipeline"));
+
 /// Allow standard passes to be disabled by command line options. This supports
 /// simple binary flags that either suppress the pass or do nothing.
 /// i.e. -disable-mypass=false has no effect.
@@ -443,8 +447,8 @@ void TargetPassConfig::addMachinePasses() {
     const PassInfo *TPI = PR->getPassInfo(PrintMachineInstrs.getValue());
     const PassInfo *IPI = PR->getPassInfo(StringRef("print-machineinstrs"));
     assert (TPI && IPI && "Pass ID not registered!");
-    const char *TID = (char *)(TPI->getTypeInfo());
-    const char *IID = (char *)(IPI->getTypeInfo());
+    const char *TID = (const char *)(TPI->getTypeInfo());
+    const char *IID = (const char *)(IPI->getTypeInfo());
     insertPass(TID, IID);
   }
 
@@ -452,7 +456,8 @@ void TargetPassConfig::addMachinePasses() {
   printAndVerify("After Instruction Selection");
 
   // Expand pseudo-instructions emitted by ISel.
-  addPass(&ExpandISelPseudosID);
+  if (addPass(&ExpandISelPseudosID))
+    printAndVerify("After ExpandISelPseudos");
 
   // Add passes that optimize machine instructions in SSA form.
   if (getOptLevel() != CodeGenOpt::None) {
@@ -523,6 +528,10 @@ void TargetPassConfig::addMachineSSAOptimization() {
   // Optimize PHIs before DCE: removing dead PHI cycles may make more
   // instructions dead.
   addPass(&OptimizePHIsID);
+
+  // This pass merges large allocas. StackSlotColoring is a different pass
+  // which merges spill slots.
+  addPass(&StackColoringID);
 
   // If the target requests it, assign local variables to stack slots relative
   // to one another and simplify frame index references where possible.
@@ -648,6 +657,11 @@ void TargetPassConfig::addOptimizedRegAlloc(FunctionPass *RegAllocPass) {
     addPass(&MachineLoopInfoID);
     addPass(&PHIEliminationID);
   }
+
+  // Eventually, we want to run LiveIntervals before PHI elimination.
+  if (EarlyLiveIntervals)
+    addPass(&LiveIntervalsID);
+
   addPass(&TwoAddressInstructionPassID);
 
   if (EnableStrongPHIElim)
