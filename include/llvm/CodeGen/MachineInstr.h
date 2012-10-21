@@ -25,6 +25,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/InlineAsm.h"
 #include "llvm/Support/DebugLoc.h"
 #include <vector>
 
@@ -81,8 +82,8 @@ private:
   MachineBasicBlock *Parent;            // Pointer to the owning basic block.
   DebugLoc debugLoc;                    // Source line information.
 
-  MachineInstr(const MachineInstr&);   // DO NOT IMPLEMENT
-  void operator=(const MachineInstr&); // DO NOT IMPLEMENT
+  MachineInstr(const MachineInstr&) LLVM_DELETED_FUNCTION;
+  void operator=(const MachineInstr&) LLVM_DELETED_FUNCTION;
 
   // Intrusive list support
   friend struct ilist_traits<MachineInstr>;
@@ -97,25 +98,10 @@ private:
   /// MCID NULL and no operands.
   MachineInstr();
 
-  // The next two constructors have DebugLoc and non-DebugLoc versions;
-  // over time, the non-DebugLoc versions should be phased out and eventually
-  // removed.
-
-  /// MachineInstr ctor - This constructor creates a MachineInstr and adds the
-  /// implicit operands.  It reserves space for the number of operands specified
-  /// by the MCInstrDesc.  The version with a DebugLoc should be preferred.
-  explicit MachineInstr(const MCInstrDesc &MCID, bool NoImp = false);
-
-  /// MachineInstr ctor - Work exactly the same as the ctor above, except that
-  /// the MachineInstr is created and added to the end of the specified basic
-  /// block.  The version with a DebugLoc should be preferred.
-  MachineInstr(MachineBasicBlock *MBB, const MCInstrDesc &MCID);
-
   /// MachineInstr ctor - This constructor create a MachineInstr and add the
   /// implicit operands.  It reserves space for number of operands specified by
   /// MCInstrDesc.  An explicit DebugLoc is supplied.
-  explicit MachineInstr(const MCInstrDesc &MCID, const DebugLoc dl,
-                        bool NoImp = false);
+  MachineInstr(const MCInstrDesc &MCID, const DebugLoc dl, bool NoImp = false);
 
   /// MachineInstr ctor - Work exactly the same as the ctor above, except that
   /// the MachineInstr is created and added to the end of the specified basic
@@ -610,6 +596,7 @@ public:
   bool isImplicitDef() const { return getOpcode()==TargetOpcode::IMPLICIT_DEF; }
   bool isInlineAsm() const { return getOpcode() == TargetOpcode::INLINEASM; }
   bool isStackAligningInlineAsm() const;
+  InlineAsm::AsmDialect getInlineAsmDialect() const;
   bool isInsertSubreg() const {
     return getOpcode() == TargetOpcode::INSERT_SUBREG;
   }
@@ -799,12 +786,26 @@ public:
   /// check if the register def is tied to a source operand, due to either
   /// two-address elimination or inline assembly constraints. Returns the
   /// first tied use operand index by reference if UseOpIdx is not null.
-  bool isRegTiedToUseOperand(unsigned DefOpIdx, unsigned *UseOpIdx = 0) const;
+  bool isRegTiedToUseOperand(unsigned DefOpIdx, unsigned *UseOpIdx = 0) const {
+    const MachineOperand &MO = getOperand(DefOpIdx);
+    if (!MO.isReg() || !MO.isDef() || !MO.isTied())
+      return false;
+    if (UseOpIdx)
+      *UseOpIdx = findTiedOperandIdx(DefOpIdx);
+    return true;
+  }
 
   /// isRegTiedToDefOperand - Return true if the use operand of the specified
   /// index is tied to an def operand. It also returns the def operand index by
   /// reference if DefOpIdx is not null.
-  bool isRegTiedToDefOperand(unsigned UseOpIdx, unsigned *DefOpIdx = 0) const;
+  bool isRegTiedToDefOperand(unsigned UseOpIdx, unsigned *DefOpIdx = 0) const {
+    const MachineOperand &MO = getOperand(UseOpIdx);
+    if (!MO.isReg() || !MO.isUse() || !MO.isTied())
+      return false;
+    if (DefOpIdx)
+      *DefOpIdx = findTiedOperandIdx(UseOpIdx);
+    return true;
+  }
 
   /// clearKillInfo - Clears kill flags on all operands.
   ///
@@ -952,8 +953,8 @@ private:
   void untieRegOperand(unsigned OpIdx) {
     MachineOperand &MO = getOperand(OpIdx);
     if (MO.isReg() && MO.isTied()) {
-      getOperand(findTiedOperandIdx(OpIdx)).IsTied = false;
-      MO.IsTied = false;
+      getOperand(findTiedOperandIdx(OpIdx)).TiedTo = 0;
+      MO.TiedTo = 0;
     }
   }
 

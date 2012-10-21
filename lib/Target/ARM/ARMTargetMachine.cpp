@@ -60,7 +60,7 @@ ARMTargetMachine::ARMTargetMachine(const Target &T, StringRef TT,
                                    CodeGenOpt::Level OL)
   : ARMBaseTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
     InstrInfo(Subtarget),
-    DataLayout(Subtarget.isAPCS_ABI() ?
+    DL(Subtarget.isAPCS_ABI() ?
                std::string("e-p:32:32-f64:32:64-i64:32:64-"
                            "v128:32:128-v64:32:64-n32-S32") :
                Subtarget.isAAPCS_ABI() ?
@@ -71,7 +71,8 @@ ARMTargetMachine::ARMTargetMachine(const Target &T, StringRef TT,
     ELFWriterInfo(*this),
     TLInfo(*this),
     TSInfo(*this),
-    FrameLowering(Subtarget) {
+    FrameLowering(Subtarget),
+    STTI(&TLInfo) {
   if (!Subtarget.hasARMOps())
     report_fatal_error("CPU: '" + Subtarget.getCPUString() + "' does not "
                        "support ARM mode execution!");
@@ -88,7 +89,7 @@ ThumbTargetMachine::ThumbTargetMachine(const Target &T, StringRef TT,
     InstrInfo(Subtarget.hasThumb2()
               ? ((ARMBaseInstrInfo*)new Thumb2InstrInfo(Subtarget))
               : ((ARMBaseInstrInfo*)new Thumb1InstrInfo(Subtarget))),
-    DataLayout(Subtarget.isAPCS_ABI() ?
+    DL(Subtarget.isAPCS_ABI() ?
                std::string("e-p:32:32-f64:32:64-i64:32:64-"
                            "i16:16:32-i8:8:32-i1:8:32-"
                            "v128:32:128-v64:32:64-a:0:32-n32-S32") :
@@ -104,7 +105,8 @@ ThumbTargetMachine::ThumbTargetMachine(const Target &T, StringRef TT,
     TSInfo(*this),
     FrameLowering(Subtarget.hasThumb2()
               ? new ARMFrameLowering(Subtarget)
-              : (ARMFrameLowering*)new Thumb1FrameLowering(Subtarget)) {
+              : (ARMFrameLowering*)new Thumb1FrameLowering(Subtarget)),
+    STTI(&TLInfo){
 }
 
 namespace {
@@ -143,6 +145,11 @@ bool ARMPassConfig::addPreISel() {
 
 bool ARMPassConfig::addInstSelector() {
   addPass(createARMISelDag(getARMTargetMachine(), getOptLevel()));
+
+  const ARMSubtarget *Subtarget = &getARMSubtarget();
+  if (Subtarget->isTargetELF() && !Subtarget->isThumb1Only() &&
+      TM->Options.EnableFastISel)
+    addPass(createARMGlobalBaseRegPass());
   return false;
 }
 
@@ -150,7 +157,7 @@ bool ARMPassConfig::addPreRegAlloc() {
   // FIXME: temporarily disabling load / store optimization pass for Thumb1.
   if (getOptLevel() != CodeGenOpt::None && !getARMSubtarget().isThumb1Only())
     addPass(createARMLoadStoreOptimizationPass(true));
-  if (getOptLevel() != CodeGenOpt::None && getARMSubtarget().isCortexA9())
+  if (getOptLevel() != CodeGenOpt::None && getARMSubtarget().isLikeA9())
     addPass(createMLxExpansionPass());
   return true;
 }

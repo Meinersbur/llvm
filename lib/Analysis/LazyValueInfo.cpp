@@ -19,7 +19,7 @@
 #include "llvm/Instructions.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Analysis/ConstantFolding.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/ConstantRange.h"
@@ -212,7 +212,7 @@ public:
 
         // Unless we can prove that the two Constants are different, we must
         // move to overdefined.
-        // FIXME: use TargetData/TargetLibraryInfo for smarter constant folding.
+        // FIXME: use DataLayout/TargetLibraryInfo for smarter constant folding.
         if (ConstantInt *Res = dyn_cast<ConstantInt>(
                 ConstantFoldCompareInstOperands(CmpInst::ICMP_NE,
                                                 getConstant(),
@@ -238,7 +238,7 @@ public:
 
         // Unless we can prove that the two Constants are different, we must
         // move to overdefined.
-        // FIXME: use TargetData/TargetLibraryInfo for smarter constant folding.
+        // FIXME: use DataLayout/TargetLibraryInfo for smarter constant folding.
         if (ConstantInt *Res = dyn_cast<ConstantInt>(
                 ConstantFoldCompareInstOperands(CmpInst::ICMP_NE,
                                                 getNotConstant(),
@@ -847,9 +847,12 @@ static bool getEdgeValueLocal(Value *Val, BasicBlock *BBFrom,
     for (SwitchInst::CaseIt i = SI->case_begin(), e = SI->case_end();
          i != e; ++i) {
       ConstantRange EdgeVal(i.getCaseValue()->getValue());
-      if (DefaultCase)
-        EdgesVals = EdgesVals.difference(EdgeVal);
-      else if (i.getCaseSuccessor() == BBTo)
+      if (DefaultCase) {
+        // It is possible that the default destination is the destination of
+        // some cases. There is no need to perform difference for those cases.
+        if (i.getCaseSuccessor() != BBTo)
+          EdgesVals = EdgesVals.difference(EdgeVal);
+      } else if (i.getCaseSuccessor() == BBTo)
         EdgesVals = EdgesVals.unionWith(EdgeVal);
     }
     Result = LVILatticeVal::getRange(EdgesVals);
@@ -1006,7 +1009,7 @@ bool LazyValueInfo::runOnFunction(Function &F) {
   if (PImpl)
     getCache(PImpl).clear();
 
-  TD = getAnalysisIfAvailable<TargetData>();
+  TD = getAnalysisIfAvailable<DataLayout>();
   TLI = &getAnalysis<TargetLibraryInfo>();
 
   // Fully lazy.

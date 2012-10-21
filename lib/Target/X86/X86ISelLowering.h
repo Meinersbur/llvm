@@ -217,6 +217,12 @@ namespace llvm {
       // EH_RETURN - Exception Handling helpers.
       EH_RETURN,
 
+      // EH_SJLJ_SETJMP - SjLj exception handling setjmp.
+      EH_SJLJ_SETJMP,
+
+      // EH_SJLJ_LONGJMP - SjLj exception handling longjmp.
+      EH_SJLJ_LONGJMP,
+
       /// TC_RETURN - Tail call return.
       ///   operand #0 chain
       ///   operand #1 callee (register or absolute)
@@ -232,6 +238,9 @@ namespace llvm {
 
       // VFPEXT - Vector FP extend.
       VFPEXT,
+
+      // VFPROUND - Vector FP round.
+      VFPROUND,
 
       // VSHL, VSRL - 128-bit vector logical left / right shift
       VSHLDQ, VSRLDQ,
@@ -348,6 +357,10 @@ namespace llvm {
       ATOMXOR64_DAG,
       ATOMAND64_DAG,
       ATOMNAND64_DAG,
+      ATOMMAX64_DAG,
+      ATOMMIN64_DAG,
+      ATOMUMAX64_DAG,
+      ATOMUMIN64_DAG,
       ATOMSWAP64_DAG,
 
       // LCMPXCHG_DAG, LCMPXCHG8_DAG, LCMPXCHG16_DAG - Compare and swap.
@@ -697,7 +710,7 @@ namespace llvm {
     /// make the right decision when generating code for different targets.
     const X86Subtarget *Subtarget;
     const X86RegisterInfo *RegInfo;
-    const TargetData *TD;
+    const DataLayout *TD;
 
     /// X86StackPtr - X86 physical register used as stack ptr.
     unsigned X86StackPtr;
@@ -744,6 +757,7 @@ namespace llvm {
                                            bool isVarArg,
                                            bool isCalleeStructRet,
                                            bool isCallerStructRet,
+                                           Type *RetTy,
                                     const SmallVectorImpl<ISD::OutputArg> &Outs,
                                     const SmallVectorImpl<SDValue> &OutVals,
                                     const SmallVectorImpl<ISD::InputArg> &Ins,
@@ -763,15 +777,11 @@ namespace llvm {
     SDValue LowerAsSplatVectorLoad(SDValue SrcOp, EVT VT, DebugLoc dl,
                                    SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEXTRACT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINSERT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerEXTRACT_SUBVECTOR(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerINSERT_SUBVECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerGlobalAddress(const GlobalValue *GV, DebugLoc dl,
@@ -785,12 +795,13 @@ namespace llvm {
     SDValue LowerUINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i64(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i32(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_SINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_UINT(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFABS(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerFGETSIGN(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerToBT(SDValue And, ISD::CondCode CC,
                       DebugLoc dl, SelectionDAG &DAG) const;
     SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
@@ -802,39 +813,24 @@ namespace llvm {
     SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVAARG(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerVACOPY(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAME_TO_ARGS_OFFSET(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_SETJMP(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINIT_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerADJUST_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerCTLZ(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerCTLZ_ZERO_UNDEF(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerCTTZ(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerADD(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSUB(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerShift(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerXALUO(SDValue Op, SelectionDAG &DAG) const;
 
-    SDValue LowerCMP_SWAP(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerLOAD_SUB(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerREADCYCLECOUNTER(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerMEMBARRIER(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerATOMIC_FENCE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
-    SDValue PerformTruncateCombine(SDNode* N, SelectionDAG &DAG, DAGCombinerInfo &DCI) const;
 
-    // Utility functions to help LowerVECTOR_SHUFFLE
-    SDValue LowerVECTOR_SHUFFLEv8i16(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerVectorBroadcast(SDValue &Op, SelectionDAG &DAG) const;
+    // Utility functions to help LowerVECTOR_SHUFFLE & LowerBUILD_VECTOR
+    SDValue LowerVectorBroadcast(SDValue Op, SelectionDAG &DAG) const;
     SDValue NormalizeVectorShuffle(SDValue Op, SelectionDAG &DAG) const;
+    SDValue buildFromShuffleMostly(SDValue Op, SelectionDAG &DAG) const;
 
-    SDValue LowerVectorFpExtend(SDValue &Op, SelectionDAG &DAG) const;
+    SDValue LowerVectorAllZeroTest(SDValue Op, SelectionDAG &DAG) const;
 
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
@@ -882,36 +878,17 @@ namespace llvm {
                                    MachineBasicBlock *BB) const;
     MachineBasicBlock *EmitMwait(MachineInstr *MI, MachineBasicBlock *BB) const;
 
-    /// Utility function to emit atomic bitwise operations (and, or, xor).
-    /// It takes the bitwise instruction to expand, the associated machine basic
-    /// block, and the associated X86 opcodes for reg/reg and reg/imm.
-    MachineBasicBlock *EmitAtomicBitwiseWithCustomInserter(
-                                                    MachineInstr *BInstr,
-                                                    MachineBasicBlock *BB,
-                                                    unsigned regOpc,
-                                                    unsigned immOpc,
-                                                    unsigned loadOpc,
-                                                    unsigned cxchgOpc,
-                                                    unsigned notOpc,
-                                                    unsigned EAXreg,
-                                              const TargetRegisterClass *RC,
-                                                    bool Invert = false) const;
+    /// Utility function to emit atomic-load-arith operations (and, or, xor,
+    /// nand, max, min, umax, umin). It takes the corresponding instruction to
+    /// expand, the associated machine basic block, and the associated X86
+    /// opcodes for reg/reg.
+    MachineBasicBlock *EmitAtomicLoadArith(MachineInstr *MI,
+                                           MachineBasicBlock *MBB) const;
 
-    MachineBasicBlock *EmitAtomicBit6432WithCustomInserter(
-                                                    MachineInstr *BInstr,
-                                                    MachineBasicBlock *BB,
-                                                    unsigned regOpcL,
-                                                    unsigned regOpcH,
-                                                    unsigned immOpcL,
-                                                    unsigned immOpcH,
-                                                    bool Invert = false) const;
-
-    /// Utility function to emit atomic min and max.  It takes the min/max
-    /// instruction to expand, the associated basic block, and the associated
-    /// cmov opcode for moving the min or max value.
-    MachineBasicBlock *EmitAtomicMinMaxWithCustomInserter(MachineInstr *BInstr,
-                                                          MachineBasicBlock *BB,
-                                                        unsigned cmovOpc) const;
+    /// Utility function to emit atomic-load-arith operations (and, or, xor,
+    /// nand, add, sub, swap) for 64-bit operands on 32-bit target.
+    MachineBasicBlock *EmitAtomicLoadArith6432(MachineInstr *MI,
+                                               MachineBasicBlock *MBB) const;
 
     // Utility function to emit the low-level va_arg code for X86-64.
     MachineBasicBlock *EmitVAARG64WithCustomInserter(
@@ -938,6 +915,12 @@ namespace llvm {
 
     MachineBasicBlock *emitLoweredTLSAddr(MachineInstr *MI,
                                           MachineBasicBlock *BB) const;
+
+    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr *MI,
+                                        MachineBasicBlock *MBB) const;
+
+    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
+                                         MachineBasicBlock *MBB) const;
 
     /// Emit nodes that will be selected as "test Op0,Op0", or something
     /// equivalent, for use with the given x86 condition code.

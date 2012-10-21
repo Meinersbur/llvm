@@ -80,7 +80,6 @@ namespace {
     BlockSet FunctionBlocks;
 
     BitVector regsReserved;
-    BitVector regsAllocatable;
     RegSet regsLive;
     RegVector regsDefined, regsDead, regsKilled;
     RegMaskVector regMasks;
@@ -186,7 +185,7 @@ namespace {
     }
 
     bool isAllocatable(unsigned Reg) {
-      return Reg < regsAllocatable.size() && regsAllocatable.test(Reg);
+      return Reg < TRI->getNumRegs() && MRI->isAllocatable(Reg);
     }
 
     // Analysis information if available
@@ -215,7 +214,6 @@ namespace {
                 const LiveInterval &LI);
 
     void verifyInlineAsm(const MachineInstr *MI);
-    void verifyTiedOperands(const MachineInstr *MI);
 
     void checkLiveness(const MachineOperand *MO, unsigned MONum);
     void markReachable(const MachineBasicBlock *MBB);
@@ -369,7 +367,7 @@ void MachineVerifier::report(const char *msg, const MachineBasicBlock *MBB) {
   report(msg, MBB->getParent());
   *OS << "- basic block: BB#" << MBB->getNumber()
       << ' ' << MBB->getName()
-      << " (" << (void*)MBB << ')';
+      << " (" << (const void*)MBB << ')';
   if (Indexes)
     *OS << " [" << Indexes->getMBBStartIdx(MBB)
         << ';' <<  Indexes->getMBBEndIdx(MBB) << ')';
@@ -428,7 +426,7 @@ void MachineVerifier::markReachable(const MachineBasicBlock *MBB) {
 
 void MachineVerifier::visitMachineFunctionBefore() {
   lastIndex = SlotIndex();
-  regsReserved = TRI->getReservedRegs(*MF);
+  regsReserved = MRI->getReservedRegs();
 
   // A sub-register of a reserved register is also reserved
   for (int Reg = regsReserved.find_first(); Reg>=0;
@@ -439,8 +437,6 @@ void MachineVerifier::visitMachineFunctionBefore() {
       regsReserved.set(*SubRegs);
     }
   }
-
-  regsAllocatable = TRI->getAllocatableSet(*MF);
 
   markReachable(&MF->front());
 
@@ -742,38 +738,6 @@ void MachineVerifier::verifyInlineAsm(const MachineInstr *MI) {
   }
 }
 
-// Verify the consistency of tied operands.
-void MachineVerifier::verifyTiedOperands(const MachineInstr *MI) {
-  const MCInstrDesc &MCID = MI->getDesc();
-  SmallVector<unsigned, 4> Defs;
-  SmallVector<unsigned, 4> Uses;
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
-    if (!MO.isReg() || !MO.isTied())
-      continue;
-    if (MO.isDef()) {
-      Defs.push_back(i);
-      continue;
-    }
-    Uses.push_back(i);
-    if (Defs.size() < Uses.size()) {
-      report("No tied def for tied use", &MO, i);
-      break;
-    }
-    if (i >= MCID.getNumOperands())
-      continue;
-    int DefIdx = MCID.getOperandConstraint(i, MCOI::TIED_TO);
-    if (unsigned(DefIdx) != Defs[Uses.size() - 1]) {
-      report(" def doesn't match MCInstrDesc", &MO, i);
-      *OS << "Descriptor says tied def should be operand " << DefIdx << ".\n";
-    }
-  }
-  if (Defs.size() > Uses.size()) {
-    unsigned i = Defs[Uses.size() - 1];
-    report("No tied use for tied def", &MI->getOperand(i), i);
-  }
-}
-
 void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
   const MCInstrDesc &MCID = MI->getDesc();
   if (MI->getNumOperands() < MCID.getNumOperands()) {
@@ -785,8 +749,6 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
   // Check the tied operands.
   if (MI->isInlineAsm())
     verifyInlineAsm(MI);
-  else
-    verifyTiedOperands(MI);
 
   // Check the MachineMemOperands for basic consistency.
   for (MachineInstr::mmo_iterator I = MI->memoperands_begin(),
@@ -844,11 +806,14 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
         report("Explicit operand marked as implicit", MO, MONum);
     }
 
-    if (MCID.getOperandConstraint(MONum, MCOI::TIED_TO) != -1) {
+    int TiedTo = MCID.getOperandConstraint(MONum, MCOI::TIED_TO);
+    if (TiedTo != -1) {
       if (!MO->isReg())
         report("Tied use must be a register", MO, MONum);
       else if (!MO->isTied())
         report("Operand should be tied", MO, MONum);
+      else if (unsigned(TiedTo) != MI->findTiedOperandIdx(MONum))
+        report("Tied def doesn't match MCInstrDesc", MO, MONum);
     } else if (MO->isReg() && MO->isTied())
       report("Explicit operand should not be tied", MO, MONum);
   } else {
@@ -864,6 +829,28 @@ MachineVerifier::visitMachineOperand(const MachineOperand *MO, unsigned MONum) {
       return;
     if (MRI->tracksLiveness() && !MI->isDebugValue())
       checkLiveness(MO, MONum);
+
+    // Verify the consistency of tied operands.
+    if (MO->isTied()) {
+      unsigned OtherIdx = MI->findTiedOperandIdx(MONum);
+      const MachineOperand &OtherMO = MI->getOperand(OtherIdx);
+      if (!OtherMO.isReg())
+        report("Must be tied to a register", MO, MONum);
+      if (!OtherMO.isTied())
+        report("Missing tie flags on tied operand", MO, MONum);
+      if (MI->findTiedOperandIdx(OtherIdx) != MONum)
+        report("Inconsistent tie links", MO, MONum);
+      if (MONum < MCID.getNumDefs()) {
+        if (OtherIdx < MCID.getNumOperands()) {
+          if (-1 == MCID.getOperandConstraint(OtherIdx, MCOI::TIED_TO))
+            report("Explicit def tied to explicit use without tie constraint",
+                   MO, MONum);
+        } else {
+          if (!OtherMO.isImplicit())
+            report("Explicit def should be tied to implicit use", MO, MONum);
+        }
+      }
+    }
 
     // Verify two-address constraints after leaving SSA form.
     unsigned DefIdx;

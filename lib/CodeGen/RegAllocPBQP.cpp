@@ -192,7 +192,6 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilder::build(MachineFunction *mf,
                                                 const MachineLoopInfo *loopInfo,
                                                 const RegSet &vregs) {
 
-  typedef std::vector<const LiveInterval*> LIVector;
   LiveIntervals *LIS = const_cast<LiveIntervals*>(lis);
   MachineRegisterInfo *mri = &mf->getRegInfo();
   const TargetRegisterInfo *tri = mf->getTarget().getRegisterInfo();
@@ -209,8 +208,6 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilder::build(MachineFunction *mf,
     mri->setPhysRegUsed(Reg);
   }
 
-  BitVector reservedRegs = tri->getReservedRegs(*mf);
-
   // Iterate over vregs.
   for (RegSet::const_iterator vregItr = vregs.begin(), vregEnd = vregs.end();
        vregItr != vregEnd; ++vregItr) {
@@ -219,7 +216,7 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilder::build(MachineFunction *mf,
     LiveInterval *vregLI = &LIS->getInterval(vreg);
 
     // Record any overlaps with regmask operands.
-    BitVector regMaskOverlaps(tri->getNumRegs());
+    BitVector regMaskOverlaps;
     LIS->checkRegMaskInterference(*vregLI, regMaskOverlaps);
 
     // Compute an initial allowed set for the current vreg.
@@ -228,7 +225,7 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilder::build(MachineFunction *mf,
     ArrayRef<uint16_t> rawOrder = trc->getRawAllocationOrder(*mf);
     for (unsigned i = 0; i != rawOrder.size(); ++i) {
       unsigned preg = rawOrder[i];
-      if (reservedRegs.test(preg))
+      if (mri->isReserved(preg))
         continue;
 
       // vregLI crosses a regmask operand that clobbers preg.
@@ -358,7 +355,7 @@ std::auto_ptr<PBQPRAProblem> PBQPBuilderWithCoalescing::build(
                                                    loopInfo->getLoopDepth(mbb));
 
       if (cp.isPhys()) {
-        if (!lis->isAllocatable(dst)) {
+        if (!mf->getRegInfo().isAllocatable(dst)) {
           continue;
         }
 
@@ -433,6 +430,7 @@ void RegAllocPBQP::getAnalysisUsage(AnalysisUsage &au) const {
   au.addRequired<SlotIndexes>();
   au.addPreserved<SlotIndexes>();
   au.addRequired<LiveIntervals>();
+  au.addPreserved<LiveIntervals>();
   //au.addRequiredID(SplitCriticalEdgesID);
   if (customPassID)
     au.addRequiredID(*customPassID);
@@ -444,6 +442,7 @@ void RegAllocPBQP::getAnalysisUsage(AnalysisUsage &au) const {
   au.addRequired<MachineLoopInfo>();
   au.addPreserved<MachineLoopInfo>();
   au.addRequired<VirtRegMap>();
+  au.addPreserved<VirtRegMap>();
   MachineFunctionPass::getAnalysisUsage(au);
 }
 

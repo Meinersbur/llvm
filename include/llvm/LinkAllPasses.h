@@ -64,6 +64,7 @@ namespace {
       (void) llvm::createDeadCodeEliminationPass();
       (void) llvm::createDeadInstEliminationPass();
       (void) llvm::createDeadStoreEliminationPass();
+      (void) llvm::createDependenceAnalysisPass();
       (void) llvm::createDomOnlyPrinterPass();
       (void) llvm::createDomPrinterPass();
       (void) llvm::createDomOnlyViewerPass();
@@ -141,6 +142,7 @@ namespace {
       (void) llvm::createLoopDeletionPass();
       (void) llvm::createPostDomTree();
       (void) llvm::createInstructionNamerPass();
+      (void) llvm::createMetaRenamerPass();
       (void) llvm::createFunctionAttrsPass();
       (void) llvm::createMergeFunctionsPass();
       (void) llvm::createPrintModulePass(0);
@@ -154,6 +156,7 @@ namespace {
       (void) llvm::createCorrelatedValuePropagationPass();
       (void) llvm::createMemDepPrinter();
       (void) llvm::createInstructionSimplifierPass();
+      (void) llvm::createLoopVectorizePass();
       (void) llvm::createBBVectorizePass();
 
       (void)new llvm::IntervalPartition();

@@ -41,7 +41,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PatternMatch.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
@@ -271,16 +271,16 @@ void ValueTable::add(Value *V, uint32_t num) {
   valueNumbering.insert(std::make_pair(V, num));
 }
 
-uint32_t ValueTable::lookup_or_add_call(CallInst* C) {
+uint32_t ValueTable::lookup_or_add_call(CallInst *C) {
   if (AA->doesNotAccessMemory(C)) {
     Expression exp = create_expression(C);
-    uint32_t& e = expressionNumbering[exp];
+    uint32_t &e = expressionNumbering[exp];
     if (!e) e = nextValueNumber++;
     valueNumbering[C] = e;
     return e;
   } else if (AA->onlyReadsMemory(C)) {
     Expression exp = create_expression(C);
-    uint32_t& e = expressionNumbering[exp];
+    uint32_t &e = expressionNumbering[exp];
     if (!e) {
       e = nextValueNumber++;
       valueNumbering[C] = e;
@@ -413,7 +413,7 @@ uint32_t ValueTable::lookup_or_add(Value *V) {
     case Instruction::LShr:
     case Instruction::AShr:
     case Instruction::And:
-    case Instruction::Or :
+    case Instruction::Or:
     case Instruction::Xor:
     case Instruction::ICmp:
     case Instruction::FCmp:
@@ -503,7 +503,7 @@ namespace {
     bool NoLoads;
     MemoryDependenceAnalysis *MD;
     DominatorTree *DT;
-    const TargetData *TD;
+    const DataLayout *TD;
     const TargetLibraryInfo *TLI;
 
     ValueTable VN;
@@ -535,7 +535,7 @@ namespace {
       InstrsToErase.push_back(I);
     }
 
-    const TargetData *getTargetData() const { return TD; }
+    const DataLayout *getDataLayout() const { return TD; }
     DominatorTree &getDominatorTree() const { return *DT; }
     AliasAnalysis *getAliasAnalysis() const { return VN.getAliasAnalysis(); }
     MemoryDependenceAnalysis &getMemDep() const { return *MD; }
@@ -632,6 +632,7 @@ INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfo)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(GVN, "gvn", "Global Value Numbering", false, false)
 
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 void GVN::dump(DenseMap<uint32_t, Value*>& d) {
   errs() << "{\n";
   for (DenseMap<uint32_t, Value*>::iterator I = d.begin(),
@@ -641,6 +642,7 @@ void GVN::dump(DenseMap<uint32_t, Value*>& d) {
   }
   errs() << "}\n";
 }
+#endif
 
 /// IsValueFullyAvailableInBlock - Return true if we can prove that the value
 /// we're analyzing is fully available in the specified block.  As we go, keep
@@ -728,7 +730,7 @@ SpeculationFailure:
 /// CoerceAvailableValueToLoadType will succeed.
 static bool CanCoerceMustAliasedValueToLoad(Value *StoredVal,
                                             Type *LoadTy,
-                                            const TargetData &TD) {
+                                            const DataLayout &TD) {
   // If the loaded or stored value is an first class array or struct, don't try
   // to transform them.  We need to be able to bitcast to integer.
   if (LoadTy->isStructTy() || LoadTy->isArrayTy() ||
@@ -754,7 +756,7 @@ static bool CanCoerceMustAliasedValueToLoad(Value *StoredVal,
 static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
                                              Type *LoadedTy,
                                              Instruction *InsertPt,
-                                             const TargetData &TD) {
+                                             const DataLayout &TD) {
   if (!CanCoerceMustAliasedValueToLoad(StoredVal, LoadedTy, TD))
     return 0;
 
@@ -840,7 +842,7 @@ static Value *CoerceAvailableValueToLoadType(Value *StoredVal,
 static int AnalyzeLoadFromClobberingWrite(Type *LoadTy, Value *LoadPtr,
                                           Value *WritePtr,
                                           uint64_t WriteSizeInBits,
-                                          const TargetData &TD) {
+                                          const DataLayout &TD) {
   // If the loaded or stored value is a first class array or struct, don't try
   // to transform them.  We need to be able to bitcast to integer.
   if (LoadTy->isStructTy() || LoadTy->isArrayTy())
@@ -913,7 +915,7 @@ static int AnalyzeLoadFromClobberingWrite(Type *LoadTy, Value *LoadPtr,
 /// memdep query of a load that ends up being a clobbering store.
 static int AnalyzeLoadFromClobberingStore(Type *LoadTy, Value *LoadPtr,
                                           StoreInst *DepSI,
-                                          const TargetData &TD) {
+                                          const DataLayout &TD) {
   // Cannot handle reading from store of first-class aggregate yet.
   if (DepSI->getValueOperand()->getType()->isStructTy() ||
       DepSI->getValueOperand()->getType()->isArrayTy())
@@ -929,7 +931,7 @@ static int AnalyzeLoadFromClobberingStore(Type *LoadTy, Value *LoadPtr,
 /// memdep query of a load that ends up being clobbered by another load.  See if
 /// the other load can feed into the second load.
 static int AnalyzeLoadFromClobberingLoad(Type *LoadTy, Value *LoadPtr,
-                                         LoadInst *DepLI, const TargetData &TD){
+                                         LoadInst *DepLI, const DataLayout &TD){
   // Cannot handle reading from store of first-class aggregate yet.
   if (DepLI->getType()->isStructTy() || DepLI->getType()->isArrayTy())
     return -1;
@@ -957,7 +959,7 @@ static int AnalyzeLoadFromClobberingLoad(Type *LoadTy, Value *LoadPtr,
 
 static int AnalyzeLoadFromClobberingMemInst(Type *LoadTy, Value *LoadPtr,
                                             MemIntrinsic *MI,
-                                            const TargetData &TD) {
+                                            const DataLayout &TD) {
   // If the mem operation is a non-constant size, we can't handle it.
   ConstantInt *SizeCst = dyn_cast<ConstantInt>(MI->getLength());
   if (SizeCst == 0) return -1;
@@ -1007,7 +1009,7 @@ static int AnalyzeLoadFromClobberingMemInst(Type *LoadTy, Value *LoadPtr,
 /// before we give up.
 static Value *GetStoreValueForLoad(Value *SrcVal, unsigned Offset,
                                    Type *LoadTy,
-                                   Instruction *InsertPt, const TargetData &TD){
+                                   Instruction *InsertPt, const DataLayout &TD){
   LLVMContext &Ctx = SrcVal->getType()->getContext();
 
   uint64_t StoreSize = (TD.getTypeSizeInBits(SrcVal->getType()) + 7) / 8;
@@ -1046,7 +1048,7 @@ static Value *GetStoreValueForLoad(Value *SrcVal, unsigned Offset,
 static Value *GetLoadValueForLoad(LoadInst *SrcVal, unsigned Offset,
                                   Type *LoadTy, Instruction *InsertPt,
                                   GVN &gvn) {
-  const TargetData &TD = *gvn.getTargetData();
+  const DataLayout &TD = *gvn.getDataLayout();
   // If Offset+LoadTy exceeds the size of SrcVal, then we must be wanting to
   // widen SrcVal out to a larger load.
   unsigned SrcValSize = TD.getTypeStoreSize(SrcVal->getType());
@@ -1105,7 +1107,7 @@ static Value *GetLoadValueForLoad(LoadInst *SrcVal, unsigned Offset,
 /// memdep query of a load that ends up being a clobbering mem intrinsic.
 static Value *GetMemInstValueForLoad(MemIntrinsic *SrcInst, unsigned Offset,
                                      Type *LoadTy, Instruction *InsertPt,
-                                     const TargetData &TD){
+                                     const DataLayout &TD){
   LLVMContext &Ctx = LoadTy->getContext();
   uint64_t LoadSize = TD.getTypeSizeInBits(LoadTy)/8;
 
@@ -1229,7 +1231,7 @@ struct AvailableValueInBlock {
     if (isSimpleValue()) {
       Res = getSimpleValue();
       if (Res->getType() != LoadTy) {
-        const TargetData *TD = gvn.getTargetData();
+        const DataLayout *TD = gvn.getDataLayout();
         assert(TD && "Need target data to handle type mismatch case");
         Res = GetStoreValueForLoad(Res, Offset, LoadTy, BB->getTerminator(),
                                    *TD);
@@ -1251,7 +1253,7 @@ struct AvailableValueInBlock {
                      << *Res << '\n' << "\n\n\n");
       }
     } else {
-      const TargetData *TD = gvn.getTargetData();
+      const DataLayout *TD = gvn.getDataLayout();
       assert(TD && "Need target data to handle type mismatch case");
       Res = GetMemInstValueForLoad(getMemIntrinValue(), Offset,
                                    LoadTy, BB->getTerminator(), *TD);
@@ -2293,7 +2295,7 @@ bool GVN::runOnFunction(Function& F) {
   if (!NoLoads)
     MD = &getAnalysis<MemoryDependenceAnalysis>();
   DT = &getAnalysis<DominatorTree>();
-  TD = getAnalysisIfAvailable<TargetData>();
+  TD = getAnalysisIfAvailable<DataLayout>();
   TLI = &getAnalysis<TargetLibraryInfo>();
   VN.setAliasAnalysis(&getAnalysis<AliasAnalysis>());
   VN.setMemDep(MD);

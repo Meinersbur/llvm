@@ -27,7 +27,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
@@ -326,10 +326,13 @@ DIE *DwarfDebug::updateSubprogramScopeDIE(CompileUnit *SPCU,
       if (SPTag == dwarf::DW_TAG_subroutine_type)
         for (unsigned i = 1, N = Args.getNumElements(); i < N; ++i) {
           DIE *Arg = new DIE(dwarf::DW_TAG_formal_parameter);
-          DIType ATy = DIType(DIType(Args.getElement(i)));
+          DIType ATy = DIType(Args.getElement(i));
           SPCU->addType(Arg, ATy);
           if (ATy.isArtificial())
             SPCU->addFlag(Arg, dwarf::DW_AT_artificial);
+          if (ATy.isObjectPointer())
+            SPCU->addDIEEntry(SPDie, dwarf::DW_AT_object_pointer,
+                              dwarf::DW_FORM_ref4, Arg);
           SPDie->addChild(Arg);
         }
       DIE *SPDeclDie = SPDie;
@@ -381,7 +384,7 @@ DIE *DwarfDebug::constructLexicalScopeDIE(CompileUnit *TheCU,
     // DW_AT_ranges appropriately.
     TheCU->addUInt(ScopeDIE, dwarf::DW_AT_ranges, dwarf::DW_FORM_data4,
                    DebugRangeSymbols.size() 
-                   * Asm->getTargetData().getPointerSize());
+                   * Asm->getDataLayout().getPointerSize(0));
     for (SmallVector<InsnRange, 4>::const_iterator RI = Ranges.begin(),
          RE = Ranges.end(); RI != RE; ++RI) {
       DebugRangeSymbols.push_back(getLabelBeforeInsn(RI->first));
@@ -447,7 +450,7 @@ DIE *DwarfDebug::constructInlinedScopeDIE(CompileUnit *TheCU,
     // DW_AT_ranges appropriately.
     TheCU->addUInt(ScopeDIE, dwarf::DW_AT_ranges, dwarf::DW_FORM_data4,
                    DebugRangeSymbols.size() 
-                   * Asm->getTargetData().getPointerSize());
+                   * Asm->getDataLayout().getPointerSize(0));
     for (SmallVector<InsnRange, 4>::const_iterator RI = Ranges.begin(),
          RE = Ranges.end(); RI != RE; ++RI) {
       DebugRangeSymbols.push_back(getLabelBeforeInsn(RI->first));
@@ -496,21 +499,26 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
     return NULL;
 
   SmallVector<DIE *, 8> Children;
+  DIE *ObjectPointer = NULL;
 
   // Collect arguments for current function.
   if (LScopes.isCurrentFunctionScope(Scope))
     for (unsigned i = 0, N = CurrentFnArguments.size(); i < N; ++i)
       if (DbgVariable *ArgDV = CurrentFnArguments[i])
         if (DIE *Arg = 
-            TheCU->constructVariableDIE(ArgDV, Scope->isAbstractScope()))
+            TheCU->constructVariableDIE(ArgDV, Scope->isAbstractScope())) {
           Children.push_back(Arg);
+          if (ArgDV->isObjectPointer()) ObjectPointer = Arg;
+        }
 
   // Collect lexical scope children first.
   const SmallVector<DbgVariable *, 8> &Variables = ScopeVariables.lookup(Scope);
   for (unsigned i = 0, N = Variables.size(); i < N; ++i)
     if (DIE *Variable = 
-        TheCU->constructVariableDIE(Variables[i], Scope->isAbstractScope()))
+        TheCU->constructVariableDIE(Variables[i], Scope->isAbstractScope())) {
       Children.push_back(Variable);
+      if (Variables[i]->isObjectPointer()) ObjectPointer = Variable;
+    }
   const SmallVector<LexicalScope *, 4> &Scopes = Scope->getChildren();
   for (unsigned j = 0, M = Scopes.size(); j < M; ++j)
     if (DIE *Nested = constructScopeDIE(TheCU, Scopes[j]))
@@ -543,6 +551,10 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
   for (SmallVector<DIE *, 8>::iterator I = Children.begin(),
          E = Children.end(); I != E; ++I)
     ScopeDIE->addChild(*I);
+
+  if (DS.isSubprogram() && ObjectPointer != NULL)
+    TheCU->addDIEEntry(ScopeDIE, dwarf::DW_AT_object_pointer,
+                       dwarf::DW_FORM_ref4, ObjectPointer);
 
   if (DS.isSubprogram())
     TheCU->addPubTypes(DISubprogram(DS));
@@ -591,7 +603,8 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
   unsigned ID = GetOrCreateSourceID(FN, CompilationDir);
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
-  CompileUnit *NewCU = new CompileUnit(ID, DIUnit.getLanguage(), Die, Asm, this);
+  CompileUnit *NewCU = new CompileUnit(ID, DIUnit.getLanguage(), Die,
+                                       Asm, this);
   NewCU->addString(Die, dwarf::DW_AT_producer, DIUnit.getProducer());
   NewCU->addUInt(Die, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
                  DIUnit.getLanguage());
@@ -1056,7 +1069,7 @@ DwarfDebug::collectVariableInfo(const MachineFunction *MF,
     if (AbsVar)
       AbsVar->setMInsn(MInsn);
 
-    // Simple ranges that are fully coalesced.
+    // Simplify ranges that are fully coalesced.
     if (History.size() <= 1 || (History.size() == 2 &&
                                 MInsn->isIdenticalTo(History.back()))) {
       RegVar->setMInsn(MInsn);
@@ -1309,7 +1322,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
             // Coalesce identical entries at the end of History.
             if (History.size() >= 2 &&
                 Prev->isIdenticalTo(History[History.size() - 2])) {
-              DEBUG(dbgs() << "Coalesce identical DBG_VALUE entries:\n"
+              DEBUG(dbgs() << "Coalescing identical DBG_VALUE entries:\n"
                     << "\t" << *Prev 
                     << "\t" << *History[History.size() - 2] << "\n");
               History.pop_back();
@@ -1325,7 +1338,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
                 PrevMBB->getLastNonDebugInstr();
               if (LastMI == PrevMBB->end()) {
                 // Drop DBG_VALUE for empty range.
-                DEBUG(dbgs() << "Drop DBG_VALUE for empty range:\n"
+                DEBUG(dbgs() << "Dropping DBG_VALUE for empty range:\n"
                       << "\t" << *Prev << "\n");
                 History.pop_back();
               }
@@ -1342,9 +1355,10 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
         if (!MI->isLabel())
           AtBlockEntry = false;
 
-        // First known non DBG_VALUE location marks beginning of function
-        // body.
-        if (PrologEndLoc.isUnknown() && !MI->getDebugLoc().isUnknown())
+        // First known non-DBG_VALUE and non-frame setup location marks
+        // the beginning of the function body.
+        if (!MI->getFlag(MachineInstr::FrameSetup) &&
+            (PrologEndLoc.isUnknown() && !MI->getDebugLoc().isUnknown()))
           PrologEndLoc = MI->getDebugLoc();
 
         // Check if the instruction clobbers any registers with debug vars.
@@ -1424,7 +1438,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
                                        MF->getFunction()->getContext());
     recordSourceLine(FnStartDL.getLine(), FnStartDL.getCol(),
                      FnStartDL.getScope(MF->getFunction()->getContext()),
-                     DWARF2_LINE_DEFAULT_IS_STMT ? DWARF2_FLAG_IS_STMT : 0);
+                     0);
   }
 }
 
@@ -1751,7 +1765,7 @@ void DwarfDebug::emitDebugInfo() {
     Asm->EmitSectionOffset(Asm->GetTempSymbol("abbrev_begin"),
                            DwarfAbbrevSectionSym);
     Asm->OutStreamer.AddComment("Address Size (in bytes)");
-    Asm->EmitInt8(Asm->getTargetData().getPointerSize());
+    Asm->EmitInt8(Asm->getDataLayout().getPointerSize(0));
 
     emitDIE(Die);
     Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("info_end", TheCU->getID()));
@@ -1797,14 +1811,14 @@ void DwarfDebug::emitEndOfLineMatrix(unsigned SectionEnd) {
   Asm->EmitInt8(0);
 
   Asm->OutStreamer.AddComment("Op size");
-  Asm->EmitInt8(Asm->getTargetData().getPointerSize() + 1);
+  Asm->EmitInt8(Asm->getDataLayout().getPointerSize(0) + 1);
   Asm->OutStreamer.AddComment("DW_LNE_set_address");
   Asm->EmitInt8(dwarf::DW_LNE_set_address);
 
   Asm->OutStreamer.AddComment("Section end label");
 
   Asm->OutStreamer.EmitSymbolValue(Asm->GetTempSymbol("section_end",SectionEnd),
-                                   Asm->getTargetData().getPointerSize(),
+                                   Asm->getDataLayout().getPointerSize(0),
                                    0/*AddrSpace*/);
 
   // Mark end of matrix.
@@ -2033,7 +2047,7 @@ void DwarfDebug::emitDebugLoc() {
   // Start the dwarf loc section.
   Asm->OutStreamer.SwitchSection(
     Asm->getObjFileLowering().getDwarfLocSection());
-  unsigned char Size = Asm->getTargetData().getPointerSize();
+  unsigned char Size = Asm->getDataLayout().getPointerSize(0);
   Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("debug_loc", 0));
   unsigned index = 1;
   for (SmallVector<DotDebugLocEntry, 4>::iterator
@@ -2130,7 +2144,7 @@ void DwarfDebug::emitDebugRanges() {
   // Start the dwarf ranges section.
   Asm->OutStreamer.SwitchSection(
     Asm->getObjFileLowering().getDwarfRangesSection());
-  unsigned char Size = Asm->getTargetData().getPointerSize();
+  unsigned char Size = Asm->getDataLayout().getPointerSize(0);
   for (SmallVector<const MCSymbol *, 8>::iterator
          I = DebugRangeSymbols.begin(), E = DebugRangeSymbols.end();
        I != E; ++I) {
@@ -2188,7 +2202,7 @@ void DwarfDebug::emitDebugInlineInfo() {
   Asm->OutStreamer.AddComment("Dwarf Version");
   Asm->EmitInt16(dwarf::DWARF_VERSION);
   Asm->OutStreamer.AddComment("Address Size (in bytes)");
-  Asm->EmitInt8(Asm->getTargetData().getPointerSize());
+  Asm->EmitInt8(Asm->getDataLayout().getPointerSize(0));
 
   for (SmallVector<const MDNode *, 4>::iterator I = InlinedSPNodes.begin(),
          E = InlinedSPNodes.end(); I != E; ++I) {
@@ -2219,7 +2233,7 @@ void DwarfDebug::emitDebugInlineInfo() {
 
       if (Asm->isVerbose()) Asm->OutStreamer.AddComment("low_pc");
       Asm->OutStreamer.EmitSymbolValue(LI->first,
-                                       Asm->getTargetData().getPointerSize(),0);
+                                       Asm->getDataLayout().getPointerSize(0),0);
     }
   }
 

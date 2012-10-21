@@ -13,7 +13,7 @@
 #include "llvm/GlobalVariable.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSectionELF.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ELF.h"
@@ -26,6 +26,7 @@ SSThreshold("mips-ssection-threshold", cl::Hidden,
 
 void MipsTargetObjectFile::Initialize(MCContext &Ctx, const TargetMachine &TM){
   TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+  InitializeELF(TM.Options.UseInitArray);
 
   SmallDataSection =
     getContext().getELFSection(".sdata", ELF::SHT_PROGBITS,
@@ -81,7 +82,7 @@ IsGlobalInSmallSection(const GlobalValue *GV, const TargetMachine &TM,
     return false;
 
   Type *Ty = GV->getType()->getElementType();
-  return IsInSmallSection(TM.getTargetData()->getTypeAllocSize(Ty));
+  return IsInSmallSection(TM.getDataLayout()->getTypeAllocSize(Ty));
 }
 
 

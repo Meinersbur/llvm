@@ -44,9 +44,10 @@ class MBlazeAsmParser : public MCTargetAsmParser {
 
   bool ParseDirectiveWord(unsigned Size, SMLoc L);
 
-  bool MatchAndEmitInstruction(SMLoc IDLoc,
+  bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                               MCStreamer &Out);
+                               MCStreamer &Out, unsigned &ErrorInfo,
+                               bool MatchingInlineAsm);
 
   /// @name Auto-generated Match Functions
   /// {
@@ -55,7 +56,6 @@ class MBlazeAsmParser : public MCTargetAsmParser {
 #include "MBlazeGenAsmMatcher.inc"
 
   /// }
-
 
 public:
   MBlazeAsmParser(MCSubtargetInfo &_STI, MCAsmParser &_Parser)
@@ -313,14 +313,13 @@ static unsigned MatchRegisterName(StringRef Name);
 /// }
 //
 bool MBlazeAsmParser::
-MatchAndEmitInstruction(SMLoc IDLoc,
+MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                         SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                        MCStreamer &Out) {
+                        MCStreamer &Out, unsigned &ErrorInfo,
+                        bool MatchingInlineAsm) {
   MCInst Inst;
-  SMLoc ErrorLoc;
-  unsigned ErrorInfo;
-
-  switch (MatchInstructionImpl(Operands, Inst, ErrorInfo)) {
+  switch (MatchInstructionImpl(Operands, Inst, ErrorInfo,
+                               MatchingInlineAsm)) {
   default: break;
   case Match_Success:
     Out.EmitInstruction(Inst);
@@ -329,8 +328,8 @@ MatchAndEmitInstruction(SMLoc IDLoc,
     return Error(IDLoc, "instruction use requires an option to be enabled");
   case Match_MnemonicFail:
       return Error(IDLoc, "unrecognized instruction mnemonic");
-  case Match_InvalidOperand:
-    ErrorLoc = IDLoc;
+  case Match_InvalidOperand: {
+    SMLoc ErrorLoc = IDLoc;
     if (ErrorInfo != ~0U) {
       if (ErrorInfo >= Operands.size())
         return Error(IDLoc, "too few operands for instruction");
@@ -340,6 +339,7 @@ MatchAndEmitInstruction(SMLoc IDLoc,
     }
 
     return Error(ErrorLoc, "invalid operand for instruction");
+  }
   }
 
   llvm_unreachable("Implement any new match types added!");

@@ -525,8 +525,9 @@ static bool tryAddingSymbolicOperand(uint64_t Address, int32_t Value,
     else
        ReferenceType = LLVMDisassembler_ReferenceType_InOut_None;
     const char *ReferenceName;
-    const char *Name = SymbolLookUp(DisInfo, Value, &ReferenceType, Address,
-                                    &ReferenceName);
+    uint64_t SymbolValue = 0x00000000ffffffffULL & Value;
+    const char *Name = SymbolLookUp(DisInfo, SymbolValue, &ReferenceType,
+                                    Address, &ReferenceName);
     if (Name) {
       SymbolicOp.AddSymbol.Name = Name;
       SymbolicOp.AddSymbol.Present = true;
@@ -1523,6 +1524,8 @@ DecodeAddrMode2IdxInstruction(MCInst &Inst, unsigned Insn,
         return MCDisassembler::Fail;
     }
     unsigned amt = fieldFromInstruction(Insn, 7, 5);
+    if (Opc == ARM_AM::ror && amt == 0)
+      Opc = ARM_AM::rrx;
     unsigned imm = ARM_AM::getAM2Opc(Op, amt, Opc, idx_mode);
 
     Inst.addOperand(MCOperand::CreateImm(imm));
@@ -1563,6 +1566,9 @@ static DecodeStatus DecodeSORegMemOperand(MCInst &Inst, unsigned Val,
       ShOp = ARM_AM::ror;
       break;
   }
+
+  if (ShOp == ARM_AM::ror && imm == 0)
+    ShOp = ARM_AM::rrx;
 
   if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
     return MCDisassembler::Fail;
@@ -2701,6 +2707,8 @@ static DecodeStatus DecodeVLD1DupInstruction(MCInst &Inst, unsigned Insn,
   unsigned align = fieldFromInstruction(Insn, 4, 1);
   unsigned size = fieldFromInstruction(Insn, 6, 2);
 
+  if (size == 0 && align == 1)
+    return MCDisassembler::Fail;
   align *= (1 << size);
 
   switch (Inst.getOpcode()) {
@@ -2831,6 +2839,8 @@ static DecodeStatus DecodeVLD4DupInstruction(MCInst &Inst, unsigned Insn,
   unsigned align = fieldFromInstruction(Insn, 4, 1);
 
   if (size == 0x3) {
+    if (align == 0)
+      return MCDisassembler::Fail;
     size = 4;
     align = 16;
   } else {
@@ -3710,8 +3720,16 @@ static DecodeStatus DecodeVLD1LN(MCInst &Inst, unsigned Insn,
       if (fieldFromInstruction(Insn, 6, 1))
         return MCDisassembler::Fail; // UNDEFINED
       index = fieldFromInstruction(Insn, 7, 1);
-      if (fieldFromInstruction(Insn, 4, 2) != 0)
-        align = 4;
+
+      switch (fieldFromInstruction(Insn, 4, 2)) {
+        case 0 :
+          align = 0; break;
+        case 3:
+          align = 4; break;
+        default:
+          return MCDisassembler::Fail;
+      }
+      break;
   }
 
   if (!Check(S, DecodeDPRRegisterClass(Inst, Rd, Address, Decoder)))
@@ -3769,8 +3787,16 @@ static DecodeStatus DecodeVST1LN(MCInst &Inst, unsigned Insn,
       if (fieldFromInstruction(Insn, 6, 1))
         return MCDisassembler::Fail; // UNDEFINED
       index = fieldFromInstruction(Insn, 7, 1);
-      if (fieldFromInstruction(Insn, 4, 2) != 0)
-        align = 4;
+
+      switch (fieldFromInstruction(Insn, 4, 2)) {
+        case 0: 
+          align = 0; break;
+        case 3:
+          align = 4; break;
+        default:
+          return MCDisassembler::Fail;
+      }
+      break;
   }
 
   if (Rm != 0xF) { // Writeback
@@ -4090,8 +4116,15 @@ static DecodeStatus DecodeVLD4LN(MCInst &Inst, unsigned Insn,
         inc = 2;
       break;
     case 2:
-      if (fieldFromInstruction(Insn, 4, 2))
-        align = 4 << fieldFromInstruction(Insn, 4, 2);
+      switch (fieldFromInstruction(Insn, 4, 2)) {
+        case 0:
+          align = 0; break;
+        case 3:
+          return MCDisassembler::Fail;
+        default:
+          align = 4 << fieldFromInstruction(Insn, 4, 2); break;
+      }
+
       index = fieldFromInstruction(Insn, 7, 1);
       if (fieldFromInstruction(Insn, 6, 1))
         inc = 2;
@@ -4164,8 +4197,15 @@ static DecodeStatus DecodeVST4LN(MCInst &Inst, unsigned Insn,
         inc = 2;
       break;
     case 2:
-      if (fieldFromInstruction(Insn, 4, 2))
-        align = 4 << fieldFromInstruction(Insn, 4, 2);
+      switch (fieldFromInstruction(Insn, 4, 2)) {
+        case 0:
+          align = 0; break;
+        case 3:
+          return MCDisassembler::Fail;
+        default:
+          align = 4 << fieldFromInstruction(Insn, 4, 2); break;
+      }
+
       index = fieldFromInstruction(Insn, 7, 1);
       if (fieldFromInstruction(Insn, 6, 1))
         inc = 2;

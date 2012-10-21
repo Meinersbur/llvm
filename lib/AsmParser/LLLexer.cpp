@@ -510,6 +510,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(asm);
   KEYWORD(sideeffect);
   KEYWORD(alignstack);
+  KEYWORD(inteldialect);
   KEYWORD(gc);
 
   KEYWORD(ccc);
@@ -524,6 +525,8 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(msp430_intrcc);
   KEYWORD(ptx_kernel);
   KEYWORD(ptx_device);
+  KEYWORD(spir_kernel);
+  KEYWORD(spir_func);
 
   KEYWORD(cc);
   KEYWORD(c);
@@ -554,7 +557,6 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(naked);
   KEYWORD(nonlazybind);
   KEYWORD(address_safety);
-  KEYWORD(ia_nsdialect);
 
   KEYWORD(type);
   KEYWORD(opaque);

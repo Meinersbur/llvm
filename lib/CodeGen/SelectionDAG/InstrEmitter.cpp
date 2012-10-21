@@ -20,7 +20,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
@@ -314,8 +314,6 @@ InstrEmitter::AddRegisterOperand(MachineInstr *MI, SDValue Op,
     const TargetRegisterClass *DstRC = 0;
     if (IIOpNum < II->getNumOperands())
       DstRC = TRI->getAllocatableClass(TII->getRegClass(*II,IIOpNum,TRI,*MF));
-    assert((DstRC || (MI->isVariadic() && IIOpNum >= MCID.getNumOperands())) &&
-           "Don't have operand info for this instruction!");
     if (DstRC && !MRI->constrainRegClass(VReg, DstRC, MinRCSize)) {
       unsigned NewVReg = MRI->createVirtualRegister(DstRC);
       BuildMI(*MBB, InsertPos, Op.getNode()->getDebugLoc(),
@@ -392,10 +390,10 @@ void InstrEmitter::AddOperand(MachineInstr *MI, SDValue Op,
     Type *Type = CP->getType();
     // MachineConstantPool wants an explicit alignment.
     if (Align == 0) {
-      Align = TM->getTargetData()->getPrefTypeAlignment(Type);
+      Align = TM->getDataLayout()->getPrefTypeAlignment(Type);
       if (Align == 0) {
         // Alignment of vector types.  FIXME!
-        Align = TM->getTargetData()->getTypeAllocSize(Type);
+        Align = TM->getDataLayout()->getTypeAllocSize(Type);
       }
     }
 
@@ -412,6 +410,7 @@ void InstrEmitter::AddOperand(MachineInstr *MI, SDValue Op,
                                             ES->getTargetFlags()));
   } else if (BlockAddressSDNode *BA = dyn_cast<BlockAddressSDNode>(Op)) {
     MI->addOperand(MachineOperand::CreateBA(BA->getBlockAddress(),
+                                            BA->getOffset(),
                                             BA->getTargetFlags()));
   } else if (TargetIndexSDNode *TI = dyn_cast<TargetIndexSDNode>(Op)) {
     MI->addOperand(MachineOperand::CreateTargetIndex(TI->getIndex(),
@@ -870,6 +869,17 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
     MCSymbol *S = cast<EHLabelSDNode>(Node)->getLabel();
     BuildMI(*MBB, InsertPos, Node->getDebugLoc(),
             TII->get(TargetOpcode::EH_LABEL)).addSym(S);
+    break;
+  }
+
+  case ISD::LIFETIME_START:
+  case ISD::LIFETIME_END: {
+    unsigned TarOp = (Node->getOpcode() == ISD::LIFETIME_START) ?
+    TargetOpcode::LIFETIME_START : TargetOpcode::LIFETIME_END;
+
+    FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(Node->getOperand(1));
+    BuildMI(*MBB, InsertPos, Node->getDebugLoc(), TII->get(TarOp))
+    .addFrameIndex(FI->getIndex());
     break;
   }
 

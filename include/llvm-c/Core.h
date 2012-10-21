@@ -173,10 +173,11 @@ typedef enum {
     LLVMUWTable = 1 << 30,
     LLVMNonLazyBind = 1 << 31
 
-    // FIXME: This attribute is currently not included in the C API as
-    // a temporary measure until the API/ABI impact to the C API is understood
-    // and the path forward agreed upon.
-    //LLVMAddressSafety = 1ULL << 32
+    /* FIXME: This attribute is currently not included in the C API as
+       a temporary measure until the API/ABI impact to the C API is understood
+       and the path forward agreed upon.
+    LLVMAddressSafety = 1ULL << 32
+    */
 } LLVMAttribute;
 
 typedef enum {
@@ -1802,7 +1803,7 @@ LLVMAttribute LLVMGetAttribute(LLVMValueRef Arg);
  * Set the alignment for a function parameter.
  *
  * @see llvm::Argument::addAttr()
- * @see llvm::Attribute::constructAlignmentFromInt()
+ * @see llvm::AttrBuilder::addAlignmentAttr()
  */
 void LLVMSetParamAlignment(LLVMValueRef Arg, unsigned align);
 
@@ -1866,6 +1867,27 @@ LLVMValueRef LLVMMDNode(LLVMValueRef *Vals, unsigned Count);
  * @return String data in MDString.
  */
 const char  *LLVMGetMDString(LLVMValueRef V, unsigned* Len);
+
+/**
+ * Obtain the number of operands from an MDNode value.
+ *
+ * @param V MDNode to get number of operands from.
+ * @return Number of operands of the MDNode.
+ */
+unsigned LLVMGetMDNodeNumOperands(LLVMValueRef V);
+
+/**
+ * Obtain the given MDNode's operands.
+ *
+ * The passed LLVMValueRef pointer should point to enough memory to hold all of
+ * the operands of the given MDNode (see LLVMGetMDNodeNumOperands) as
+ * LLVMValueRefs. This memory will be populated with the LLVMValueRefs of the
+ * MDNode's operands.
+ *
+ * @param V MDNode to get the operands from.
+ * @param Dest Destination array for operands.
+ */
+void LLVMGetMDNodeOperands(LLVMValueRef V, LLVMValueRef *Dest);
 
 /**
  * @}
@@ -2687,7 +2709,7 @@ namespace llvm {
   
   template<typename T>
   inline T **unwrap(LLVMValueRef *Vals, unsigned Length) {
-    #if DEBUG
+    #ifdef DEBUG
     for (LLVMValueRef *I = Vals, *E = Vals + Length; I != E; ++I)
       cast<T>(*I);
     #endif
