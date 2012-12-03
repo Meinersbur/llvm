@@ -106,7 +106,7 @@ CreateTargetHazardRecognizer(const TargetMachine *TM,
     const InstrItineraryData *II = TM->getInstrItineraryData();
     return new ScoreboardHazardRecognizer(II, DAG, "pre-RA-sched");
   }
-  return TargetInstrInfoImpl::CreateTargetHazardRecognizer(TM, DAG);
+  return TargetInstrInfo::CreateTargetHazardRecognizer(TM, DAG);
 }
 
 ScheduleHazardRecognizer *ARMBaseInstrInfo::
@@ -115,7 +115,7 @@ CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
   if (Subtarget.isThumb2() || Subtarget.hasVFP2())
     return (ScheduleHazardRecognizer *)
       new ARMHazardRecognizer(II, *this, getRegisterInfo(), Subtarget, DAG);
-  return TargetInstrInfoImpl::CreateTargetPostRAHazardRecognizer(II, DAG);
+  return TargetInstrInfo::CreateTargetPostRAHazardRecognizer(II, DAG);
 }
 
 MachineInstr *
@@ -702,6 +702,8 @@ void ARMBaseInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     Opc = ARM::VMOVD, BeginIdx = ARM::dsub_0, SubRegs = 3;
   else if (ARM::DQuadRegClass.contains(DestReg, SrcReg))
     Opc = ARM::VMOVD, BeginIdx = ARM::dsub_0, SubRegs = 4;
+  else if (ARM::GPRPairRegClass.contains(DestReg, SrcReg))
+    Opc = ARM::MOVr, BeginIdx = ARM::gsub_0, SubRegs = 2;
 
   else if (ARM::DPairSpcRegClass.contains(DestReg, SrcReg))
     Opc = ARM::VMOVD, BeginIdx = ARM::dsub_0, SubRegs = 2, Spacing = 2;
@@ -791,6 +793,13 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
         AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTRD))
                    .addReg(SrcReg, getKillRegState(isKill))
                    .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
+      } else if (ARM::GPRPairRegClass.hasSubClassEq(RC)) {
+        MachineInstrBuilder MIB =
+          AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::STMIA))
+                       .addFrameIndex(FI))
+                       .addMemOperand(MMO);
+          MIB = AddDReg(MIB, SrcReg, ARM::gsub_0, getKillRegState(isKill), TRI);
+                AddDReg(MIB, SrcReg, ARM::gsub_1, 0, TRI);
       } else
         llvm_unreachable("Unknown reg class!");
       break;
@@ -938,6 +947,7 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
   MachineFunction &MF = *MBB.getParent();
+  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
   MachineFrameInfo &MFI = *MF.getFrameInfo();
   unsigned Align = MFI.getObjectAlignment(FI);
   MachineMemOperand *MMO =
@@ -963,6 +973,15 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     if (ARM::DPRRegClass.hasSubClassEq(RC)) {
       AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDRD), DestReg)
                    .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
+    } else if (ARM::GPRPairRegClass.hasSubClassEq(RC)) {
+      unsigned LdmOpc = AFI->isThumbFunction() ? ARM::t2LDMIA : ARM::LDMIA;
+      MachineInstrBuilder MIB =
+        AddDefaultPred(BuildMI(MBB, I, DL, get(LdmOpc))
+                    .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
+      MIB = AddDReg(MIB, DestReg, ARM::gsub_0, RegState::DefineNoRead, TRI);
+      MIB = AddDReg(MIB, DestReg, ARM::gsub_1, RegState::DefineNoRead, TRI);
+      if (TargetRegisterInfo::isPhysicalRegister(DestReg))
+        MIB.addReg(DestReg, RegState::ImplicitDefine);
     } else
       llvm_unreachable("Unknown reg class!");
     break;
@@ -1250,7 +1269,7 @@ reMaterialize(MachineBasicBlock &MBB,
 
 MachineInstr *
 ARMBaseInstrInfo::duplicate(MachineInstr *Orig, MachineFunction &MF) const {
-  MachineInstr *MI = TargetInstrInfoImpl::duplicate(Orig, MF);
+  MachineInstr *MI = TargetInstrInfo::duplicate(Orig, MF);
   switch(Orig->getOpcode()) {
   case ARM::tLDRpci_pic:
   case ARM::t2LDRpci_pic: {
@@ -1354,6 +1373,9 @@ bool ARMBaseInstrInfo::produceSameValue(const MachineInstr *MI0,
 /// only return true if the base pointers are the same and the only differences
 /// between the two addresses is the offset. It also returns the offsets by
 /// reference.
+///
+/// FIXME: remove this in favor of the MachineInstr interface once pre-RA-sched
+/// is permanently disabled.
 bool ARMBaseInstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
                                                int64_t &Offset1,
                                                int64_t &Offset2) const {
@@ -1428,6 +1450,9 @@ bool ARMBaseInstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
 /// from the common base address. It returns true if it decides it's desirable
 /// to schedule the two loads together. "NumLoads" is the number of loads that
 /// have already been scheduled after Load1.
+///
+/// FIXME: remove this in favor of the MachineInstr interface once pre-RA-sched
+/// is permanently disabled.
 bool ARMBaseInstrInfo::shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
                                                int64_t Offset1, int64_t Offset2,
                                                unsigned NumLoads) const {
@@ -1579,7 +1604,7 @@ ARMBaseInstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
     // MOVCC AL can't be inverted. Shouldn't happen.
     if (CC == ARMCC::AL || PredReg != ARM::CPSR)
       return NULL;
-    MI = TargetInstrInfoImpl::commuteInstruction(MI, NewMI);
+    MI = TargetInstrInfo::commuteInstruction(MI, NewMI);
     if (!MI)
       return NULL;
     // After swapping the MOVCC operands, also invert the condition.
@@ -1588,7 +1613,7 @@ ARMBaseInstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
     return MI;
   }
   }
-  return TargetInstrInfoImpl::commuteInstruction(MI, NewMI);
+  return TargetInstrInfo::commuteInstruction(MI, NewMI);
 }
 
 /// Identify instructions that can be folded into a MOVCC instruction, and

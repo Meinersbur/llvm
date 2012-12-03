@@ -16,8 +16,10 @@
 #include "CodeGenDAGPatterns.h"
 #include "CodeGenSchedule.h"
 #include "CodeGenTarget.h"
+#include "TableGenBackends.h"
 #include "SequenceToOffsetTable.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 #include <algorithm>
@@ -269,7 +271,7 @@ void InstrInfoEmitter::run(raw_ostream &OS) {
 
   std::string ClassName = TargetName + "GenInstrInfo";
   OS << "namespace llvm {\n";
-  OS << "struct " << ClassName << " : public TargetInstrInfoImpl {\n"
+  OS << "struct " << ClassName << " : public TargetInstrInfo {\n"
      << "  explicit " << ClassName << "(int SO = -1, int DO = -1);\n"
      << "};\n";
   OS << "} // End llvm namespace \n";
@@ -284,7 +286,7 @@ void InstrInfoEmitter::run(raw_ostream &OS) {
   OS << "extern const unsigned " << TargetName << "InstrNameIndices[];\n";
   OS << "extern const char " << TargetName << "InstrNameData[];\n";
   OS << ClassName << "::" << ClassName << "(int SO, int DO)\n"
-     << "  : TargetInstrInfoImpl(SO, DO) {\n"
+     << "  : TargetInstrInfo(SO, DO) {\n"
      << "  InitMCInstrInfo(" << TargetName << "Insts, "
      << TargetName << "InstrNameIndices, " << TargetName << "InstrNameData, "
      << NumberedInstructions.size() << ");\n}\n";
@@ -342,13 +344,14 @@ void InstrInfoEmitter::emitRecord(const CodeGenInstruction &Inst, unsigned Num,
 
   // Emit all of the target-specific flags...
   BitsInit *TSF = Inst.TheDef->getValueAsBitsInit("TSFlags");
-  if (!TSF) throw "no TSFlags?";
+  if (!TSF)
+    PrintFatalError("no TSFlags?");
   uint64_t Value = 0;
   for (unsigned i = 0, e = TSF->getNumBits(); i != e; ++i) {
     if (BitInit *Bit = dyn_cast<BitInit>(TSF->getBit(i)))
       Value |= uint64_t(Bit->getValue()) << i;
     else
-      throw "Invalid TSFlags bit in " + Inst.TheDef->getName();
+      PrintFatalError("Invalid TSFlags bit in " + Inst.TheDef->getName());
   }
   OS << ", 0x";
   OS.write_hex(Value);
@@ -415,6 +418,7 @@ namespace llvm {
 
 void EmitInstrInfo(RecordKeeper &RK, raw_ostream &OS) {
   InstrInfoEmitter(RK).run(OS);
+  EmitMapTable(RK, OS);
 }
 
 } // End llvm namespace

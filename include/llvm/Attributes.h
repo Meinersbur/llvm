@@ -51,51 +51,47 @@ public:
 
   enum AttrVal {
     // IR-Level Attributes
-    None            = 0,   ///< No attributes have been set
-    AddressSafety   = 1,   ///< Address safety checking is on.
-    Alignment       = 2,   ///< Alignment of parameter (5 bits)
+    None,                  ///< No attributes have been set
+    AddressSafety,         ///< Address safety checking is on.
+    Alignment,             ///< Alignment of parameter (5 bits)
                            ///< stored as log2 of alignment with +1 bias
                            ///< 0 means unaligned different from align 1
-    AlwaysInline    = 3,   ///< inline=always
-    ByVal           = 4,   ///< Pass structure by value
-    InlineHint      = 5,   ///< Source said inlining was desirable
-    InReg           = 6,   ///< Force argument to be passed in register
-    Naked           = 7,   ///< Naked function
-    Nest            = 8,   ///< Nested function static chain
-    NoAlias         = 9,   ///< Considered to not alias after call
-    NoCapture       = 10,  ///< Function creates no aliases of pointer
-    NoImplicitFloat = 11,  ///< Disable implicit floating point insts
-    NoInline        = 12,  ///< inline=never
-    NonLazyBind     = 13,  ///< Function is called early and/or
+    AlwaysInline,          ///< inline=always
+    ByVal,                 ///< Pass structure by value
+    InlineHint,            ///< Source said inlining was desirable
+    InReg,                 ///< Force argument to be passed in register
+    MinSize,               ///< Function must be optimized for size first
+    Naked,                 ///< Naked function
+    Nest,                  ///< Nested function static chain
+    NoAlias,               ///< Considered to not alias after call
+    NoCapture,             ///< Function creates no aliases of pointer
+    NoImplicitFloat,       ///< Disable implicit floating point insts
+    NoInline,              ///< inline=never
+    NonLazyBind,           ///< Function is called early and/or
                            ///< often, so lazy binding isn't worthwhile
-    NoRedZone       = 14,  ///< Disable redzone
-    NoReturn        = 15,  ///< Mark the function as not returning
-    NoUnwind        = 16,  ///< Function doesn't unwind stack
-    OptimizeForSize = 17,  ///< opt_size
-    ReadNone        = 18,  ///< Function does not access memory
-    ReadOnly        = 19,  ///< Function only reads from memory
-    ReturnsTwice    = 20,  ///< Function can return twice
-    SExt            = 21,  ///< Sign extended before/after call
-    StackAlignment  = 22,  ///< Alignment of stack for function (3 bits)
+    NoRedZone,             ///< Disable redzone
+    NoReturn,              ///< Mark the function as not returning
+    NoUnwind,              ///< Function doesn't unwind stack
+    OptimizeForSize,       ///< opt_size
+    ReadNone,              ///< Function does not access memory
+    ReadOnly,              ///< Function only reads from memory
+    ReturnsTwice,          ///< Function can return twice
+    SExt,                  ///< Sign extended before/after call
+    StackAlignment,        ///< Alignment of stack for function (3 bits)
                            ///< stored as log2 of alignment with +1 bias 0
                            ///< means unaligned (different from
                            ///< alignstack={1))
-    StackProtect    = 23,  ///< Stack protection.
-    StackProtectReq = 24,  ///< Stack protection required.
-    StructRet       = 25,  ///< Hidden pointer to structure to return
-    UWTable         = 26,  ///< Function must be in a unwind table
-    ZExt            = 27   ///< Zero extended before/after call
+    StackProtect,          ///< Stack protection.
+    StackProtectReq,       ///< Stack protection required.
+    StructRet,             ///< Hidden pointer to structure to return
+    UWTable,               ///< Function must be in a unwind table
+    ZExt                   ///< Zero extended before/after call
   };
 private:
   AttributesImpl *Attrs;
   Attributes(AttributesImpl *A) : Attrs(A) {}
 public:
   Attributes() : Attrs(0) {}
-  Attributes(const Attributes &A) : Attrs(A.Attrs) {}
-  Attributes &operator=(const Attributes &A) {
-    Attrs = A.Attrs;
-    return *this;
-  }
 
   /// get - Return a uniquified Attributes object. This takes the uniquified
   /// value from the Builder and wraps it in the Attributes class.
@@ -152,7 +148,8 @@ public:
       hasAttribute(Attributes::UWTable) ||
       hasAttribute(Attributes::NonLazyBind) ||
       hasAttribute(Attributes::ReturnsTwice) ||
-      hasAttribute(Attributes::AddressSafety);
+      hasAttribute(Attributes::AddressSafety) ||
+      hasAttribute(Attributes::MinSize);
   }
 
   bool operator==(const Attributes &A) const {
@@ -197,7 +194,6 @@ public:
   AttrBuilder() : Bits(0) {}
   explicit AttrBuilder(uint64_t B) : Bits(B) {}
   AttrBuilder(const Attributes &A) : Bits(A.Raw()) {}
-  AttrBuilder(const AttrBuilder &B) : Bits(B.Bits) {}
 
   void clear() { Bits = 0; }
 
@@ -263,7 +259,8 @@ public:
       .removeAttribute(Attributes::UWTable)
       .removeAttribute(Attributes::NonLazyBind)
       .removeAttribute(Attributes::ReturnsTwice)
-      .removeAttribute(Attributes::AddressSafety);
+      .removeAttribute(Attributes::AddressSafety)
+      .removeAttribute(Attributes::MinSize);
   }
 
   uint64_t Raw() const { return Bits; }
@@ -315,21 +312,26 @@ public:
     FunctionIndex = ~0U
   };
 private:
-  /// AttrList - The attributes that we are managing.  This can be null to
-  /// represent the empty attributes list.
+  /// @brief The attributes that we are managing.  This can be null to represent
+  /// the empty attributes list.
   AttributeListImpl *AttrList;
+
+  /// @brief The attributes for the specified index are returned.  Attributes
+  /// for the result are denoted with Idx = 0.
+  Attributes getAttributes(unsigned Idx) const;
+
+  explicit AttrListPtr(AttributeListImpl *LI) : AttrList(LI) {}
 public:
   AttrListPtr() : AttrList(0) {}
-  AttrListPtr(const AttrListPtr &P);
+  AttrListPtr(const AttrListPtr &P) : AttrList(P.AttrList) {}
   const AttrListPtr &operator=(const AttrListPtr &RHS);
-  ~AttrListPtr();
 
   //===--------------------------------------------------------------------===//
   // Attribute List Construction and Mutation
   //===--------------------------------------------------------------------===//
 
   /// get - Return a Attributes list with the specified parameters in it.
-  static AttrListPtr get(ArrayRef<AttributeWithIndex> Attrs);
+  static AttrListPtr get(LLVMContext &C, ArrayRef<AttributeWithIndex> Attrs);
 
   /// addAttr - Add the specified attribute at the specified index to this
   /// attribute list.  Since attribute lists are immutable, this
@@ -416,13 +418,6 @@ public:
   const AttributeWithIndex &getSlot(unsigned Slot) const;
 
   void dump() const;
-
-private:
-  explicit AttrListPtr(AttributeListImpl *L);
-
-  /// getAttributes - The attributes for the specified index are
-  /// returned.  Attributes for the result are denoted with Idx = 0.
-  Attributes getAttributes(unsigned Idx) const;
 };
 
 } // End llvm namespace

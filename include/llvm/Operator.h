@@ -36,8 +36,11 @@ private:
   void *operator new(size_t, unsigned) LLVM_DELETED_FUNCTION;
   void *operator new(size_t s) LLVM_DELETED_FUNCTION;
   Operator() LLVM_DELETED_FUNCTION;
-  // NOTE: cannot use LLVM_DELETED_FUNCTION because it's not legal to delete
-  // an overridden method that's not deleted in the base class.
+
+protected:
+  // NOTE: Cannot use LLVM_DELETED_FUNCTION because it's not legal to delete
+  // an overridden method that's not deleted in the base class. Cannot leave
+  // this unimplemented because that leads to an ODR-violation.
   ~Operator();
 
 public:
@@ -79,8 +82,6 @@ public:
   };
 
 private:
-  ~OverflowingBinaryOperator(); // DO NOT IMPLEMENT
-
   friend class BinaryOperator;
   friend class ConstantExpr;
   void setHasNoUnsignedWrap(bool B) {
@@ -130,23 +131,21 @@ public:
   enum {
     IsExact = (1 << 0)
   };
-  
-private:
-  ~PossiblyExactOperator(); // DO NOT IMPLEMENT
 
+private:
   friend class BinaryOperator;
   friend class ConstantExpr;
   void setIsExact(bool B) {
     SubclassOptionalData = (SubclassOptionalData & ~IsExact) | (B * IsExact);
   }
-  
+
 public:
   /// isExact - Test whether this division is known to be exact, with
   /// zero remainder.
   bool isExact() const {
     return SubclassOptionalData & IsExact;
   }
-  
+
   static bool isPossiblyExactOpcode(unsigned OpC) {
     return OpC == Instruction::SDiv ||
            OpC == Instruction::UDiv ||
@@ -165,13 +164,132 @@ public:
   }
 };
 
+/// Convenience struct for specifying and reasoning about fast-math flags.
+struct FastMathFlags {
+  bool UnsafeAlgebra   : 1;
+  bool NoNaNs          : 1;
+  bool NoInfs          : 1;
+  bool NoSignedZeros   : 1;
+  bool AllowReciprocal : 1;
+
+  FastMathFlags() : UnsafeAlgebra(false), NoNaNs(false), NoInfs(false),
+                    NoSignedZeros(false), AllowReciprocal(false)
+  { }
+
+  /// Whether any flag is set
+  bool any() {
+    return UnsafeAlgebra || NoNaNs || NoInfs || NoSignedZeros ||
+      AllowReciprocal;
+  }
+
+  /// Set all the flags to false
+  void clear() {
+    UnsafeAlgebra = NoNaNs = NoInfs = NoSignedZeros = AllowReciprocal = false;
+  }
+};
+
+
 /// FPMathOperator - Utility class for floating point operations which can have
 /// information about relaxed accuracy requirements attached to them.
 class FPMathOperator : public Operator {
+public:
+  enum {
+    UnsafeAlgebra   = (1 << 0),
+    NoNaNs          = (1 << 1),
+    NoInfs          = (1 << 2),
+    NoSignedZeros   = (1 << 3),
+    AllowReciprocal = (1 << 4)
+  };
+
 private:
-  ~FPMathOperator(); // DO NOT IMPLEMENT
+  friend class Instruction;
+
+  void setHasUnsafeAlgebra(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~UnsafeAlgebra) | (B * UnsafeAlgebra);
+
+    // Unsafe algebra implies all the others
+    if (B) {
+      setHasNoNaNs(true);
+      setHasNoInfs(true);
+      setHasNoSignedZeros(true);
+      setHasAllowReciprocal(true);
+    }
+  }
+  void setHasNoNaNs(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~NoNaNs) | (B * NoNaNs);
+  }
+  void setHasNoInfs(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~NoInfs) | (B * NoInfs);
+  }
+  void setHasNoSignedZeros(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~NoSignedZeros) | (B * NoSignedZeros);
+  }
+  void setHasAllowReciprocal(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~AllowReciprocal) | (B * AllowReciprocal);
+  }
+
+  /// Convenience function for setting all the fast-math flags
+  void setFastMathFlags(FastMathFlags FMF) {
+    if (FMF.UnsafeAlgebra) {
+      // Set all the bits to true
+      setHasUnsafeAlgebra(true);
+      return;
+    }
+
+    setHasUnsafeAlgebra(FMF.UnsafeAlgebra);
+    setHasNoNaNs(FMF.NoNaNs);
+    setHasNoInfs(FMF.NoInfs);
+    setHasNoSignedZeros(FMF.NoSignedZeros);
+    setHasAllowReciprocal(FMF.AllowReciprocal);
+  }
 
 public:
+  /// Test whether this operation is permitted to be
+  /// algebraically transformed, aka the 'A' fast-math property.
+  bool hasUnsafeAlgebra() const {
+    return (SubclassOptionalData & UnsafeAlgebra) != 0;
+  }
+
+  /// Test whether this operation's arguments and results are to be
+  /// treated as non-NaN, aka the 'N' fast-math property.
+  bool hasNoNaNs() const {
+    return (SubclassOptionalData & NoNaNs) != 0;
+  }
+
+  /// Test whether this operation's arguments and results are to be
+  /// treated as NoN-Inf, aka the 'I' fast-math property.
+  bool hasNoInfs() const {
+    return (SubclassOptionalData & NoInfs) != 0;
+  }
+
+  /// Test whether this operation can treat the sign of zero
+  /// as insignificant, aka the 'S' fast-math property.
+  bool hasNoSignedZeros() const {
+    return (SubclassOptionalData & NoSignedZeros) != 0;
+  }
+
+  /// Test whether this operation is permitted to use
+  /// reciprocal instead of division, aka the 'R' fast-math property.
+  bool hasAllowReciprocal() const {
+    return (SubclassOptionalData & AllowReciprocal) != 0;
+  }
+
+  /// Convenience function for getting all the fast-math flags
+  FastMathFlags getFastMathFlags() const {
+    FastMathFlags FMF;
+    FMF.UnsafeAlgebra   = hasUnsafeAlgebra();
+    FMF.NoNaNs          = hasNoNaNs();
+    FMF.NoInfs          = hasNoInfs();
+    FMF.NoSignedZeros   = hasNoSignedZeros();
+    FMF.AllowReciprocal = hasAllowReciprocal();
+    return FMF;
+  }
+
 
   /// \brief Get the maximum error permitted by this operation in ULPs.  An
   /// accuracy of 0.0 means that the operation should be performed with the
@@ -186,12 +304,11 @@ public:
   }
 };
 
-  
+
 /// ConcreteOperator - A helper template for defining operators for individual
 /// opcodes.
 template<typename SuperClass, unsigned Opc>
 class ConcreteOperator : public SuperClass {
-  ~ConcreteOperator(); // DO NOT IMPLEMENT
 public:
   static inline bool classof(const Instruction *I) {
     return I->getOpcode() == Opc;
@@ -207,45 +324,35 @@ public:
 
 class AddOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Add> {
-  ~AddOperator(); // DO NOT IMPLEMENT
 };
 class SubOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Sub> {
-  ~SubOperator(); // DO NOT IMPLEMENT
 };
 class MulOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Mul> {
-  ~MulOperator(); // DO NOT IMPLEMENT
 };
 class ShlOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Shl> {
-  ~ShlOperator(); // DO NOT IMPLEMENT
 };
 
 
 class SDivOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::SDiv> {
-  ~SDivOperator(); // DO NOT IMPLEMENT
 };
 class UDivOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::UDiv> {
-  ~UDivOperator(); // DO NOT IMPLEMENT
 };
 class AShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::AShr> {
-  ~AShrOperator(); // DO NOT IMPLEMENT
 };
 class LShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::LShr> {
-  ~LShrOperator(); // DO NOT IMPLEMENT
 };
 
 
 
 class GEPOperator
   : public ConcreteOperator<Operator, Instruction::GetElementPtr> {
-  ~GEPOperator(); // DO NOT IMPLEMENT
-
   enum {
     IsInBounds = (1 << 0)
   };

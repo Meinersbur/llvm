@@ -1353,16 +1353,7 @@ GetElementPtrInst::GetElementPtrInst(const GetElementPtrInst &GEPI)
 ///
 template <typename IndexTy>
 static Type *getIndexedTypeInternal(Type *Ptr, ArrayRef<IndexTy> IdxList) {
-  if (Ptr->isVectorTy()) {
-    assert(IdxList.size() == 1 &&
-      "GEP with vector pointers must have a single index");
-    PointerType *PTy = dyn_cast<PointerType>(
-        cast<VectorType>(Ptr)->getElementType());
-    assert(PTy && "Gep with invalid vector pointer found");
-    return PTy->getElementType();
-  }
-
-  PointerType *PTy = dyn_cast<PointerType>(Ptr);
+  PointerType *PTy = dyn_cast<PointerType>(Ptr->getScalarType());
   if (!PTy) return 0;   // Type isn't a pointer type!
   Type *Agg = PTy->getElementType();
 
@@ -1397,18 +1388,6 @@ Type *GetElementPtrInst::getIndexedType(Type *Ptr,
 
 Type *GetElementPtrInst::getIndexedType(Type *Ptr, ArrayRef<uint64_t> IdxList) {
   return getIndexedTypeInternal(Ptr, IdxList);
-}
-
-unsigned GetElementPtrInst::getAddressSpace(Value *Ptr) {
-  Type *Ty = Ptr->getType();
-
-  if (VectorType *VTy = dyn_cast<VectorType>(Ty))
-    Ty = VTy->getElementType();
-
-  if (PointerType *PTy = dyn_cast<PointerType>(Ty))
-    return PTy->getAddressSpace();
-
-  llvm_unreachable("Invalid GEP pointer type");
 }
 
 /// hasAllZeroIndices - Return true if all of the indices of this GEP are
@@ -2130,7 +2109,8 @@ bool CastInst::isNoopCast(Type *IntPtrTy) const {
 /// If no such cast is permited, the function returns 0.
 unsigned CastInst::isEliminableCastPair(
   Instruction::CastOps firstOp, Instruction::CastOps secondOp,
-  Type *SrcTy, Type *MidTy, Type *DstTy, Type *IntPtrTy) {
+  Type *SrcTy, Type *MidTy, Type *DstTy, Type *SrcIntPtrTy, Type *MidIntPtrTy,
+  Type *DstIntPtrTy) {
   // Define the 144 possibilities for these two cast instructions. The values
   // in this matrix determine what to do in a given situation and select the
   // case in the switch below.  The rows correspond to firstOp, the columns 
@@ -2233,9 +2213,9 @@ unsigned CastInst::isEliminableCastPair(
       return 0;
     case 7: { 
       // ptrtoint, inttoptr -> bitcast (ptr -> ptr) if int size is >= ptr size
-      if (!IntPtrTy)
+      if (!SrcIntPtrTy || DstIntPtrTy != SrcIntPtrTy)
         return 0;
-      unsigned PtrSize = IntPtrTy->getScalarSizeInBits();
+      unsigned PtrSize = SrcIntPtrTy->getScalarSizeInBits();
       unsigned MidSize = MidTy->getScalarSizeInBits();
       if (MidSize >= PtrSize)
         return Instruction::BitCast;
@@ -2274,9 +2254,9 @@ unsigned CastInst::isEliminableCastPair(
       return 0;
     case 13: {
       // inttoptr, ptrtoint -> bitcast if SrcSize<=PtrSize and SrcSize==DstSize
-      if (!IntPtrTy)
+      if (!MidIntPtrTy)
         return 0;
-      unsigned PtrSize = IntPtrTy->getScalarSizeInBits();
+      unsigned PtrSize = MidIntPtrTy->getScalarSizeInBits();
       unsigned SrcSize = SrcTy->getScalarSizeInBits();
       unsigned DstSize = DstTy->getScalarSizeInBits();
       if (SrcSize <= PtrSize && SrcSize == DstSize)

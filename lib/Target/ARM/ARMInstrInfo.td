@@ -283,15 +283,13 @@ class RegConstraint<string C> {
 //  ARM specific transformation functions and pattern fragments.
 //
 
-// imm_neg_XFORM - Return a imm value packed into the format described for
-// imm_neg defs below.
+// imm_neg_XFORM - Return the negation of an i32 immediate value.
 def imm_neg_XFORM : SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant(-(int)N->getZExtValue(), MVT::i32);
 }]>;
 
-// so_imm_not_XFORM - Return a so_imm value packed into the format described for
-// so_imm_not def below.
-def so_imm_not_XFORM : SDNodeXForm<imm, [{
+// imm_not_XFORM - Return the complement of a i32 immediate value.
+def imm_not_XFORM : SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant(~(int)N->getZExtValue(), MVT::i32);
 }]>;
 
@@ -314,7 +312,7 @@ def so_imm_neg : Operand<i32>, PatLeaf<(imm), [{
 def so_imm_not_asmoperand : AsmOperandClass { let Name = "ARMSOImmNot"; }
 def so_imm_not : Operand<i32>, PatLeaf<(imm), [{
     return ARM_AM::getSOImmVal(~(uint32_t)N->getZExtValue()) != -1;
-  }], so_imm_not_XFORM> {
+  }], imm_not_XFORM> {
   let ParserMatchClass = so_imm_not_asmoperand;
 }
 
@@ -418,6 +416,8 @@ def reglist : Operand<i32> {
   let PrintMethod = "printRegisterList";
   let DecoderMethod = "DecodeRegListOperand";
 }
+
+def GPRPairOp : RegisterOperand<GPRPair, "printGPRPairOperand">;
 
 def DPRRegListAsmOperand : AsmOperandClass { let Name = "DPRRegList"; }
 def dpr_reglist : Operand<i32> {
@@ -1624,6 +1624,18 @@ def ATOMCMPXCHG6432 : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
                                  (ins GPR:$addr, GPR:$cmp1, GPR:$cmp2,
                                       GPR:$set1, GPR:$set2),
                                  NoItinerary, []>;
+def ATOMMIN6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMUMIN6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMMAX6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
+def ATOMUMAX6432  : PseudoInst<(outs GPR:$dst1, GPR:$dst2),
+                              (ins GPR:$addr, GPR:$src1, GPR:$src2),
+                              NoItinerary, []>;
 }
 
 def HINT : AI<(outs), (ins imm0_255:$imm), MiscFrm, NoItinerary,
@@ -3120,6 +3132,8 @@ def : ARMPat<(ARMaddc GPR:$src, imm0_65535_neg:$imm),
 // for part of the negation.
 def : ARMPat<(ARMadde GPR:$src, so_imm_not:$imm, CPSR),
              (SBCri   GPR:$src, so_imm_not:$imm)>;
+def : ARMPat<(ARMadde GPR:$src, imm0_65535_neg:$imm, CPSR),
+             (SBCrr   GPR:$src, (MOVi16 (imm_not_XFORM imm:$imm)))>;
 
 // Note: These are implemented in C++ code, because they have to generate
 // ADD/SUBrs instructions, which use a complex pattern that a xform function
@@ -4229,8 +4243,8 @@ def LDREXH : AIldrex<0b11, (outs GPR:$Rt), (ins addr_offset_none:$addr),
 def LDREX  : AIldrex<0b00, (outs GPR:$Rt), (ins addr_offset_none:$addr),
                      NoItinerary, "ldrex", "\t$Rt, $addr", []>;
 let hasExtraDefRegAllocReq = 1 in
-def LDREXD: AIldrex<0b01, (outs GPR:$Rt, GPR:$Rt2),(ins addr_offset_none:$addr),
-                      NoItinerary, "ldrexd", "\t$Rt, $Rt2, $addr", []> {
+def LDREXD: AIldrex<0b01, (outs GPRPairOp:$Rt),(ins addr_offset_none:$addr),
+                      NoItinerary, "ldrexd", "\t$Rt, $addr", []> {
   let DecoderMethod = "DecodeDoubleRegLoad";
 }
 }
@@ -4244,8 +4258,8 @@ def STREX : AIstrex<0b00, (outs GPR:$Rd), (ins GPR:$Rt, addr_offset_none:$addr),
                     NoItinerary, "strex", "\t$Rd, $Rt, $addr", []>;
 let hasExtraSrcRegAllocReq = 1 in
 def STREXD : AIstrex<0b01, (outs GPR:$Rd),
-                    (ins GPR:$Rt, GPR:$Rt2, addr_offset_none:$addr),
-                    NoItinerary, "strexd", "\t$Rd, $Rt, $Rt2, $addr", []> {
+                    (ins GPRPairOp:$Rt, addr_offset_none:$addr),
+                    NoItinerary, "strexd", "\t$Rd, $Rt, $addr", []> {
   let DecoderMethod = "DecodeDoubleRegStore";
 }
 }
@@ -4743,20 +4757,12 @@ def Int_eh_sjlj_longjmp : PseudoInst<(outs), (ins GPR:$src, GPR:$scratch),
                                 Requires<[IsARM, IsIOS]>;
 }
 
-// eh.sjlj.dispatchsetup pseudo-instructions.
-// These pseudos are used for both ARM and Thumb2. Any differences are
-// handled when the pseudo is expanded (which happens before any passes
-// that need the instruction size).
-let Defs =
-  [ R0,  R1,  R2,  R3,  R4,  R5,  R6,  R7,  R8,  R9,  R10, R11, R12, LR, CPSR,
-    Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15 ],
-  isBarrier = 1 in
+// eh.sjlj.dispatchsetup pseudo-instruction.
+// This pseudo is used for both ARM and Thumb. Any differences are handled when
+// the pseudo is expanded (which happens before any passes that need the
+// instruction size).
+let isBarrier = 1 in
 def Int_eh_sjlj_dispatchsetup : PseudoInst<(outs), (ins), NoItinerary, []>;
-
-let Defs =
-  [ R0,  R1,  R2,  R3,  R4,  R5,  R6,  R7,  R8,  R9,  R10, R11, R12, LR, CPSR ],
-  isBarrier = 1 in
-def Int_eh_sjlj_dispatchsetup_nofp : PseudoInst<(outs), (ins), NoItinerary, []>;
 
 
 //===----------------------------------------------------------------------===//

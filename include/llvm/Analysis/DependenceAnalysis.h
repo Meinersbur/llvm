@@ -18,6 +18,16 @@
 // of memory references in a function, returning either NULL, for no dependence,
 // or a more-or-less detailed description of the dependence between them.
 //
+// This pass exists to support the DependenceGraph pass. There are two separate
+// passes because there's a useful separation of concerns. A dependence exists
+// if two conditions are met:
+//
+//    1) Two instructions reference the same memory location, and
+//    2) There is a flow of control leading from one instruction to the other.
+//
+// DependenceAnalysis attacks the first condition; DependenceGraph will attack
+// the second (it's not yet ready).
+//
 // Please note that this is work in progress and the interface is subject to
 // change.
 //
@@ -30,23 +40,17 @@
 #ifndef LLVM_ANALYSIS_DEPENDENCEANALYSIS_H
 #define LLVM_ANALYSIS_DEPENDENCEANALYSIS_H
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Function.h"
-#include "llvm/Instruction.h"
+#include "llvm/Instructions.h"
 #include "llvm/Pass.h"
 #include "llvm/ADT/SmallBitVector.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/ScalarEvolutionExpressions.h"
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Support/raw_ostream.h"
-
 
 namespace llvm {
   class AliasAnalysis;
+  class Loop;
+  class LoopInfo;
   class ScalarEvolution;
   class SCEV;
-  class Value;
+  class SCEVConstant;
   class raw_ostream;
 
   /// Dependence - This class represents a dependence between two memory
@@ -55,12 +59,12 @@ namespace llvm {
   /// determine anything beyond the existence of a dependence; that is, it
   /// represents a confused dependence (see also FullDependence). In most
   /// cases (for output, flow, and anti dependences), the dependence implies
-  /// an ordering, where the source must preceed the destination; in contrast,
+  /// an ordering, where the source must precede the destination; in contrast,
   /// input dependences are unordered.
   class Dependence {
   public:
-    Dependence(const Instruction *Source,
-               const Instruction *Destination) :
+    Dependence(Instruction *Source,
+               Instruction *Destination) :
       Src(Source), Dst(Destination) {}
     virtual ~Dependence() {}
 
@@ -88,11 +92,11 @@ namespace llvm {
 
     /// getSrc - Returns the source instruction for this dependence.
     ///
-    const Instruction *getSrc() const { return Src; }
+    Instruction *getSrc() const { return Src; }
 
     /// getDst - Returns the destination instruction for this dependence.
     ///
-    const Instruction *getDst() const { return Dst; }
+    Instruction *getDst() const { return Dst; }
 
     /// isInput - Returns true if this is an input dependence.
     ///
@@ -132,7 +136,7 @@ namespace llvm {
     virtual bool isConsistent() const { return false; }
 
     /// getLevels - Returns the number of common loops surrounding the
-    /// souce and destination of the dependence.
+    /// source and destination of the dependence.
     virtual unsigned getLevels() const { return 0; }
 
     /// getDirection - Returns the direction associated with a particular
@@ -164,7 +168,7 @@ namespace llvm {
     ///
     void dump(raw_ostream &OS) const;
   private:
-    const Instruction *Src, *Dst;
+    Instruction *Src, *Dst;
     friend class DependenceAnalysis;
   };
 
@@ -175,12 +179,12 @@ namespace llvm {
   /// able to accurately analyze the interaction of the references; that is,
   /// it is not a confused dependence (see Dependence). In most cases
   /// (for output, flow, and anti dependences), the dependence implies an
-  /// ordering, where the source must preceed the destination; in contrast,
+  /// ordering, where the source must precede the destination; in contrast,
   /// input dependences are unordered.
   class FullDependence : public Dependence {
   public:
-    FullDependence(const Instruction *Src,
-                   const Instruction *Dst,
+    FullDependence(Instruction *Src,
+                   Instruction *Dst,
                    bool LoopIndependent,
                    unsigned Levels);
     ~FullDependence() {
@@ -201,7 +205,7 @@ namespace llvm {
     bool isConsistent() const { return Consistent; }
 
     /// getLevels - Returns the number of common loops surrounding the
-    /// souce and destination of the dependence.
+    /// source and destination of the dependence.
     unsigned getLevels() const { return Levels; }
 
     /// getDirection - Returns the direction associated with a particular
@@ -249,8 +253,8 @@ namespace llvm {
     /// The flag PossiblyLoopIndependent should be set by the caller
     /// if it appears that control flow can reach from Src to Dst
     /// without traversing a loop back edge.
-    Dependence *depends(const Instruction *Src,
-                        const Instruction *Dst,
+    Dependence *depends(Instruction *Src,
+                        Instruction *Dst,
                         bool PossiblyLoopIndependent);
 
     /// getSplitIteration - Give a dependence that's splitable at some
@@ -511,7 +515,7 @@ namespace llvm {
 
     /// isKnownPredicate - Compare X and Y using the predicate Pred.
     /// Basically a wrapper for SCEV::isKnownPredicate,
-    /// but tries harder, especially in the presense of sign and zero
+    /// but tries harder, especially in the presence of sign and zero
     /// extensions and symbolics.
     bool isKnownPredicate(ICmpInst::Predicate Pred,
                           const SCEV *X,
@@ -679,7 +683,7 @@ namespace llvm {
     /// where i and j are induction variable, c1 and c2 are loop invariant,
     /// and a and b are constants.
     /// Returns true if any possible dependence is disproved.
-    /// Marks the result as inconsistant.
+    /// Marks the result as inconsistent.
     /// Works in some cases that symbolicRDIVtest doesn't,
     /// and vice versa.
     bool exactRDIVtest(const SCEV *SrcCoeff,
@@ -695,7 +699,7 @@ namespace llvm {
     /// where i and j are induction variable, c1 and c2 are loop invariant,
     /// and a and b are constants.
     /// Returns true if any possible dependence is disproved.
-    /// Marks the result as inconsistant.
+    /// Marks the result as inconsistent.
     /// Works in some cases that exactRDIVtest doesn't,
     /// and vice versa. Can also be used as a backup for
     /// ordinary SIV tests.
@@ -708,7 +712,7 @@ namespace llvm {
 
     /// gcdMIVtest - Tests an MIV subscript pair for dependence.
     /// Returns true if any possible dependence is disproved.
-    /// Marks the result as inconsistant.
+    /// Marks the result as inconsistent.
     /// Can sometimes disprove the equal direction for 1 or more loops.
     //  Can handle some symbolics that even the SIV tests don't get,
     /// so we use it as a backup for everything.
@@ -718,7 +722,7 @@ namespace llvm {
 
     /// banerjeeMIVtest - Tests an MIV subscript pair for dependence.
     /// Returns true if any possible dependence is disproved.
-    /// Marks the result as inconsistant.
+    /// Marks the result as inconsistent.
     /// Computes directions.
     bool banerjeeMIVtest(const SCEV *Src,
                          const SCEV *Dst,

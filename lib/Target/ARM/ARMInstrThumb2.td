@@ -130,8 +130,9 @@ def imm0_4095_neg : Operand<i32>, PatLeaf<(i32 imm), [{
   let ParserMatchClass = imm0_4095_neg_asmoperand;
 }
 
-def imm0_255_neg : PatLeaf<(i32 imm), [{
-  return (uint32_t)(-N->getZExtValue()) < 255;
+def imm1_255_neg : PatLeaf<(i32 imm), [{
+  uint32_t Val = -N->getZExtValue();
+  return (Val > 0 && Val < 255);
 }], imm_neg_XFORM>;
 
 def imm0_255_not : PatLeaf<(i32 imm), [{
@@ -159,7 +160,7 @@ def t2addrmode_imm12 : Operand<i32>,
 // t2ldrlabel  := imm12
 def t2ldrlabel : Operand<i32> {
   let EncoderMethod = "getAddrModeImm12OpValue";
-  let PrintMethod = "printT2LdrLabelOperand";
+  let PrintMethod = "printThumbLdrLabelOperand";
 }
 
 def t2ldr_pcrel_imm12_asmoperand : AsmOperandClass {let Name = "MemPCRelImm12";}
@@ -1928,8 +1929,8 @@ defm t2RSBS : T2I_rbin_s_is <BinOpFrag<(ARMsubc node:$LHS, node:$RHS)>>;
 // The AddedComplexity preferences the first variant over the others since
 // it can be shrunk to a 16-bit wide encoding, while the others cannot.
 let AddedComplexity = 1 in
-def : T2Pat<(add        GPR:$src, imm0_255_neg:$imm),
-            (t2SUBri    GPR:$src, imm0_255_neg:$imm)>;
+def : T2Pat<(add        GPR:$src, imm1_255_neg:$imm),
+            (t2SUBri    GPR:$src, imm1_255_neg:$imm)>;
 def : T2Pat<(add        GPR:$src, t2_so_imm_neg:$imm),
             (t2SUBri    GPR:$src, t2_so_imm_neg:$imm)>;
 def : T2Pat<(add        GPR:$src, imm0_4095_neg:$imm),
@@ -1938,8 +1939,8 @@ def : T2Pat<(add        GPR:$src, imm0_65535_neg:$imm),
             (t2SUBrr    GPR:$src, (t2MOVi16 (imm_neg_XFORM imm:$imm)))>;
 
 let AddedComplexity = 1 in
-def : T2Pat<(ARMaddc    rGPR:$src, imm0_255_neg:$imm),
-            (t2SUBSri   rGPR:$src, imm0_255_neg:$imm)>;
+def : T2Pat<(ARMaddc    rGPR:$src, imm1_255_neg:$imm),
+            (t2SUBSri   rGPR:$src, imm1_255_neg:$imm)>;
 def : T2Pat<(ARMaddc    rGPR:$src, t2_so_imm_neg:$imm),
             (t2SUBSri   rGPR:$src, t2_so_imm_neg:$imm)>;
 def : T2Pat<(ARMaddc    rGPR:$src, imm0_65535_neg:$imm),
@@ -1953,7 +1954,7 @@ def : T2Pat<(ARMadde    rGPR:$src, imm0_255_not:$imm, CPSR),
 def : T2Pat<(ARMadde    rGPR:$src, t2_so_imm_not:$imm, CPSR),
             (t2SBCri    rGPR:$src, t2_so_imm_not:$imm)>;
 def : T2Pat<(ARMadde    rGPR:$src, imm0_65535_neg:$imm, CPSR),
-            (t2SBCrr    rGPR:$src, (t2MOVi16 (imm_neg_XFORM imm:$imm)))>;
+            (t2SBCrr    rGPR:$src, (t2MOVi16 (imm_not_XFORM imm:$imm)))>;
 
 // Select Bytes -- for disassembly only
 
@@ -3245,11 +3246,11 @@ def t2B   : T2I<(outs), (ins uncondbrtarget:$target), IIC_Br,
   let Inst{15-14} = 0b10;
   let Inst{12} = 1;
 
-  bits<20> target;
+  bits<24> target;
   let Inst{26} = target{19};
   let Inst{11} = target{18};
   let Inst{13} = target{17};
-  let Inst{21-16} = target{16-11};
+  let Inst{25-16} = target{20-11};
   let Inst{10-0} = target{10-0};
   let DecoderMethod = "DecodeT2BInstruction";
 }
@@ -3330,20 +3331,6 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in {
                    (t2B uncondbrtarget:$dst, pred:$p)>,
                  Requires<[IsThumb2, IsIOS]>;
 }
-
-let isCall = 1, Defs = [LR], Uses = [SP] in {
-  // mov lr, pc; b if callee is marked noreturn to avoid confusing the
-  // return stack predictor.
-  def t2BMOVPCB_CALL : tPseudoInst<(outs),
-                                   (ins t_bltarget:$func),
-                               6, IIC_Br, [(ARMcall_nolink tglobaladdr:$func)]>,
-                        Requires<[IsThumb]>;
-}
-
-// Direct calls
-def : T2Pat<(ARMcall_nolink texternalsym:$func),
-            (t2BMOVPCB_CALL texternalsym:$func)>,
-      Requires<[IsThumb]>;
 
 // IT block
 let Defs = [ITSTATE] in

@@ -78,12 +78,37 @@ struct MacroInstantiation {
   /// The location of the instantiation.
   SMLoc InstantiationLoc;
 
+  /// The buffer where parsing should resume upon instantiation completion.
+  int ExitBuffer;
+
   /// The location where parsing should resume upon instantiation completion.
   SMLoc ExitLoc;
 
 public:
-  MacroInstantiation(const Macro *M, SMLoc IL, SMLoc EL,
+  MacroInstantiation(const Macro *M, SMLoc IL, int EB, SMLoc EL,
                      MemoryBuffer *I);
+};
+
+//struct AsmRewrite;
+struct ParseStatementInfo {
+  /// ParsedOperands - The parsed operands from the last parsed statement.
+  SmallVector<MCParsedAsmOperand*, 8> ParsedOperands;
+
+  /// Opcode - The opcode from the last parsed instruction.
+  unsigned Opcode;
+
+  SmallVectorImpl<AsmRewrite> *AsmRewrites;
+
+  ParseStatementInfo() : Opcode(~0U), AsmRewrites(0) {}
+  ParseStatementInfo(SmallVectorImpl<AsmRewrite> *rewrites)
+    : Opcode(~0), AsmRewrites(rewrites) {}
+
+  ~ParseStatementInfo() {
+    // Free any parsed operands.
+    for (unsigned i = 0, e = ParsedOperands.size(); i != e; ++i)
+      delete ParsedOperands[i];
+    ParsedOperands.clear();
+  }
 };
 
 /// \brief The concrete assembly parser instance.
@@ -132,6 +157,7 @@ private:
   StringRef CppHashFilename;
   int64_t CppHashLineNumber;
   SMLoc CppHashLoc;
+  int CppHashBuf;
 
   /// AssemblerDialect. ~OU means unset value and use value provided by MAI.
   unsigned AssemblerDialect;
@@ -141,13 +167,6 @@ private:
 
   /// ParsingInlineAsm - Are we parsing ms-style inline assembly?
   bool ParsingInlineAsm;
-
-  /// ParsedOperands - The parsed operands from the last parsed statement.
-  SmallVector<MCParsedAsmOperand*, 8> ParsedOperands;
-
-  /// Opcode - The opcode from the last parsed instruction.  This is MS-style
-  /// inline asm specific.
-  unsigned Opcode;
 
 public:
   AsmParser(SourceMgr &SM, MCContext &Ctx, MCStreamer &Out,
@@ -192,7 +211,7 @@ public:
 
   bool ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
                         unsigned &NumOutputs, unsigned &NumInputs,
-                        SmallVectorImpl<void *> &OpDecls,
+                        SmallVectorImpl<std::pair<void *,bool> > &OpDecls,
                         SmallVectorImpl<std::string> &Constraints,
                         SmallVectorImpl<std::string> &Clobbers,
                         const MCInstrInfo *MII,
@@ -209,7 +228,7 @@ public:
 private:
   void CheckForValidSection();
 
-  bool ParseStatement();
+  bool ParseStatement(ParseStatementInfo &Info);
   void EatToEndOfLine();
   bool ParseCppHashLineFilenameComment(const SMLoc &L);
 
@@ -236,7 +255,10 @@ private:
   /// \brief Reset the current lexer position to that given by \p Loc. The
   /// current token is not set; clients should ensure Lex() is called
   /// subsequently.
-  void JumpToLoc(SMLoc Loc);
+  ///
+  /// \param InBuffer If not -1, should be the known buffer id that contains the
+  /// location.
+  void JumpToLoc(SMLoc Loc, int InBuffer=-1);
 
   virtual void EatToEndOfStatement();
 
@@ -316,10 +338,8 @@ private:
   bool ParseDirectiveIrpc(SMLoc DirectiveLoc); // ".irpc"
   bool ParseDirectiveEndr(SMLoc DirectiveLoc); // ".endr"
 
-  // MS-style inline assembly parsing.
-  bool isInstruction() { return Opcode != (unsigned)~0x0; }
-  unsigned getOpcode() { return Opcode; }
-  void setOpcode(unsigned Value) { Opcode = Value; }
+  // "_emit"
+  bool ParseDirectiveEmit(SMLoc DirectiveLoc, ParseStatementInfo &Info);
 };
 
 /// \brief Generic implementations of directive handling, etc. which is shared
@@ -382,6 +402,10 @@ public:
       &GenericAsmParser::ParseDirectiveCFIEscape>(".cfi_escape");
     AddDirectiveHandler<
       &GenericAsmParser::ParseDirectiveCFISignalFrame>(".cfi_signal_frame");
+    AddDirectiveHandler<
+      &GenericAsmParser::ParseDirectiveCFIUndefined>(".cfi_undefined");
+    AddDirectiveHandler<
+      &GenericAsmParser::ParseDirectiveCFIRegister>(".cfi_register");
 
     // Macro directives.
     AddDirectiveHandler<&GenericAsmParser::ParseDirectiveMacrosOnOff>(
@@ -419,6 +443,8 @@ public:
   bool ParseDirectiveCFIRestore(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveCFIEscape(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveCFISignalFrame(StringRef, SMLoc DirectiveLoc);
+  bool ParseDirectiveCFIUndefined(StringRef, SMLoc DirectiveLoc);
+  bool ParseDirectiveCFIRegister(StringRef, SMLoc DirectiveLoc);
 
   bool ParseDirectiveMacrosOnOff(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveMacro(StringRef, SMLoc DirectiveLoc);
@@ -445,8 +471,7 @@ AsmParser::AsmParser(SourceMgr &_SM, MCContext &_Ctx,
   : Lexer(_MAI), Ctx(_Ctx), Out(_Out), MAI(_MAI), SrcMgr(_SM),
     GenericParser(new GenericAsmParser), PlatformParser(0),
     CurBuffer(0), MacrosEnabled(true), CppHashLineNumber(0),
-    AssemblerDialect(~0U), IsDarwin(false), ParsingInlineAsm(false),
-    Opcode(~0x0) {
+    AssemblerDialect(~0U), IsDarwin(false), ParsingInlineAsm(false) {
   // Save the old handler.
   SavedDiagHandler = SrcMgr.getDiagHandler();
   SavedDiagContext = SrcMgr.getDiagContext();
@@ -537,8 +562,12 @@ bool AsmParser::ProcessIncbinFile(const std::string &Filename) {
   return false;
 }
 
-void AsmParser::JumpToLoc(SMLoc Loc) {
-  CurBuffer = SrcMgr.FindBufferContainingLoc(Loc);
+void AsmParser::JumpToLoc(SMLoc Loc, int InBuffer) {
+  if (InBuffer != -1) {
+    CurBuffer = InBuffer;
+  } else {
+    CurBuffer = SrcMgr.FindBufferContainingLoc(Loc);
+  }
   Lexer.setBuffer(SrcMgr.getMemoryBuffer(CurBuffer), Loc.getPointer());
 }
 
@@ -585,7 +614,8 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
 
   // While we have input, parse each statement.
   while (Lexer.isNot(AsmToken::Eof)) {
-    if (!ParseStatement()) continue;
+    ParseStatementInfo Info;
+    if (!ParseStatement(Info)) continue;
 
     // We had an error, validate that one was emitted and recover by skipping to
     // the next line.
@@ -1068,7 +1098,7 @@ bool AsmParser::ParseBinOpRHS(unsigned Precedence, const MCExpr *&Res,
 ///   ::= EndOfStatement
 ///   ::= Label* Directive ...Operands... EndOfStatement
 ///   ::= Label* Identifier OperandList* EndOfStatement
-bool AsmParser::ParseStatement() {
+bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
   if (Lexer.is(AsmToken::EndOfStatement)) {
     Out.AddBlankLine();
     Lex();
@@ -1187,7 +1217,7 @@ bool AsmParser::ParseStatement() {
         return false;
     }
 
-    return ParseStatement();
+    return false;
   }
 
   case AsmToken::Equal:
@@ -1341,6 +1371,10 @@ bool AsmParser::ParseStatement() {
     return Error(IDLoc, "unknown directive");
   }
 
+  // _emit
+  if (ParsingInlineAsm && IDVal == "_emit")
+    return ParseDirectiveEmit(IDLoc, Info);
+
   CheckForValidSection();
 
   // Canonicalize the opcode to lower case.
@@ -1348,18 +1382,19 @@ bool AsmParser::ParseStatement() {
   for (unsigned i = 0, e = IDVal.size(); i != e; ++i)
     OpcodeStr.push_back(tolower(IDVal[i]));
 
-  bool HadError = getTargetParser().ParseInstruction(OpcodeStr.str(), IDLoc,
-                                                     ParsedOperands);
+  ParseInstructionInfo IInfo(Info.AsmRewrites);
+  bool HadError = getTargetParser().ParseInstruction(IInfo, OpcodeStr.str(),
+                                                     IDLoc,Info.ParsedOperands);
 
   // Dump the parsed representation, if requested.
   if (getShowParsedOperands()) {
     SmallString<256> Str;
     raw_svector_ostream OS(Str);
     OS << "parsed instruction: [";
-    for (unsigned i = 0; i != ParsedOperands.size(); ++i) {
+    for (unsigned i = 0; i != Info.ParsedOperands.size(); ++i) {
       if (i != 0)
         OS << ", ";
-      ParsedOperands[i]->print(OS);
+      Info.ParsedOperands[i]->print(OS);
     }
     OS << "]";
 
@@ -1371,9 +1406,26 @@ bool AsmParser::ParseStatement() {
   // the instruction.
   if (!HadError && getContext().getGenDwarfForAssembly() &&
       getContext().getGenDwarfSection() == getStreamer().getCurrentSection() ) {
+
+     unsigned Line = SrcMgr.FindLineNumber(IDLoc, CurBuffer);
+
+     // If we previously parsed a cpp hash file line comment then make sure the
+     // current Dwarf File is for the CppHashFilename if not then emit the
+     // Dwarf File table for it and adjust the line number for the .loc.
+     const std::vector<MCDwarfFile *> &MCDwarfFiles =
+       getContext().getMCDwarfFiles();
+     if (CppHashFilename.size() != 0) {
+       if(MCDwarfFiles[getContext().getGenDwarfFileNumber()]->getName() !=
+          CppHashFilename)
+	 getStreamer().EmitDwarfFileDirective(
+	   getContext().nextGenDwarfFileNumber(), StringRef(), CppHashFilename);
+
+       unsigned CppHashLocLineNo = SrcMgr.FindLineNumber(CppHashLoc,CppHashBuf);
+       Line = CppHashLineNumber - 1 + (Line - CppHashLocLineNo);
+     }
+
     getStreamer().EmitDwarfLocDirective(getContext().getGenDwarfFileNumber(),
-                                        SrcMgr.FindLineNumber(IDLoc, CurBuffer),
-                                        0, DWARF2_LINE_DEFAULT_IS_STMT ?
+                                        Line, 0, DWARF2_LINE_DEFAULT_IS_STMT ?
                                         DWARF2_FLAG_IS_STMT : 0, 0, 0,
                                         StringRef());
   }
@@ -1381,18 +1433,10 @@ bool AsmParser::ParseStatement() {
   // If parsing succeeded, match the instruction.
   if (!HadError) {
     unsigned ErrorInfo;
-    HadError = getTargetParser().MatchAndEmitInstruction(IDLoc, Opcode,
-                                                         ParsedOperands, Out,
-                                                         ErrorInfo,
+    HadError = getTargetParser().MatchAndEmitInstruction(IDLoc, Info.Opcode,
+                                                         Info.ParsedOperands,
+                                                         Out, ErrorInfo,
                                                          ParsingInlineAsm);
-  }
-
-  // Free any parsed operands.  If parsing ms-style inline assembly the operands
-  // will be freed by the ParseMSInlineAsm() function.
-  if (!ParsingInlineAsm) {
-    for (unsigned i = 0, e = ParsedOperands.size(); i != e; ++i)
-      delete ParsedOperands[i];
-    ParsedOperands.clear();
   }
 
   // Don't skip the rest of the line, the instruction parser is responsible for
@@ -1438,6 +1482,7 @@ bool AsmParser::ParseCppHashLineFilenameComment(const SMLoc &L) {
   CppHashLoc = L;
   CppHashFilename = Filename;
   CppHashLineNumber = LineNumber;
+  CppHashBuf = CurBuffer;
 
   // Ignore any trailing characters, they're just comment.
   EatToEndOfLine();
@@ -1607,9 +1652,11 @@ bool AsmParser::expandMacro(raw_svector_ostream &OS, StringRef Body,
   return false;
 }
 
-MacroInstantiation::MacroInstantiation(const Macro *M, SMLoc IL, SMLoc EL,
+MacroInstantiation::MacroInstantiation(const Macro *M, SMLoc IL,
+                                       int EB, SMLoc EL,
                                        MemoryBuffer *I)
-  : TheMacro(M), Instantiation(I), InstantiationLoc(IL), ExitLoc(EL)
+  : TheMacro(M), Instantiation(I), InstantiationLoc(IL), ExitBuffer(EB),
+    ExitLoc(EL)
 {
 }
 
@@ -1805,6 +1852,7 @@ bool AsmParser::HandleMacroEntry(StringRef Name, SMLoc NameLoc,
   // Create the macro instantiation object and add to the current macro
   // instantiation stack.
   MacroInstantiation *MI = new MacroInstantiation(M, NameLoc,
+                                                  CurBuffer,
                                                   getTok().getLoc(),
                                                   Instantiation);
   ActiveMacros.push_back(MI);
@@ -1819,7 +1867,7 @@ bool AsmParser::HandleMacroEntry(StringRef Name, SMLoc NameLoc,
 
 void AsmParser::HandleMacroExit() {
   // Jump to the EndOfStatement we should return to, and consume it.
-  JumpToLoc(ActiveMacros.back()->ExitLoc);
+  JumpToLoc(ActiveMacros.back()->ExitLoc, ActiveMacros.back()->ExitBuffer);
   Lex();
 
   // Pop the instantiation entry.
@@ -3217,6 +3265,43 @@ bool GenericAsmParser::ParseDirectiveCFISignalFrame(StringRef Directive,
   return false;
 }
 
+/// ParseDirectiveCFIUndefined
+/// ::= .cfi_undefined register
+bool GenericAsmParser::ParseDirectiveCFIUndefined(StringRef Directive,
+                                                  SMLoc DirectiveLoc) {
+  int64_t Register = 0;
+
+  if (ParseRegisterOrRegisterNumber(Register, DirectiveLoc))
+    return true;
+
+  getStreamer().EmitCFIUndefined(Register);
+
+  return false;
+}
+
+/// ParseDirectiveCFIRegister
+/// ::= .cfi_register register, register
+bool GenericAsmParser::ParseDirectiveCFIRegister(StringRef Directive,
+                                                 SMLoc DirectiveLoc) {
+  int64_t Register1 = 0;
+
+  if (ParseRegisterOrRegisterNumber(Register1, DirectiveLoc))
+    return true;
+
+  if (getLexer().isNot(AsmToken::Comma))
+    return TokError("unexpected token in directive");
+  Lex();
+
+  int64_t Register2 = 0;
+
+  if (ParseRegisterOrRegisterNumber(Register2, DirectiveLoc))
+    return true;
+
+  getStreamer().EmitCFIRegister(Register1, Register2);
+
+  return false;
+}
+
 /// ParseDirectiveMacrosOnOff
 /// ::= .macros_on
 /// ::= .macros_off
@@ -3418,6 +3503,7 @@ void AsmParser::InstantiateMacroLikeBody(Macro *M, SMLoc DirectiveLoc,
   // Create the macro instantiation object and add to the current macro
   // instantiation stack.
   MacroInstantiation *MI = new MacroInstantiation(M, DirectiveLoc,
+                                                  CurBuffer,
                                                   getTok().getLoc(),
                                                   Instantiation);
   ActiveMacros.push_back(MI);
@@ -3574,36 +3660,34 @@ bool AsmParser::ParseDirectiveEndr(SMLoc DirectiveLoc) {
   return false;
 }
 
-namespace {
-enum AsmRewriteKind {
-   AOK_Imm,
-   AOK_Input,
-   AOK_Output,
-   AOK_SizeDirective,
-   AOK_Skip
-};
+bool AsmParser::ParseDirectiveEmit(SMLoc IDLoc, ParseStatementInfo &Info) {
+  const MCExpr *Value;
+  SMLoc ExprLoc = getLexer().getLoc();
+  if (ParseExpression(Value))
+    return true;
+  const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(Value);
+  if (!MCE)
+    return Error(ExprLoc, "unexpected expression in _emit");
+  uint64_t IntValue = MCE->getValue();
+  if (!isUIntN(8, IntValue) && !isIntN(8, IntValue))
+    return Error(ExprLoc, "literal value out of range for directive");
 
-struct AsmRewrite {
-  AsmRewriteKind Kind;
-  SMLoc Loc;
-  unsigned Len;
-  unsigned Size;
-public:
-  AsmRewrite(AsmRewriteKind kind, SMLoc loc, unsigned len, unsigned size = 0)
-    : Kind(kind), Loc(loc), Len(len), Size(size) { }
-};
+  Info.AsmRewrites->push_back(AsmRewrite(AOK_Emit, IDLoc, 5));
+  return false;
 }
 
 bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
                                  unsigned &NumOutputs, unsigned &NumInputs,
-                                 SmallVectorImpl<void *> &OpDecls,
+                                 SmallVectorImpl<std::pair<void *, bool> > &OpDecls,
                                  SmallVectorImpl<std::string> &Constraints,
                                  SmallVectorImpl<std::string> &Clobbers,
                                  const MCInstrInfo *MII,
                                  const MCInstPrinter *IP,
                                  MCAsmParserSemaCallback &SI) {
-  SmallVector<void*, 4> InputDecls;
-  SmallVector<void*, 4> OutputDecls;
+  SmallVector<void *, 4> InputDecls;
+  SmallVector<void *, 4> OutputDecls;
+  SmallVector<bool, 4> InputDeclsOffsetOf;
+  SmallVector<bool, 4> OutputDeclsOffsetOf;
   SmallVector<std::string, 4> InputConstraints;
   SmallVector<std::string, 4> OutputConstraints;
   std::set<std::string> ClobberRegs;
@@ -3617,44 +3701,27 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
   unsigned InputIdx = 0;
   unsigned OutputIdx = 0;
   while (getLexer().isNot(AsmToken::Eof)) {
-    // Clear the opcode.
-    setOpcode(~0x0);
-
-    // Save the conditional ignore state of the parser prior to parsing the statement.
-    bool PreParseCondStateIgnore = TheCondState.Ignore;
-
-    // Save the starting point of this statement in case we need to skip it.
-    SMLoc Start = getLexer().getLoc();
-
-    if (ParseStatement())
+    ParseStatementInfo Info(&AsmStrRewrites);
+    if (ParseStatement(Info))
       return true;
 
-    // If PreParseCondStateIgnore is false, but TheCondState.Ignore is true, then we
-    // just parsed a directive that changed the state to ignore.  Don't skip 
-    // emitting this directive.
-    if (PreParseCondStateIgnore && TheCondState.Ignore) {
-      unsigned Len = getLexer().getLoc().getPointer() - Start.getPointer();
-      AsmStrRewrites.push_back(AsmRewrite(AOK_Skip, Start, Len));
-      continue;
-    }
-
-    if (isInstruction()) {
-      const MCInstrDesc &Desc = MII->get(getOpcode());
+    if (Info.Opcode != ~0U) {
+      const MCInstrDesc &Desc = MII->get(Info.Opcode);
 
       // Build the list of clobbers, outputs and inputs.
-      for (unsigned i = 1, e = ParsedOperands.size(); i != e; ++i) {
-        MCParsedAsmOperand *Operand = ParsedOperands[i];
+      for (unsigned i = 1, e = Info.ParsedOperands.size(); i != e; ++i) {
+        MCParsedAsmOperand *Operand = Info.ParsedOperands[i];
 
         // Immediate.
         if (Operand->isImm()) {
-          AsmStrRewrites.push_back(AsmRewrite(AOK_Imm,
-                                                Operand->getStartLoc(),
-                                                Operand->getNameLen()));
+          if (Operand->needAsmRewrite())
+            AsmStrRewrites.push_back(AsmRewrite(AOK_ImmPrefix,
+                                                Operand->getStartLoc()));
           continue;
         }
 
         // Register operand.
-        if (Operand->isReg()) {
+        if (Operand->isReg() && !Operand->isOffsetOf()) {
           unsigned NumDefs = Desc.getNumDefs();
           // Clobber.
           if (NumDefs && Operand->getMCOperandNum() < NumDefs) {
@@ -3672,33 +3739,31 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
                                                     Size);
         if (OpDecl) {
           bool isOutput = (i == 1) && Desc.mayStore();
-          if (Operand->needSizeDirective())
+          if (!Operand->isOffsetOf() && Operand->needSizeDirective())
             AsmStrRewrites.push_back(AsmRewrite(AOK_SizeDirective,
-                                                  Operand->getStartLoc(), 0,
-                                                  Operand->getMemSize()));
-          
+                                                Operand->getStartLoc(),
+                                                /*Len*/0,
+                                                Operand->getMemSize()));
           if (isOutput) {
             std::string Constraint = "=";
             ++InputIdx;
             OutputDecls.push_back(OpDecl);
+            OutputDeclsOffsetOf.push_back(Operand->isOffsetOf());
             Constraint += Operand->getConstraint().str();
             OutputConstraints.push_back(Constraint);
             AsmStrRewrites.push_back(AsmRewrite(AOK_Output,
-                                                  Operand->getStartLoc(),
-                                                  Operand->getNameLen()));
+                                                Operand->getStartLoc(),
+                                                Operand->getNameLen()));
           } else {
             InputDecls.push_back(OpDecl);
+            InputDeclsOffsetOf.push_back(Operand->isOffsetOf());
             InputConstraints.push_back(Operand->getConstraint().str());
             AsmStrRewrites.push_back(AsmRewrite(AOK_Input,
-                                                  Operand->getStartLoc(),
-                                                  Operand->getNameLen()));
+                                                Operand->getStartLoc(),
+                                                Operand->getNameLen()));
           }
         }
       }
-      // Free any parsed operands.
-      for (unsigned i = 0, e = ParsedOperands.size(); i != e; ++i)
-        delete ParsedOperands[i];
-      ParsedOperands.clear();
     }
   }
 
@@ -3716,13 +3781,15 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
     unsigned NumExprs = NumOutputs + NumInputs;
     OpDecls.resize(NumExprs);
     Constraints.resize(NumExprs);
+    // FIXME: Constraints are hard coded to 'm', but we need an 'r'
+    // constraint for offsetof.  This needs to be cleaned up!
     for (unsigned i = 0; i < NumOutputs; ++i) {
-      OpDecls[i] = OutputDecls[i];
-      Constraints[i] = OutputConstraints[i];
+      OpDecls[i] = std::make_pair(OutputDecls[i], OutputDeclsOffsetOf[i]);
+      Constraints[i] = OutputDeclsOffsetOf[i] ? "=r" : OutputConstraints[i];
     }
     for (unsigned i = 0, j = NumOutputs; i < NumInputs; ++i, ++j) {
-      OpDecls[j] = InputDecls[i];
-      Constraints[j] = InputConstraints[i];
+      OpDecls[j] = std::make_pair(InputDecls[i], InputDeclsOffsetOf[i]);
+      Constraints[j] = InputDeclsOffsetOf[i] ? "r" : InputConstraints[i];
     }
   }
 
@@ -3753,7 +3820,11 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
     switch (Kind) {
     default: break;
     case AOK_Imm:
-      OS << Twine("$$") + StringRef(Loc, (*I).Len);
+      OS << Twine("$$");
+      OS << (*I).Val;
+      break;
+    case AOK_ImmPrefix:
+      OS << Twine("$$");
       break;
     case AOK_Input:
       OS << '$';
@@ -3764,7 +3835,7 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
       OS << OutputIdx++;
       break;
     case AOK_SizeDirective:
-      switch((*I).Size) {
+      switch((*I).Val) {
       default: break;
       case 8:  OS << "byte ptr "; break;
       case 16: OS << "word ptr "; break;
@@ -3774,6 +3845,13 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
       case 128: OS << "xmmword ptr "; break;
       case 256: OS << "ymmword ptr "; break;
       }
+      break;
+    case AOK_Emit:
+      OS << ".byte";
+      break;
+    case AOK_DotOperator:
+      OS << (*I).Val;
+      break;
     }
 
     // Skip the original expression.

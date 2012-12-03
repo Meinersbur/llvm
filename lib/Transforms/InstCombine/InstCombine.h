@@ -12,11 +12,11 @@
 
 #include "InstCombineWorklist.h"
 #include "llvm/IRBuilder.h"
+#include "llvm/InstVisitor.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Operator.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Support/InstVisitor.h"
 #include "llvm/Support/TargetFolder.h"
 #include "llvm/Transforms/Utils/SimplifyLibCalls.h"
 
@@ -367,6 +367,10 @@ private:
 
 
   Value *EvaluateInDifferentType(Value *V, Type *Ty, bool isSigned);
+
+  /// Descale - Return a value X such that Val = X * Scale, or null if none.  If
+  /// the multiplication is known not to overflow then NoSignedWrap is set.
+  Value *Descale(Value *Val, APInt Scale, bool &NoSignedWrap);
 };
 
       

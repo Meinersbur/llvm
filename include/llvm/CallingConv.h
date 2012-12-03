@@ -47,6 +47,10 @@ namespace CallingConv {
     // GHC - Calling convention used by the Glasgow Haskell Compiler (GHC).
     GHC = 10,
 
+    // HiPE - Calling convention used by the High-Performance Erlang Compiler
+    // (HiPE).
+    HiPE = 11,
+
     // Target - This is the start of the target-specific calling conventions,
     // e.g. fastcall and thiscall on X86.
     FirstTargetCC = 64,
@@ -112,7 +116,11 @@ namespace CallingConv {
     /// Cannot have variable arguments.
     /// Can also be called by the host.
     /// Is externally visible.
-    SPIR_KERNEL = 76
+    SPIR_KERNEL = 76,
+
+    /// Intel_OCL_BI - Calling conventions for Intel OpenCL built-ins
+    Intel_OCL_BI = 77
+
   };
 } // End CallingConv namespace
 

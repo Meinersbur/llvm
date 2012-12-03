@@ -175,7 +175,7 @@ namespace {
                                        unsigned VirtReg, unsigned Hint);
     LiveRegMap::iterator reloadVirtReg(MachineInstr *MI, unsigned OpNum,
                                        unsigned VirtReg, unsigned Hint);
-    void spillAll(MachineInstr *MI);
+    void spillAll(MachineBasicBlock::iterator MI);
     bool setPhysReg(MachineInstr *MI, unsigned OpNum, unsigned PhysReg);
     void addRetOperands(MachineBasicBlock *MBB);
   };
@@ -314,7 +314,7 @@ void RAFast::spillVirtReg(MachineBasicBlock::iterator MI,
 }
 
 /// spillAll - Spill all dirty virtregs without killing them.
-void RAFast::spillAll(MachineInstr *MI) {
+void RAFast::spillAll(MachineBasicBlock::iterator MI) {
   if (LiveVirtRegs.empty()) return;
   isBulkSpilling = true;
   // The LiveRegMap is keyed by an unsigned (the virtreg number), so the order
@@ -527,10 +527,10 @@ RAFast::LiveRegMap::iterator RAFast::allocVirtReg(MachineInstr *MI,
     }
   }
 
-  ArrayRef<unsigned> AO = RegClassInfo.getOrder(RC);
+  ArrayRef<MCPhysReg> AO = RegClassInfo.getOrder(RC);
 
   // First try to find a completely free register.
-  for (ArrayRef<unsigned>::iterator I = AO.begin(), E = AO.end(); I != E; ++I) {
+  for (ArrayRef<MCPhysReg>::iterator I = AO.begin(), E = AO.end(); I != E; ++I){
     unsigned PhysReg = *I;
     if (PhysRegState[PhysReg] == regFree && !UsedInInstr.count(PhysReg)) {
       assignVirtToPhysReg(*LRI, PhysReg);
@@ -542,7 +542,7 @@ RAFast::LiveRegMap::iterator RAFast::allocVirtReg(MachineInstr *MI,
                << RC->getName() << "\n");
 
   unsigned BestReg = 0, BestCost = spillImpossible;
-  for (ArrayRef<unsigned>::iterator I = AO.begin(), E = AO.end(); I != E; ++I) {
+  for (ArrayRef<MCPhysReg>::iterator I = AO.begin(), E = AO.end(); I != E; ++I){
     unsigned Cost = calcSpillCost(*I);
     DEBUG(dbgs() << "\tRegister: " << PrintReg(*I, TRI) << "\n");
     DEBUG(dbgs() << "\tCost: " << Cost << "\n");
@@ -956,6 +956,11 @@ void RAFast::AllocateBasicBlock() {
     bool hasPhysDefs = false;
     for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
       MachineOperand &MO = MI->getOperand(i);
+      // Make sure MRI knows about registers clobbered by regmasks.
+      if (MO.isRegMask()) {
+        MRI->addPhysRegsUsedFromRegMask(MO.getRegMask());
+        continue;
+      }
       if (!MO.isReg()) continue;
       unsigned Reg = MO.getReg();
       if (!Reg) continue;

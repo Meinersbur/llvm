@@ -476,11 +476,11 @@ void CppWriter::printAttributes(const AttrListPtr &PAL,
       unsigned index = PAL.getSlot(i).Index;
       AttrBuilder attrs(PAL.getSlot(i).Attrs);
       Out << "PAWI.Index = " << index << "U;\n";
-      Out << "   AttrBuilder B;\n";
+      Out << " {\n    AttrBuilder B;\n";
 
 #define HANDLE_ATTR(X)                                     \
       if (attrs.hasAttribute(Attributes::X))               \
-        Out << "   B.addAttribute(Attributes::" #X ");\n"; \
+        Out << "    B.addAttribute(Attributes::" #X ");\n"; \
       attrs.removeAttribute(Attributes::X);
 
       HANDLE_ATTR(SExt);
@@ -507,18 +507,18 @@ void CppWriter::printAttributes(const AttrListPtr &PAL,
       HANDLE_ATTR(ReturnsTwice);
       HANDLE_ATTR(UWTable);
       HANDLE_ATTR(NonLazyBind);
+      HANDLE_ATTR(MinSize);
 #undef HANDLE_ATTR
       if (attrs.hasAttribute(Attributes::StackAlignment))
-        Out << "B.addStackAlignmentAttr(" << attrs.getStackAlignment() << ")";
-      nl(Out);
+        Out << "    B.addStackAlignmentAttr(" << attrs.getStackAlignment() << ")\n";
       attrs.removeAttribute(Attributes::StackAlignment);
       assert(!attrs.hasAttributes() && "Unhandled attribute!");
-      Out << "PAWI.Attrs = Attributes::get(mod->getContext(), B);";
+      Out << "    PAWI.Attrs = Attributes::get(mod->getContext(), B);\n }";
       nl(Out);
       Out << "Attrs.push_back(PAWI);";
       nl(Out);
     }
-    Out << name << "_PAL = AttrListPtr::get(Attrs);";
+    Out << name << "_PAL = AttrListPtr::get(mod->getContext(), Attrs);";
     nl(Out);
     out(); nl(Out);
     Out << '}'; nl(Out);
@@ -1941,14 +1941,6 @@ void CppWriter::printModule(const std::string& fname,
   }
   nl(Out);
 
-  // Loop over the dependent libraries and emit them.
-  Module::lib_iterator LI = TheModule->lib_begin();
-  Module::lib_iterator LE = TheModule->lib_end();
-  while (LI != LE) {
-    Out << "mod->addLibrary(\"" << *LI << "\");";
-    nl(Out);
-    ++LI;
-  }
   printModuleBody();
   nl(Out) << "return mod;";
   nl(Out,-1) << "}";

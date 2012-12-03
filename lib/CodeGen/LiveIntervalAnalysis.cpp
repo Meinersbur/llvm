@@ -24,6 +24,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/VirtRegMap.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
@@ -34,7 +35,6 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "LiveRangeCalc.h"
-#include "VirtRegMap.h"
 #include <algorithm>
 #include <limits>
 #include <cmath>
@@ -145,6 +145,11 @@ void LiveIntervals::print(raw_ostream &OS, const Module* ) const {
     if (hasInterval(Reg))
       OS << PrintReg(Reg) << " = " << getInterval(Reg) << '\n';
   }
+
+  OS << "RegMasks:";
+  for (unsigned i = 0, e = RegMaskSlots.size(); i != e; ++i)
+    OS << ' ' << RegMaskSlots[i];
+  OS << '\n';
 
   printInstrs(OS);
 }
@@ -1257,10 +1262,15 @@ private:
     SmallVectorImpl<SlotIndex>::iterator RI =
       std::lower_bound(LIS.RegMaskSlots.begin(), LIS.RegMaskSlots.end(),
                        OldIdx);
-    assert(*RI == OldIdx && "No RegMask at OldIdx.");
-    *RI = NewIdx;
-    assert(*prior(RI) < *RI && *RI < *next(RI) &&
-           "RegSlots out of order. Did you move one call across another?");
+    assert(RI != LIS.RegMaskSlots.end() && *RI == OldIdx.getRegSlot() &&
+           "No RegMask at OldIdx.");
+    *RI = NewIdx.getRegSlot();
+    assert((RI == LIS.RegMaskSlots.begin() ||
+            SlotIndex::isEarlierInstr(*llvm::prior(RI), *RI)) &&
+            "Cannot move regmask instruction above another call");
+    assert((llvm::next(RI) == LIS.RegMaskSlots.end() ||
+            SlotIndex::isEarlierInstr(*RI, *llvm::next(RI))) &&
+            "Cannot move regmask instruction below another call");
   }
 
   // Return the last use of reg between NewIdx and OldIdx.
@@ -1282,7 +1292,11 @@ private:
       MachineBasicBlock::iterator MII(MI);
       ++MII;
       MachineBasicBlock* MBB = MI->getParent();
-      for (; MII != MBB->end() && LIS.getInstructionIndex(MII) < OldIdx; ++MII){
+      for (; MII != MBB->end(); ++MII){
+        if (MII->isDebugValue())
+          continue;
+        if (LIS.getInstructionIndex(MII) < OldIdx)
+          break;
         for (MachineInstr::mop_iterator MOI = MII->operands_begin(),
                                         MOE = MII->operands_end();
              MOI != MOE; ++MOI) {

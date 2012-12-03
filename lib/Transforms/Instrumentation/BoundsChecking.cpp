@@ -41,7 +41,7 @@ namespace {
   struct BoundsChecking : public FunctionPass {
     static char ID;
 
-    BoundsChecking(unsigned _Penalty = 5) : FunctionPass(ID), Penalty(_Penalty){
+    BoundsChecking() : FunctionPass(ID) {
       initializeBoundsCheckingPass(*PassRegistry::getPassRegistry());
     }
 
@@ -59,7 +59,6 @@ namespace {
     BuilderTy *Builder;
     Instruction *Inst;
     BasicBlock *TrapBB;
-    unsigned Penalty;
 
     BasicBlock *getTrapBB();
     void emitBranchToTrap(Value *Cmp = 0);
@@ -109,6 +108,7 @@ void BoundsChecking::emitBranchToTrap(Value *Cmp) {
     else
       Cmp = 0; // unconditional branch
   }
+  ++ChecksAdded;
 
   Instruction *Inst = Builder->GetInsertPoint();
   BasicBlock *OldBB = Inst->getParent();
@@ -143,7 +143,7 @@ bool BoundsChecking::instrument(Value *Ptr, Value *InstVal) {
   Value *Offset = SizeOffset.second;
   ConstantInt *SizeCI = dyn_cast<ConstantInt>(Size);
 
-  IntegerType *IntTy = TD->getIntPtrType(Inst->getContext());
+  Type *IntTy = TD->getIntPtrType(Ptr->getType());
   Value *NeededSizeVal = ConstantInt::get(IntTy, NeededSize);
 
   // three checks are required to ensure safety:
@@ -163,7 +163,6 @@ bool BoundsChecking::instrument(Value *Ptr, Value *InstVal) {
   }
   emitBranchToTrap(Or);
 
-  ++ChecksAdded;
   return true;
 }
 
@@ -208,6 +207,6 @@ bool BoundsChecking::runOnFunction(Function &F) {
   return MadeChange;
 }
 
-FunctionPass *llvm::createBoundsCheckingPass(unsigned Penalty) {
-  return new BoundsChecking(Penalty);
+FunctionPass *llvm::createBoundsCheckingPass() {
+  return new BoundsChecking();
 }

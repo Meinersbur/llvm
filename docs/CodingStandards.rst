@@ -284,17 +284,10 @@ listed.  We prefer these ``#include``\s to be listed in this order:
 
 #. Main Module Header
 #. Local/Private Headers
-#. ``llvm/*``
-#. ``llvm/Analysis/*``
-#. ``llvm/Assembly/*``
-#. ``llvm/Bitcode/*``
-#. ``llvm/CodeGen/*``
-#. ...
-#. ``llvm/Support/*``
-#. ``llvm/Config/*``
+#. ``llvm/...``
 #. System ``#include``\s
 
-and each category should be sorted by name.
+and each category should be sorted lexicographically by the full path.
 
 The `Main Module Header`_ file applies to ``.cpp`` files which implement an
 interface defined by a ``.h`` file.  This ``#include`` should always be included
@@ -409,7 +402,8 @@ code.
 
 That said, LLVM does make extensive use of a hand-rolled form of RTTI that use
 templates like `isa<>, cast<>, and dyn_cast<> <ProgrammersManual.html#isa>`_.
-This form of RTTI is opt-in and can be added to any class.  It is also
+This form of RTTI is opt-in and can be
+:doc:`added to any class <HowToSetUpLLVMStyleRTTI>`. It is also
 substantially more efficient than ``dynamic_cast<>``.
 
 .. _static constructor:
@@ -713,8 +707,8 @@ sort of thing is:
 .. code-block:: c++
 
   bool FoundFoo = false;
-  for (unsigned i = 0, e = BarList.size(); i != e; ++i)
-    if (BarList[i]->isFoo()) {
+  for (unsigned I = 0, E = BarList.size(); I != E; ++I)
+    if (BarList[I]->isFoo()) {
       FoundFoo = true;
       break;
     }
@@ -732,8 +726,8 @@ code to be structured like this:
 
   /// \returns true if the specified list has an element that is a foo.
   static bool containsFoo(const std::vector<Bar*> &List) {
-    for (unsigned i = 0, e = List.size(); i != e; ++i)
-      if (List[i]->isFoo())
+    for (unsigned I = 0, E = List.size(); I != E; ++I)
+      if (List[I]->isFoo())
         return true;
     return false;
   }
@@ -820,8 +814,8 @@ Here are some examples of good and bad names:
 
   Vehicle MakeVehicle(VehicleType Type) {
     VehicleMaker M;                         // Might be OK if having a short life-span.
-    Tire tmp1 = M.makeTire();               // Bad -- 'tmp1' provides no information.
-    Light headlight = M.makeLight("head");  // Good -- descriptive.
+    Tire Tmp1 = M.makeTire();               // Bad -- 'Tmp1' provides no information.
+    Light Headlight = M.makeLight("head");  // Good -- descriptive.
     ...
   }
 
@@ -841,9 +835,9 @@ enforced, and hopefully what to do about it.  Here is one complete example:
 
 .. code-block:: c++
 
-  inline Value *getOperand(unsigned i) { 
-    assert(i < Operands.size() && "getOperand() out of range!");
-    return Operands[i]; 
+  inline Value *getOperand(unsigned I) {
+    assert(I < Operands.size() && "getOperand() out of range!");
+    return Operands[I];
   }
 
 Here are more examples:
@@ -862,23 +856,28 @@ Here are more examples:
 
 You get the idea.
 
-Please be aware that, when adding assert statements, not all compilers are aware
-of the semantics of the assert.  In some places, asserts are used to indicate a
-piece of code that should not be reached.  These are typically of the form:
+In the past, asserts were used to indicate a piece of code that should not be
+reached.  These were typically of the form:
 
 .. code-block:: c++
 
-  assert(0 && "Some helpful error message");
+  assert(0 && "Invalid radix for integer literal");
 
-When used in a function that returns a value, they should be followed with a
-return statement and a comment indicating that this line is never reached.  This
-will prevent a compiler which is unable to deduce that the assert statement
-never returns from generating a warning.
+This has a few issues, the main one being that some compilers might not
+understand the assertion, or warn about a missing return in builds where
+assertions are compiled out.
+
+Today, we have something much better: ``llvm_unreachable``:
 
 .. code-block:: c++
 
-  assert(0 && "Some helpful error message");
-  return 0;
+  llvm_unreachable("Invalid radix for integer literal");
+
+When assertions are enabled, this will print the message if it's ever reached
+and then exit the program. When assertions are disabled (i.e. in release
+builds), ``llvm_unreachable`` becomes a hint to compilers to skip generating
+code for this branch. If the compiler does not support this, it will fall back
+to the "abort" implementation.
 
 Another issue is that values used only by assertions will produce an "unused
 value" warning when assertions are disabled.  For example, this code will warn:
@@ -1030,7 +1029,7 @@ form has two problems. First it may be less efficient than evaluating it at the
 start of the loop.  In this case, the cost is probably minor --- a few extra
 loads every time through the loop.  However, if the base expression is more
 complex, then the cost can rise quickly.  I've seen loops where the end
-expression was actually something like: "``SomeMap[x]->end()``" and map lookups
+expression was actually something like: "``SomeMap[X]->end()``" and map lookups
 really aren't cheap.  By writing it in the second form consistently, you
 eliminate the issue entirely and don't even have to think about it.
 
@@ -1106,27 +1105,27 @@ macros.  For example, this is good:
 
 .. code-block:: c++
 
-  if (x) ...
-  for (i = 0; i != 100; ++i) ...
-  while (llvm_rocks) ...
+  if (X) ...
+  for (I = 0; I != 100; ++I) ...
+  while (LLVMRocks) ...
 
   somefunc(42);
   assert(3 != 4 && "laws of math are failing me");
   
-  a = foo(42, 92) + bar(x);
+  A = foo(42, 92) + bar(X);
 
 and this is bad:
 
 .. code-block:: c++
 
-  if(x) ...
-  for(i = 0; i != 100; ++i) ...
-  while(llvm_rocks) ...
+  if(X) ...
+  for(I = 0; I != 100; ++I) ...
+  while(LLVMRocks) ...
 
   somefunc (42);
   assert (3 != 4 && "laws of math are failing me");
   
-  a = foo (42, 92) + bar (x);
+  A = foo (42, 92) + bar (X);
 
 The reason for doing this is not completely arbitrary.  This style makes control
 flow operators stand out more, and makes expressions flow better. The function
@@ -1134,11 +1133,11 @@ call operator binds very tightly as a postfix operator.  Putting a space after a
 function name (as in the last example) makes it appear that the code might bind
 the arguments of the left-hand-side of a binary operator with the argument list
 of a function and the name of the right side.  More specifically, it is easy to
-misread the "``a``" example as:
+misread the "``A``" example as:
 
 .. code-block:: c++
 
-  a = foo ((42, 92) + bar) (x);
+  A = foo ((42, 92) + bar) (X);
 
 when skimming through the code.  By avoiding a space in a function, we avoid
 this misinterpretation.

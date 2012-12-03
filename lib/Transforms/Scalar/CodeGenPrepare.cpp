@@ -18,7 +18,6 @@
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
 #include "llvm/IRBuilder.h"
 #include "llvm/InlineAsm.h"
 #include "llvm/Instructions.h"
@@ -28,6 +27,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/DominatorInternals.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Assembly/Writer.h"
@@ -125,9 +125,8 @@ namespace {
     bool MoveExtToFormExtLoad(Instruction *I);
     bool OptimizeExtUses(Instruction *I);
     bool OptimizeSelectInst(SelectInst *SI);
-    bool DupRetToEnableTailCallOpts(ReturnInst *RI);
+    bool DupRetToEnableTailCallOpts(BasicBlock *BB);
     bool PlaceDbgValues(Function &F);
-    bool ConvertLoadToSwitch(LoadInst *LI);
   };
 }
 
@@ -195,9 +194,19 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
           WorkList.insert(*II);
     }
 
-    for (SmallPtrSet<BasicBlock*, 8>::iterator
-           I = WorkList.begin(), E = WorkList.end(); I != E; ++I)
-      DeleteDeadBlock(*I);
+    // Delete the dead blocks and any of their dead successors.
+    while (!WorkList.empty()) {
+      BasicBlock *BB = *WorkList.begin();
+      WorkList.erase(BB);
+      SmallVector<BasicBlock*, 2> Successors(succ_begin(BB), succ_end(BB));
+
+      DeleteDeadBlock(BB);
+      
+      for (SmallVectorImpl<BasicBlock*>::iterator
+             II = Successors.begin(), IE = Successors.end(); II != IE; ++II)
+        if (pred_begin(*II) == pred_end(*II))
+          WorkList.insert(*II);
+    }
 
     // Merge pairs of basic blocks with unconditional branches, connected by
     // a single edge.
@@ -690,8 +699,12 @@ bool CodeGenPrepare::OptimizeCallInst(CallInst *CI) {
 ///   %tmp2 = tail call i32 @f2()
 ///   ret i32 %tmp2
 /// @endcode
-bool CodeGenPrepare::DupRetToEnableTailCallOpts(ReturnInst *RI) {
+bool CodeGenPrepare::DupRetToEnableTailCallOpts(BasicBlock *BB) {
   if (!TLI)
+    return false;
+
+  ReturnInst *RI = dyn_cast<ReturnInst>(BB->getTerminator());
+  if (!RI)
     return false;
 
   PHINode *PN = 0;
@@ -707,7 +720,6 @@ bool CodeGenPrepare::DupRetToEnableTailCallOpts(ReturnInst *RI) {
       return false;
   }
 
-  BasicBlock *BB = RI->getParent();
   if (PN && PN->getParent() != BB)
     return false;
 
@@ -1291,11 +1303,9 @@ bool CodeGenPrepare::OptimizeInst(Instruction *I) {
     return OptimizeCmpExpression(CI);
 
   if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
-    bool Changed = false;
     if (TLI)
-      Changed |= OptimizeMemoryInst(I, I->getOperand(0), LI->getType());
-    Changed |= ConvertLoadToSwitch(LI);
-    return Changed;
+      return OptimizeMemoryInst(I, I->getOperand(0), LI->getType());
+    return false;
   }
 
   if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
@@ -1322,9 +1332,6 @@ bool CodeGenPrepare::OptimizeInst(Instruction *I) {
   if (CallInst *CI = dyn_cast<CallInst>(I))
     return OptimizeCallInst(CI);
 
-  if (ReturnInst *RI = dyn_cast<ReturnInst>(I))
-    return DupRetToEnableTailCallOpts(RI);
-
   if (SelectInst *SI = dyn_cast<SelectInst>(I))
     return OptimizeSelectInst(SI);
 
@@ -1341,6 +1348,8 @@ bool CodeGenPrepare::OptimizeBlock(BasicBlock &BB) {
   CurInstIterator = BB.begin();
   while (CurInstIterator != BB.end())
     MadeChange |= OptimizeInst(CurInstIterator++);
+
+  MadeChange |= DupRetToEnableTailCallOpts(&BB);
 
   return MadeChange;
 }
@@ -1374,110 +1383,4 @@ bool CodeGenPrepare::PlaceDbgValues(Function &F) {
     }
   }
   return MadeChange;
-}
-
-static bool TargetSupportsJumpTables(const TargetLowering &TLI) {
-  return TLI.supportJumpTables() &&
-          (TLI.isOperationLegalOrCustom(ISD::BR_JT, MVT::Other) ||
-           TLI.isOperationLegalOrCustom(ISD::BRIND, MVT::Other));
-}
-
-/// ConvertLoadToSwitch - Convert loads from constant lookup tables into
-/// switches. This undos the switch-to-lookup table transformation in
-/// SimplifyCFG for targets where that is inprofitable.
-bool CodeGenPrepare::ConvertLoadToSwitch(LoadInst *LI) {
-  // This only applies to targets that don't support jump tables.
-  if (!TLI || TargetSupportsJumpTables(*TLI))
-    return false;
-
-  // FIXME: In the future, it would be desirable to have enough target
-  // information in SimplifyCFG, so we could decide at that stage whether to
-  // transform the switch to a lookup table or not, and this
-  // reverse-transformation could be removed.
-
-  GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(LI->getPointerOperand());
-  if (!GEP || !GEP->isInBounds() || GEP->getPointerAddressSpace())
-    return false;
-  if (GEP->getNumIndices() != 2)
-    return false;
-  Value *FirstIndex = GEP->idx_begin()[0];
-  ConstantInt *FirstIndexInt = dyn_cast<ConstantInt>(FirstIndex);
-  if (!FirstIndexInt || !FirstIndexInt->isZero())
-    return false;
-
-  Value *TableIndex = GEP->idx_begin()[1];
-  IntegerType *TableIndexTy = cast<IntegerType>(TableIndex->getType());
-
-  GlobalVariable *GV = dyn_cast<GlobalVariable>(GEP->getPointerOperand());
-  if (!GV || !GV->isConstant() || !GV->hasDefinitiveInitializer())
-    return false;
-
-  Constant *Arr = GV->getInitializer();
-  uint64_t NumElements;
-  if (ConstantArray *CA = dyn_cast<ConstantArray>(Arr))
-    NumElements = CA->getType()->getNumElements();
-  else if (ConstantDataArray *CDA = dyn_cast<ConstantDataArray>(Arr))
-    NumElements = CDA->getNumElements();
-  else
-    return false;
-  if (NumElements < 2)
-    return false;
-
-  // Split the block.
-  BasicBlock *OriginalBB = LI->getParent();
-  BasicBlock *PostSwitchBB = OriginalBB->splitBasicBlock(LI);
-
-  // Replace OriginalBB's terminator with a switch.
-  IRBuilder<> Builder(OriginalBB->getTerminator());
-  SwitchInst *Switch = Builder.CreateSwitch(TableIndex, PostSwitchBB,
-                                            NumElements - 1);
-  OriginalBB->getTerminator()->eraseFromParent();
-
-  // Count the frequency of each value to decide which to use as default.
-  SmallDenseMap<Constant*, uint64_t> ValueFreq;
-  for (uint64_t I = 0; I < NumElements; ++I)
-    ++ValueFreq[Arr->getAggregateElement(I)];
-  uint64_t MaxCount = 0;
-  Constant *DefaultValue = NULL;
-  for (SmallDenseMap<Constant*, uint64_t>::iterator I = ValueFreq.begin(),
-       E = ValueFreq.end(); I != E; ++I) {
-    if (I->second > MaxCount) {
-      MaxCount = I->second;
-      DefaultValue = I->first;
-    }
-  }
-  assert(DefaultValue && "No values in the array?");
-
-  // Create the phi node in PostSwitchBB, which will replace the load.
-  Builder.SetInsertPoint(PostSwitchBB->begin());
-  PHINode *PHI = Builder.CreatePHI(LI->getType(), NumElements);
-  PHI->addIncoming(DefaultValue, OriginalBB);
-
-  // Build basic blocks to target with the switch.
-  for (uint64_t I = 0; I < NumElements; ++I) {
-    Constant *C = Arr->getAggregateElement(I);
-    if (C == DefaultValue) continue; // Already covered by the default case.
-
-    BasicBlock *BB = BasicBlock::Create(PostSwitchBB->getContext(),
-                                        "lookup.bb",
-                                        PostSwitchBB->getParent(),
-                                        PostSwitchBB);
-    Switch->addCase(ConstantInt::get(TableIndexTy, I), BB);
-    Builder.SetInsertPoint(BB);
-    Builder.CreateBr(PostSwitchBB);
-    PHI->addIncoming(C, BB);
-  }
-
-  // Remove the load.
-  LI->replaceAllUsesWith(PHI);
-  LI->eraseFromParent();
-
-  // Clean up.
-  if (GEP->use_empty())
-    GEP->eraseFromParent();
-  if (GV->hasUnnamedAddr() && GV->hasPrivateLinkage() && GV->use_empty())
-    GV->eraseFromParent();
-
-  CurInstIterator = Switch;
-  return true;
 }

@@ -118,6 +118,9 @@ protected:
   /// HasBMI2 - Processor has BMI2 instructions.
   bool HasBMI2;
 
+  /// HasRTM - Processor has RTM instructions.
+  bool HasRTM;
+
   /// IsBTMemSlow - True if BT (bit test) of memory instructions are slow.
   bool IsBTMemSlow;
 
@@ -202,6 +205,8 @@ public:
   bool hasSSE42() const { return X86SSELevel >= SSE42; }
   bool hasAVX() const { return X86SSELevel >= AVX; }
   bool hasAVX2() const { return X86SSELevel >= AVX2; }
+  bool hasFp256() const { return hasAVX(); }
+  bool hasInt256() const { return hasAVX2(); }
   bool hasSSE4A() const { return HasSSE4A; }
   bool has3DNow() const { return X863DNowLevel >= ThreeDNow; }
   bool has3DNowA() const { return X863DNowLevel >= ThreeDNowA; }
@@ -219,6 +224,7 @@ public:
   bool hasLZCNT() const { return HasLZCNT; }
   bool hasBMI() const { return HasBMI; }
   bool hasBMI2() const { return HasBMI2; }
+  bool hasRTM() const { return HasRTM; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isUnalignedMemAccessFast() const { return IsUAMemFast; }
   bool hasVectorUAMem() const { return HasVectorUAMem; }
