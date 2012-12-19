@@ -7,31 +7,31 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/ARMBaseInfo.h"
-#include "MCTargetDesc/ARMAddressingModes.h"
-#include "MCTargetDesc/ARMMCExpr.h"
-#include "llvm/MC/MCParser/MCAsmLexer.h"
-#include "llvm/MC/MCParser/MCAsmParser.h"
-#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCInstrDesc.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetAsmParser.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/raw_ostream.h"
+#include "MCTargetDesc/ARMAddressingModes.h"
+#include "MCTargetDesc/ARMBaseInfo.h"
+#include "MCTargetDesc/ARMMCExpr.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrDesc.h"
+#include "llvm/MC/MCParser/MCAsmLexer.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -253,15 +253,17 @@ public:
 
   // Implementation of the MCTargetAsmParser interface:
   bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
-  bool ParseInstruction(StringRef Name, SMLoc NameLoc,
+  bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
+                        SMLoc NameLoc,
                         SmallVectorImpl<MCParsedAsmOperand*> &Operands);
   bool ParseDirective(AsmToken DirectiveID);
 
   unsigned checkTargetMatchPredicate(MCInst &Inst);
 
-  bool MatchAndEmitInstruction(SMLoc IDLoc,
+  bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                               MCStreamer &Out);
+                               MCStreamer &Out, unsigned &ErrorInfo,
+                               bool MatchingInlineAsm);
 };
 } // end anonymous namespace
 
@@ -3372,7 +3374,8 @@ ARMAsmParser::OperandMatchResultTy ARMAsmParser::
 parseMSRMaskOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   SMLoc S = Parser.getTok().getLoc();
   const AsmToken &Tok = Parser.getTok();
-  assert(Tok.is(AsmToken::Identifier) && "Token is not an Identifier");
+  if (!Tok.is(AsmToken::Identifier))
+    return MatchOperand_NoMatch;
   StringRef Mask = Tok.getString();
 
   if (isMClass()) {
@@ -4952,7 +4955,8 @@ static bool doesIgnoreDataTypeSuffix(StringRef Mnemonic, StringRef DT) {
 
 static void applyMnemonicAliases(StringRef &Mnemonic, unsigned Features);
 /// Parse an arm instruction mnemonic followed by its operands.
-bool ARMAsmParser::ParseInstruction(StringRef Name, SMLoc NameLoc,
+bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
+                                    SMLoc NameLoc,
                                SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   // Apply mnemonic aliases before doing anything else, as the destination
   // mnemnonic may include suffices and we want to handle them normally.
@@ -5183,6 +5187,45 @@ bool ARMAsmParser::ParseInstruction(StringRef Name, SMLoc NameLoc,
     }
   }
 
+  // Adjust operands of ldrexd/strexd to MCK_GPRPair.
+  // ldrexd/strexd require even/odd GPR pair. To enforce this constraint,
+  // a single GPRPair reg operand is used in the .td file to replace the two
+  // GPRs. However, when parsing from asm, the two GRPs cannot be automatically
+  // expressed as a GPRPair, so we have to manually merge them.
+  // FIXME: We would really like to be able to tablegen'erate this.
+  if (!isThumb() && Operands.size() > 4 &&
+      (Mnemonic == "ldrexd" || Mnemonic == "strexd")) {
+    bool isLoad = (Mnemonic == "ldrexd");
+    unsigned Idx = isLoad ? 2 : 3;
+    ARMOperand* Op1 = static_cast<ARMOperand*>(Operands[Idx]);
+    ARMOperand* Op2 = static_cast<ARMOperand*>(Operands[Idx+1]);
+
+    const MCRegisterClass& MRC = MRI->getRegClass(ARM::GPRRegClassID);
+    // Adjust only if Op1 and Op2 are GPRs.
+    if (Op1->isReg() && Op2->isReg() && MRC.contains(Op1->getReg()) &&
+        MRC.contains(Op2->getReg())) {
+      unsigned Reg1 = Op1->getReg();
+      unsigned Reg2 = Op2->getReg();
+      unsigned Rt = MRI->getEncodingValue(Reg1);
+      unsigned Rt2 = MRI->getEncodingValue(Reg2);
+
+      // Rt2 must be Rt + 1 and Rt must be even.
+      if (Rt + 1 != Rt2 || (Rt & 1)) {
+        Error(Op2->getStartLoc(), isLoad ?
+            "destination operands must be sequential" :
+            "source operands must be sequential");
+        return true;
+      }
+      unsigned NewReg = MRI->getMatchingSuperReg(Reg1, ARM::gsub_0,
+          &(MRI->getRegClass(ARM::GPRPairRegClassID)));
+      Operands.erase(Operands.begin() + Idx, Operands.begin() + Idx + 2);
+      Operands.insert(Operands.begin() + Idx, ARMOperand::CreateReg(
+            NewReg, Op1->getStartLoc(), Op2->getEndLoc()));
+      delete Op1;
+      delete Op2;
+    }
+  }
+
   return false;
 }
 
@@ -5270,8 +5313,7 @@ validateInstruction(MCInst &Inst,
   switch (Inst.getOpcode()) {
   case ARM::LDRD:
   case ARM::LDRD_PRE:
-  case ARM::LDRD_POST:
-  case ARM::LDREXD: {
+  case ARM::LDRD_POST: {
     // Rt2 must be Rt + 1.
     unsigned Rt = MRI->getEncodingValue(Inst.getOperand(0).getReg());
     unsigned Rt2 = MRI->getEncodingValue(Inst.getOperand(1).getReg());
@@ -5290,8 +5332,7 @@ validateInstruction(MCInst &Inst,
     return false;
   }
   case ARM::STRD_PRE:
-  case ARM::STRD_POST:
-  case ARM::STREXD: {
+  case ARM::STRD_POST: {
     // Rt2 must be Rt + 1.
     unsigned Rt = MRI->getEncodingValue(Inst.getOperand(1).getReg());
     unsigned Rt2 = MRI->getEncodingValue(Inst.getOperand(2).getReg());
@@ -5682,7 +5723,12 @@ processInstruction(MCInst &Inst,
   }
   // Aliases for alternate PC+imm syntax of LDR instructions.
   case ARM::t2LDRpcrel:
-    Inst.setOpcode(ARM::t2LDRpci);
+    // Select the narrow version if the immediate will fit.
+    if (Inst.getOperand(1).getImm() > 0 &&
+        Inst.getOperand(1).getImm() <= 0xff)
+      Inst.setOpcode(ARM::tLDRpci);
+    else
+      Inst.setOpcode(ARM::t2LDRpci);
     return true;
   case ARM::t2LDRBpcrel:
     Inst.setOpcode(ARM::t2LDRBpci);
@@ -7473,17 +7519,15 @@ unsigned ARMAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
 
 static const char *getSubtargetFeatureName(unsigned Val);
 bool ARMAsmParser::
-MatchAndEmitInstruction(SMLoc IDLoc,
+MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                         SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                        MCStreamer &Out) {
+                        MCStreamer &Out, unsigned &ErrorInfo,
+                        bool MatchingInlineAsm) {
   MCInst Inst;
-  unsigned Kind;
-  unsigned ErrorInfo;
   unsigned MatchResult;
-  SmallVector<std::pair< unsigned, std::string >, 4> MapAndConstraints;
-  MatchResult = MatchInstructionImpl(Operands, Kind, Inst,
-                                     MapAndConstraints, ErrorInfo,
-                                     /*matchingInlineAsm*/ false);
+
+  MatchResult = MatchInstructionImpl(Operands, Inst, ErrorInfo,
+                                     MatchingInlineAsm);
   switch (MatchResult) {
   default: break;
   case Match_Success:

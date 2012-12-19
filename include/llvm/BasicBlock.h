@@ -14,11 +14,11 @@
 #ifndef LLVM_BASICBLOCK_H
 #define LLVM_BASICBLOCK_H
 
-#include "llvm/Instruction.h"
-#include "llvm/SymbolTableListTraits.h"
-#include "llvm/ADT/ilist.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist.h"
+#include "llvm/Instruction.h"
 #include "llvm/Support/DataTypes.h"
+#include "llvm/SymbolTableListTraits.h"
 
 namespace llvm {
 
@@ -213,7 +213,6 @@ public:
   ValueSymbolTable *getValueSymbolTable();
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast:
-  static inline bool classof(const BasicBlock *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == Value::BasicBlockVal;
   }

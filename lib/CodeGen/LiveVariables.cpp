@@ -27,17 +27,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/LiveVariables.h"
+#include "llvm/ADT/DepthFirstIterator.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/ADT/DepthFirstIterator.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -503,8 +503,6 @@ bool LiveVariables::runOnMachineFunction(MachineFunction &mf) {
   MRI = &mf.getRegInfo();
   TRI = MF->getTarget().getRegisterInfo();
 
-  ReservedRegisters = TRI->getReservedRegs(mf);
-
   unsigned NumRegs = TRI->getNumRegs();
   PhysRegDef  = new MachineInstr*[NumRegs];
   PhysRegUse  = new MachineInstr*[NumRegs];
@@ -588,7 +586,7 @@ bool LiveVariables::runOnMachineFunction(MachineFunction &mf) {
         unsigned MOReg = UseRegs[i];
         if (TargetRegisterInfo::isVirtualRegister(MOReg))
           HandleVirtRegUse(MOReg, MBB, MI);
-        else if (!ReservedRegisters[MOReg])
+        else if (!MRI->isReserved(MOReg))
           HandlePhysRegUse(MOReg, MI);
       }
 
@@ -601,7 +599,7 @@ bool LiveVariables::runOnMachineFunction(MachineFunction &mf) {
         unsigned MOReg = DefRegs[i];
         if (TargetRegisterInfo::isVirtualRegister(MOReg))
           HandleVirtRegDef(MOReg, MI);
-        else if (!ReservedRegisters[MOReg])
+        else if (!MRI->isReserved(MOReg))
           HandlePhysRegDef(MOReg, MI, Defs);
       }
       UpdatePhysRegDefs(MI, Defs);

@@ -13,8 +13,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/InstructionSimplify.h"
+#include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/Analysis/ProfileInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Constants.h"
 #include "llvm/DIBuilder.h"
+#include "llvm/DataLayout.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/GlobalAlias.h"
@@ -26,20 +34,12 @@
 #include "llvm/MDBuilder.h"
 #include "llvm/Metadata.h"
 #include "llvm/Operator.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/Analysis/Dominators.h"
-#include "llvm/Analysis/InstructionSimplify.h"
-#include "llvm/Analysis/MemoryBuiltins.h"
-#include "llvm/Analysis/ProfileInfo.h"
-#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetData.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -397,7 +397,7 @@ bool llvm::RecursivelyDeleteDeadPHINode(PHINode *PN,
 ///
 /// This returns true if it changed the code, note that it can delete
 /// instructions in other blocks as well in this block.
-bool llvm::SimplifyInstructionsInBlock(BasicBlock *BB, const TargetData *TD,
+bool llvm::SimplifyInstructionsInBlock(BasicBlock *BB, const DataLayout *TD,
                                        const TargetLibraryInfo *TLI) {
   bool MadeChange = false;
 
@@ -445,7 +445,7 @@ bool llvm::SimplifyInstructionsInBlock(BasicBlock *BB, const TargetData *TD,
 /// .. and delete the predecessor corresponding to the '1', this will attempt to
 /// recursively fold the and to 0.
 void llvm::RemovePredecessorAndSimplify(BasicBlock *BB, BasicBlock *Pred,
-                                        TargetData *TD) {
+                                        DataLayout *TD) {
   // This only adjusts blocks with PHI nodes.
   if (!isa<PHINode>(BB->begin()))
     return;
@@ -760,7 +760,7 @@ bool llvm::EliminateDuplicatePHINodes(BasicBlock *BB) {
 /// their preferred alignment from the beginning.
 ///
 static unsigned enforceKnownAlignment(Value *V, unsigned Align,
-                                      unsigned PrefAlign, const TargetData *TD) {
+                                      unsigned PrefAlign, const DataLayout *TD) {
   V = V->stripPointerCasts();
 
   if (AllocaInst *AI = dyn_cast<AllocaInst>(V)) {
@@ -803,7 +803,7 @@ static unsigned enforceKnownAlignment(Value *V, unsigned Align,
 /// and it is more than the alignment of the ultimate object, see if we can
 /// increase the alignment of the ultimate object, making this check succeed.
 unsigned llvm::getOrEnforceKnownAlignment(Value *V, unsigned PrefAlign,
-                                          const TargetData *TD) {
+                                          const DataLayout *TD) {
   assert(V->getType()->isPointerTy() &&
          "getOrEnforceKnownAlignment expects a pointer!");
   unsigned BitWidth = TD ? TD->getPointerSizeInBits() : 64;
@@ -927,4 +927,39 @@ DbgDeclareInst *llvm::FindAllocaDbgDeclare(Value *V) {
         return DDI;
 
   return 0;
+}
+
+bool llvm::replaceDbgDeclareForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
+                                      DIBuilder &Builder) {
+  DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
+  if (!DDI)
+    return false;
+  DIVariable DIVar(DDI->getVariable());
+  if (!DIVar.Verify())
+    return false;
+
+  // Create a copy of the original DIDescriptor for user variable, appending
+  // "deref" operation to a list of address elements, as new llvm.dbg.declare
+  // will take a value storing address of the memory for variable, not
+  // alloca itself.
+  Type *Int64Ty = Type::getInt64Ty(AI->getContext());
+  SmallVector<Value*, 4> NewDIVarAddress;
+  if (DIVar.hasComplexAddress()) {
+    for (unsigned i = 0, n = DIVar.getNumAddrElements(); i < n; ++i) {
+      NewDIVarAddress.push_back(
+          ConstantInt::get(Int64Ty, DIVar.getAddrElement(i)));
+    }
+  }
+  NewDIVarAddress.push_back(ConstantInt::get(Int64Ty, DIBuilder::OpDeref));
+  DIVariable NewDIVar = Builder.createComplexVariable(
+      DIVar.getTag(), DIVar.getContext(), DIVar.getName(),
+      DIVar.getFile(), DIVar.getLineNumber(), DIVar.getType(),
+      NewDIVarAddress, DIVar.getArgNumber());
+
+  // Insert llvm.dbg.declare in the same basic block as the original alloca,
+  // and remove old llvm.dbg.declare.
+  BasicBlock *BB = AI->getParent();
+  Builder.insertDeclare(NewAllocaAddress, NewDIVar, BB);
+  DDI->eraseFromParent();
+  return true;
 }

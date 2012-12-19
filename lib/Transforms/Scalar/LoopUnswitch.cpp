@@ -28,25 +28,25 @@
 
 #define DEBUG_TYPE "loop-unswitch"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/CodeMetrics.h"
+#include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/InstructionSimplify.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
 #include "llvm/Instructions.h"
-#include "llvm/Analysis/CodeMetrics.h"
-#include "llvm/Analysis/InstructionSimplify.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/Dominators.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -638,7 +638,8 @@ bool LoopUnswitch::UnswitchIfProfitable(Value *LoopCond, Constant *Val) {
   // Check to see if it would be profitable to unswitch current loop.
 
   // Do not do non-trivial unswitch while optimizing for size.
-  if (OptimizeForSize || F->getFnAttributes().hasOptimizeForSizeAttr())
+  if (OptimizeForSize ||
+      F->getFnAttributes().hasAttribute(Attributes::OptimizeForSize))
     return false;
 
   UnswitchNontrivialCondition(LoopCond, Val, currentLoop);
@@ -906,13 +907,9 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
 /// specified.
 static void RemoveFromWorklist(Instruction *I,
                                std::vector<Instruction*> &Worklist) {
-  std::vector<Instruction*>::iterator WI = std::find(Worklist.begin(),
-                                                     Worklist.end(), I);
-  while (WI != Worklist.end()) {
-    unsigned Offset = WI-Worklist.begin();
-    Worklist.erase(WI);
-    WI = std::find(Worklist.begin()+Offset, Worklist.end(), I);
-  }
+
+  Worklist.erase(std::remove(Worklist.begin(), Worklist.end(), I),
+                 Worklist.end());
 }
 
 /// ReplaceUsesOfWith - When we find that I really equals V, remove I from the

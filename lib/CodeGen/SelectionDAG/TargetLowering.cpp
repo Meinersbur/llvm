@@ -12,24 +12,24 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Target/TargetLowering.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetLoweringObjectFile.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/CodeGen/Analysis.h"
-#include "llvm/CodeGen/MachineFrameInfo.h"
-#include "llvm/CodeGen/MachineJumpTableInfo.h"
-#include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/CodeGen/Analysis.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
+#include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/DataLayout.h"
+#include "llvm/DerivedTypes.h"
+#include "llvm/GlobalVariable.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 #include <cctype>
 using namespace llvm;
 
@@ -515,7 +515,7 @@ static void InitCmpLibcallCCs(ISD::CondCode *CCs) {
 /// NOTE: The constructor takes ownership of TLOF.
 TargetLowering::TargetLowering(const TargetMachine &tm,
                                const TargetLoweringObjectFile *tlof)
-  : TM(tm), TD(TM.getTargetData()), TLOF(*tlof) {
+  : TM(tm), TD(TM.getDataLayout()), TLOF(*tlof) {
   // All operations default to being supported.
   memset(OpActions, 0, sizeof(OpActions));
   memset(LoadExtActions, 0, sizeof(LoadExtActions));
@@ -583,8 +583,13 @@ TargetLowering::TargetLowering(const TargetMachine &tm,
   // Default ISD::TRAP to expand (which turns it into abort).
   setOperationAction(ISD::TRAP, MVT::Other, Expand);
 
+  // On most systems, DEBUGTRAP and TRAP have no difference. The "Expand"
+  // here is to inform DAG Legalizer to replace DEBUGTRAP with TRAP.
+  //
+  setOperationAction(ISD::DEBUGTRAP, MVT::Other, Expand);
+
   IsLittleEndian = TD->isLittleEndian();
-  PointerTy = MVT::getIntegerVT(8*TD->getPointerSize());
+  PointerTy = MVT::getIntegerVT(8*TD->getPointerSize(0));
   memset(RegClassForVT, 0,MVT::LAST_VALUETYPE*sizeof(TargetRegisterClass*));
   memset(TargetDAGCombineArray, 0, array_lengthof(TargetDAGCombineArray));
   maxStoresPerMemset = maxStoresPerMemcpy = maxStoresPerMemmove = 8;
@@ -625,7 +630,7 @@ TargetLowering::~TargetLowering() {
 }
 
 MVT TargetLowering::getShiftAmountTy(EVT LHSTy) const {
-  return MVT::getIntegerVT(8*TD->getPointerSize());
+  return MVT::getIntegerVT(8*TD->getPointerSize(0));
 }
 
 /// canOpTrap - Returns true if the operation can trap for the value type.
@@ -753,14 +758,13 @@ void TargetLowering::computeRegisterProperties() {
 
   // Every integer value type larger than this largest register takes twice as
   // many registers to represent as the previous ValueType.
-  for (unsigned ExpandedReg = LargestIntReg + 1; ; ++ExpandedReg) {
-    EVT ExpandedVT = (MVT::SimpleValueType)ExpandedReg;
-    if (!ExpandedVT.isInteger())
-      break;
+  for (unsigned ExpandedReg = LargestIntReg + 1;
+       ExpandedReg <= MVT::LAST_INTEGER_VALUETYPE; ++ExpandedReg) {
     NumRegistersForVT[ExpandedReg] = 2*NumRegistersForVT[ExpandedReg-1];
     RegisterTypeForVT[ExpandedReg] = (MVT::SimpleValueType)LargestIntReg;
     TransformToType[ExpandedReg] = (MVT::SimpleValueType)(ExpandedReg - 1);
-    ValueTypeActions.setTypeAction(ExpandedVT, TypeExpandInteger);
+    ValueTypeActions.setTypeAction((MVT::SimpleValueType)ExpandedReg,
+                                   TypeExpandInteger);
   }
 
   // Inspect all of the ValueType's smaller than the largest integer
@@ -768,7 +772,7 @@ void TargetLowering::computeRegisterProperties() {
   unsigned LegalIntReg = LargestIntReg;
   for (unsigned IntReg = LargestIntReg - 1;
        IntReg >= (unsigned)MVT::i1; --IntReg) {
-    EVT IVT = (MVT::SimpleValueType)IntReg;
+    MVT IVT = (MVT::SimpleValueType)IntReg;
     if (isTypeLegal(IVT)) {
       LegalIntReg = IntReg;
     } else {
@@ -821,7 +825,7 @@ void TargetLowering::computeRegisterProperties() {
     // that wider vector type.
     EVT EltVT = VT.getVectorElementType();
     unsigned NElts = VT.getVectorNumElements();
-    if (NElts != 1) {
+    if (NElts != 1 && !shouldSplitVectorElementType(EltVT)) {
       bool IsLegalWiderType = false;
       // First try to promote the elements of integer vectors. If no legal
       // promotion was found, fallback to the widen-vector method.
@@ -901,7 +905,7 @@ const char *TargetLowering::getTargetNodeName(unsigned Opcode) const {
 
 EVT TargetLowering::getSetCCResultType(EVT VT) const {
   assert(!VT.isVector() && "No default SetCC type for vectors!");
-  return PointerTy.SimpleTy;
+  return getPointerTy(0).SimpleTy;
 }
 
 MVT::SimpleValueType TargetLowering::getCmpLibcallReturnType() const {
@@ -997,9 +1001,9 @@ void llvm::GetReturnInfo(Type* ReturnType, Attributes attr,
     EVT VT = ValueVTs[j];
     ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
 
-    if (attr.hasSExtAttr())
+    if (attr.hasAttribute(Attributes::SExt))
       ExtendKind = ISD::SIGN_EXTEND;
-    else if (attr.hasZExtAttr())
+    else if (attr.hasAttribute(Attributes::ZExt))
       ExtendKind = ISD::ZERO_EXTEND;
 
     // FIXME: C calling convention requires the return type to be promoted to
@@ -1017,17 +1021,17 @@ void llvm::GetReturnInfo(Type* ReturnType, Attributes attr,
 
     // 'inreg' on function refers to return value
     ISD::ArgFlagsTy Flags = ISD::ArgFlagsTy();
-    if (attr.hasInRegAttr())
+    if (attr.hasAttribute(Attributes::InReg))
       Flags.setInReg();
 
     // Propagate extension type if any
-    if (attr.hasSExtAttr())
+    if (attr.hasAttribute(Attributes::SExt))
       Flags.setSExt();
-    else if (attr.hasZExtAttr())
+    else if (attr.hasAttribute(Attributes::ZExt))
       Flags.setZExt();
 
     for (unsigned i = 0; i < NumParts; ++i)
-      Outs.push_back(ISD::OutputArg(Flags, PartVT, /*isFixed=*/true));
+      Outs.push_back(ISD::OutputArg(Flags, PartVT, /*isFixed=*/true, 0, 0));
   }
 }
 
@@ -1061,7 +1065,7 @@ SDValue TargetLowering::getPICJumpTableRelocBase(SDValue Table,
 
   if ((JTEncoding == MachineJumpTableInfo::EK_GPRel64BlockAddress) ||
       (JTEncoding == MachineJumpTableInfo::EK_GPRel32BlockAddress))
-    return DAG.getGLOBAL_OFFSET_TABLE(getPointerTy());
+    return DAG.getGLOBAL_OFFSET_TABLE(getPointerTy(0));
 
   return Table;
 }
@@ -2953,8 +2957,9 @@ TargetLowering::AsmOperandInfoVector TargetLowering::ParseConstraints(
               EVT::getEVT(IntegerType::get(OpTy->getContext(), BitSize), true);
           break;
         }
-      } else if (dyn_cast<PointerType>(OpTy)) {
-        OpInfo.ConstraintVT = MVT::getIntegerVT(8*TD->getPointerSize());
+      } else if (PointerType *PT = dyn_cast<PointerType>(OpTy)) {
+        OpInfo.ConstraintVT = MVT::getIntegerVT(
+            8*TD->getPointerSize(PT->getAddressSpace()));
       } else {
         OpInfo.ConstraintVT = EVT::getEVT(OpTy, true);
       }
@@ -3319,7 +3324,7 @@ SDValue TargetLowering::BuildExactSDIV(SDValue Op1, SDValue Op2, DebugLoc dl,
 /// <http://the.wall.riscom.net/books/proc/ppc/cwg/code2.html>
 SDValue TargetLowering::
 BuildSDIV(SDNode *N, SelectionDAG &DAG, bool IsAfterLegalization,
-          std::vector<SDNode*>* Created) const {
+          std::vector<SDNode*> *Created) const {
   EVT VT = N->getValueType(0);
   DebugLoc dl= N->getDebugLoc();
 
@@ -3379,7 +3384,7 @@ BuildSDIV(SDNode *N, SelectionDAG &DAG, bool IsAfterLegalization,
 /// <http://the.wall.riscom.net/books/proc/ppc/cwg/code2.html>
 SDValue TargetLowering::
 BuildUDIV(SDNode *N, SelectionDAG &DAG, bool IsAfterLegalization,
-          std::vector<SDNode*>* Created) const {
+          std::vector<SDNode*> *Created) const {
   EVT VT = N->getValueType(0);
   DebugLoc dl = N->getDebugLoc();
 

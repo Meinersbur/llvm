@@ -21,16 +21,16 @@
 #ifndef LLVM_ANALYSIS_SCALAREVOLUTION_H
 #define LLVM_ANALYSIS_SCALAREVOLUTION_H
 
-#include "llvm/Pass.h"
-#include "llvm/Instructions.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/FoldingSet.h"
 #include "llvm/Function.h"
+#include "llvm/Instructions.h"
 #include "llvm/Operator.h"
-#include "llvm/Support/DataTypes.h"
-#include "llvm/Support/ValueHandle.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/ConstantRange.h"
-#include "llvm/ADT/FoldingSet.h"
-#include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/DataTypes.h"
+#include "llvm/Support/ValueHandle.h"
 #include <map>
 
 namespace llvm {
@@ -40,7 +40,7 @@ namespace llvm {
   class DominatorTree;
   class Type;
   class ScalarEvolution;
-  class TargetData;
+  class DataLayout;
   class TargetLibraryInfo;
   class LLVMContext;
   class Loop;
@@ -162,7 +162,6 @@ namespace llvm {
     SCEVCouldNotCompute();
 
     /// Methods for support type inquiry through isa, cast, and dyn_cast:
-    static inline bool classof(const SCEVCouldNotCompute *S) { return true; }
     static bool classof(const SCEV *S);
   };
 
@@ -227,7 +226,7 @@ namespace llvm {
 
     /// TD - The target data information for the target we are targeting.
     ///
-    TargetData *TD;
+    DataLayout *TD;
 
     /// TLI - The target library information for the target we are targeting.
     ///
@@ -874,6 +873,7 @@ namespace llvm {
     virtual void releaseMemory();
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual void print(raw_ostream &OS, const Module* = 0) const;
+    virtual void verifyAnalysis() const;
 
   private:
     FoldingSet<SCEV> UniqueSCEVs;

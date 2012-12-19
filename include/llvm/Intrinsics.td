@@ -271,6 +271,10 @@ let Properties = [IntrReadMem] in {
   def int_exp2 : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
   def int_fabs : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
   def int_floor : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_ceil  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_trunc : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_rint  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_nearbyint : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
 }
 
 let Properties = [IntrNoMem] in {
@@ -285,9 +289,9 @@ let Properties = [IntrNoMem] in {
 
 // NOTE: these are internal interfaces.
 def int_setjmp     : Intrinsic<[llvm_i32_ty],  [llvm_ptr_ty]>;
-def int_longjmp    : Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty]>;
+def int_longjmp    : Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty], [IntrNoReturn]>;
 def int_sigsetjmp  : Intrinsic<[llvm_i32_ty] , [llvm_ptr_ty, llvm_i32_ty]>;
-def int_siglongjmp : Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty]>;
+def int_siglongjmp : Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty], [IntrNoReturn]>;
 
 // Internal interface for object size checking
 def int_objectsize : Intrinsic<[llvm_anyint_ty], [llvm_ptr_ty, llvm_i1_ty],
@@ -345,7 +349,7 @@ let Properties = [IntrNoMem] in {
 }
 def int_eh_sjlj_functioncontext : Intrinsic<[], [llvm_ptr_ty]>;
 def int_eh_sjlj_setjmp          : Intrinsic<[llvm_i32_ty], [llvm_ptr_ty]>;
-def int_eh_sjlj_longjmp         : Intrinsic<[], [llvm_ptr_ty]>;
+def int_eh_sjlj_longjmp         : Intrinsic<[], [llvm_ptr_ty], [IntrNoReturn]>;
 
 //===---------------- Generic Variable Attribute Intrinsics----------------===//
 //
@@ -464,8 +468,8 @@ def int_convertuu  : Intrinsic<[llvm_anyint_ty],
 include "llvm/IntrinsicsPowerPC.td"
 include "llvm/IntrinsicsX86.td"
 include "llvm/IntrinsicsARM.td"
-include "llvm/IntrinsicsCellSPU.td"
 include "llvm/IntrinsicsXCore.td"
 include "llvm/IntrinsicsHexagon.td"
 include "llvm/IntrinsicsNVVM.td"
 include "llvm/IntrinsicsMips.td"
+include "llvm/IntrinsicsR600.td"

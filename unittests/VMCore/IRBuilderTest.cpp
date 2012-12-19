@@ -7,15 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Function.h"
 #include "llvm/IRBuilder.h"
+#include "llvm/ADT/OwningPtr.h"
+#include "llvm/BasicBlock.h"
+#include "llvm/DataLayout.h"
+#include "llvm/Function.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/MDBuilder.h"
 #include "llvm/Module.h"
-#include "llvm/ADT/OwningPtr.h"
-
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -30,6 +30,8 @@ protected:
                                           /*isVarArg=*/false);
     F = Function::Create(FTy, Function::ExternalLinkage, "", M.get());
     BB = BasicBlock::Create(getGlobalContext(), "", F);
+    GV = new GlobalVariable(Type::getFloatTy(getGlobalContext()), true,
+                            GlobalValue::ExternalLinkage);
   }
 
   virtual void TearDown() {
@@ -40,6 +42,7 @@ protected:
   OwningPtr<Module> M;
   Function *F;
   BasicBlock *BB;
+  GlobalVariable *GV;
 };
 
 TEST_F(IRBuilderTest, Lifetime) {
@@ -94,6 +97,81 @@ TEST_F(IRBuilderTest, CreateCondBr) {
   EXPECT_EQ(TBB, TI->getSuccessor(0));
   EXPECT_EQ(FBB, TI->getSuccessor(1));
   EXPECT_EQ(Weights, TI->getMetadata(LLVMContext::MD_prof));
+}
+
+TEST_F(IRBuilderTest, GetIntTy) {
+  IRBuilder<> Builder(BB);
+  IntegerType *Ty1 = Builder.getInt1Ty();
+  EXPECT_EQ(Ty1, IntegerType::get(getGlobalContext(), 1));
+
+  DataLayout* DL = new DataLayout(M.get());
+  IntegerType *IntPtrTy = Builder.getIntPtrTy(DL);
+  unsigned IntPtrBitSize =  DL->getPointerSizeInBits(0);
+  EXPECT_EQ(IntPtrTy, IntegerType::get(getGlobalContext(), IntPtrBitSize));
+}
+
+TEST_F(IRBuilderTest, FastMathFlags) {
+  IRBuilder<> Builder(BB);
+  Value *F;
+  Instruction *FDiv, *FAdd;
+
+  F = Builder.CreateLoad(GV);
+  F = Builder.CreateFAdd(F, F);
+
+  EXPECT_FALSE(Builder.getFastMathFlags().any());
+  ASSERT_TRUE(isa<Instruction>(F));
+  FAdd = cast<Instruction>(F);
+  EXPECT_FALSE(FAdd->hasNoNaNs());
+
+  FastMathFlags FMF;
+  Builder.SetFastMathFlags(FMF);
+
+  F = Builder.CreateFAdd(F, F);
+  EXPECT_FALSE(Builder.getFastMathFlags().any());
+
+  FMF.setUnsafeAlgebra();
+  Builder.SetFastMathFlags(FMF);
+
+  F = Builder.CreateFAdd(F, F);
+  EXPECT_TRUE(Builder.getFastMathFlags().any());
+  ASSERT_TRUE(isa<Instruction>(F));
+  FAdd = cast<Instruction>(F);
+  EXPECT_TRUE(FAdd->hasNoNaNs());
+
+  F = Builder.CreateFDiv(F, F);
+  EXPECT_TRUE(Builder.getFastMathFlags().any());
+  EXPECT_TRUE(Builder.getFastMathFlags().UnsafeAlgebra);
+  ASSERT_TRUE(isa<Instruction>(F));
+  FDiv = cast<Instruction>(F);
+  EXPECT_TRUE(FDiv->hasAllowReciprocal());
+
+  Builder.clearFastMathFlags();
+
+  F = Builder.CreateFDiv(F, F);
+  ASSERT_TRUE(isa<Instruction>(F));
+  FDiv = cast<Instruction>(F);
+  EXPECT_FALSE(FDiv->hasAllowReciprocal());
+
+  FMF.clear();
+  FMF.setAllowReciprocal();
+  Builder.SetFastMathFlags(FMF);
+
+  F = Builder.CreateFDiv(F, F);
+  EXPECT_TRUE(Builder.getFastMathFlags().any());
+  EXPECT_TRUE(Builder.getFastMathFlags().AllowReciprocal);
+  ASSERT_TRUE(isa<Instruction>(F));
+  FDiv = cast<Instruction>(F);
+  EXPECT_TRUE(FDiv->hasAllowReciprocal());
+
+  Builder.clearFastMathFlags();
+
+  F = Builder.CreateFDiv(F, F);
+  ASSERT_TRUE(isa<Instruction>(F));
+  FDiv = cast<Instruction>(F);
+  EXPECT_FALSE(FDiv->getFastMathFlags().any());
+  FDiv->copyFastMathFlags(FAdd);
+  EXPECT_TRUE(FDiv->hasNoNaNs());
+
 }
 
 }

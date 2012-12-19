@@ -170,9 +170,9 @@ openable with the ``dlopen`` function and searchable with the ``dlsym`` function
 (or your operating system's equivalents). While this isn't strictly necessary on
 Linux and a few other platforms, it is required on systems like HP-UX and
 Darwin. You should use ``LOADABLE_MODULE`` for any shared library that you
-intend to be loaded into an tool via the ``-load`` option. See the
-`WritingAnLLVMPass.html <WritingAnLLVMPass.html#makefile>`_ document for an
-example of why you might want to do this.
+intend to be loaded into an tool via the ``-load`` option.  `Pass documentation
+<writing-an-llvm-pass-makefile>`_ has an example of why you might want to do
+this.
 
 Bitcode Modules
 ^^^^^^^^^^^^^^^
@@ -339,7 +339,7 @@ the invocation of ``make check-local`` in the ``test`` directory. The intended
 usage for this is to assist in running specific suites of tests. If
 ``TESTSUITE`` is not set, the implementation of ``check-local`` should run all
 normal tests.  It is up to the project to define what different values for
-``TESTSUTE`` will do. See the `Testing Guide <TestingGuide.html>`_ for further
+``TESTSUTE`` will do. See the :doc:`Testing Guide <TestingGuide>` for further
 details.
 
 ``check-local``

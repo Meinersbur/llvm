@@ -14,8 +14,8 @@
 #ifndef MIPS16INSTRUCTIONINFO_H
 #define MIPS16INSTRUCTIONINFO_H
 
-#include "MipsInstrInfo.h"
 #include "Mips16RegisterInfo.h"
+#include "MipsInstrInfo.h"
 
 namespace llvm {
 
@@ -63,6 +63,10 @@ public:
   virtual bool expandPostRAPseudo(MachineBasicBlock::iterator MI) const;
 
   virtual unsigned GetOppositeBranchOpc(unsigned Opc) const;
+
+  /// Adjust SP by Amount bytes.
+  void adjustStackPtr(unsigned SP, int64_t Amount, MachineBasicBlock &MBB,
+                      MachineBasicBlock::iterator I) const;
 
 private:
   virtual unsigned GetAnalyzableBrOpc(unsigned Opc) const;

@@ -13,8 +13,15 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "function-lowering-info"
-#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
+#include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/CodeGen/Analysis.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/DataLayout.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -22,20 +29,13 @@
 #include "llvm/IntrinsicInst.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
-#include "llvm/CodeGen/Analysis.h"
-#include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineFrameInfo.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/CodeGen/MachineModuleInfo.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetInstrInfo.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -80,9 +80,9 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf) {
     if (const AllocaInst *AI = dyn_cast<AllocaInst>(I))
       if (const ConstantInt *CUI = dyn_cast<ConstantInt>(AI->getArraySize())) {
         Type *Ty = AI->getAllocatedType();
-        uint64_t TySize = TLI.getTargetData()->getTypeAllocSize(Ty);
+        uint64_t TySize = TLI.getDataLayout()->getTypeAllocSize(Ty);
         unsigned Align =
-          std::max((unsigned)TLI.getTargetData()->getPrefTypeAlignment(Ty),
+          std::max((unsigned)TLI.getDataLayout()->getPrefTypeAlignment(Ty),
                    AI->getAlignment());
 
         TySize *= CUI->getZExtValue();   // Get total allocated size.
@@ -208,7 +208,7 @@ void FunctionLoweringInfo::clear() {
 }
 
 /// CreateReg - Allocate a single virtual register for the given type.
-unsigned FunctionLoweringInfo::CreateReg(EVT VT) {
+unsigned FunctionLoweringInfo::CreateReg(MVT VT) {
   return RegInfo->createVirtualRegister(TLI.getRegClassFor(VT));
 }
 
@@ -226,7 +226,7 @@ unsigned FunctionLoweringInfo::CreateRegs(Type *Ty) {
   unsigned FirstReg = 0;
   for (unsigned Value = 0, e = ValueVTs.size(); Value != e; ++Value) {
     EVT ValueVT = ValueVTs[Value];
-    EVT RegisterVT = TLI.getRegisterType(Ty->getContext(), ValueVT);
+    MVT RegisterVT = TLI.getRegisterType(Ty->getContext(), ValueVT).getSimpleVT();
 
     unsigned NumRegs = TLI.getNumRegisters(Ty->getContext(), ValueVT);
     for (unsigned i = 0; i != NumRegs; ++i) {

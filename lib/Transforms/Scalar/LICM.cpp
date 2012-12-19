@@ -32,27 +32,27 @@
 
 #define DEBUG_TYPE "licm"
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Instructions.h"
-#include "llvm/LLVMContext.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Transforms/Utils/SSAUpdater.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetLibraryInfo.h"
+#include "llvm/Constants.h"
+#include "llvm/DataLayout.h"
+#include "llvm/DerivedTypes.h"
+#include "llvm/Instructions.h"
+#include "llvm/IntrinsicInst.h"
+#include "llvm/LLVMContext.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/ADT/Statistic.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetLibraryInfo.h"
+#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/SSAUpdater.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -90,6 +90,8 @@ namespace {
       AU.addRequired<TargetLibraryInfo>();
     }
 
+    using llvm::Pass::doFinalization;
+
     bool doFinalization() {
       assert(LoopToAliasSetMap.empty() && "Didn't free loop alias sets");
       return false;
@@ -100,7 +102,7 @@ namespace {
     LoopInfo      *LI;       // Current LoopInfo
     DominatorTree *DT;       // Dominator Tree for the current Loop.
 
-    TargetData *TD;          // TargetData for constant folding.
+    DataLayout *TD;          // DataLayout for constant folding.
     TargetLibraryInfo *TLI;  // TargetLibraryInfo for constant folding.
 
     // State that is updated as we process loops.
@@ -207,7 +209,7 @@ bool LICM::runOnLoop(Loop *L, LPPassManager &LPM) {
   AA = &getAnalysis<AliasAnalysis>();
   DT = &getAnalysis<DominatorTree>();
 
-  TD = getAnalysisIfAvailable<TargetData>();
+  TD = getAnalysisIfAvailable<DataLayout>();
   TLI = &getAnalysis<TargetLibraryInfo>();
 
   CurAST = new AliasSetTracker(*AA);

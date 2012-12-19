@@ -14,10 +14,10 @@
 #ifndef LLVM_ARGUMENT_H
 #define LLVM_ARGUMENT_H
 
-#include "llvm/Value.h"
-#include "llvm/Attributes.h"
-#include "llvm/ADT/ilist_node.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_node.h"
+#include "llvm/Attributes.h"
+#include "llvm/Value.h"
 
 namespace llvm {
 
@@ -68,8 +68,8 @@ public:
   /// attribute on it in its containing function.
   bool hasNoCaptureAttr() const;
   
-  /// hasSRetAttr - Return true if this argument has the sret attribute on it in
-  /// its containing function.
+  /// hasStructRetAttr - Return true if this argument has the sret attribute on
+  /// it in its containing function.
   bool hasStructRetAttr() const;
 
   /// addAttr - Add a Attribute to an argument
@@ -81,7 +81,6 @@ public:
   /// classof - Methods for support type inquiry through isa, cast, and
   /// dyn_cast:
   ///
-  static inline bool classof(const Argument *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == ArgumentVal;
   }

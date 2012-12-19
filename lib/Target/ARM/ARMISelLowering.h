@@ -17,11 +17,12 @@
 
 #include "ARM.h"
 #include "ARMSubtarget.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/SelectionDAG.h"
-#include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Target/TargetTransformImpl.h"
 #include <vector>
 
 namespace llvm {
@@ -232,7 +233,11 @@ namespace llvm {
       ATOMAND64_DAG,
       ATOMNAND64_DAG,
       ATOMSWAP64_DAG,
-      ATOMCMPXCHG64_DAG
+      ATOMCMPXCHG64_DAG,
+      ATOMMIN64_DAG,
+      ATOMUMIN64_DAG,
+      ATOMMAX64_DAG,
+      ATOMUMAX64_DAG
     };
   }
 
@@ -248,7 +253,7 @@ namespace llvm {
   public:
     explicit ARMTargetLowering(TargetMachine &TM);
 
-    virtual unsigned getJumpTableEncoding(void) const;
+    virtual unsigned getJumpTableEncoding() const;
 
     virtual SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const;
 
@@ -281,14 +286,18 @@ namespace llvm {
     bool isDesirableToTransformToIntegerOp(unsigned Opc, EVT VT) const;
 
     /// allowsUnalignedMemoryAccesses - Returns true if the target allows
-    /// unaligned memory accesses. of the specified type.
-    virtual bool allowsUnalignedMemoryAccesses(EVT VT) const;
+    /// unaligned memory accesses of the specified type. Returns whether it
+    /// is "fast" by reference in the second argument.
+    virtual bool allowsUnalignedMemoryAccesses(EVT VT, bool *Fast) const;
 
     virtual EVT getOptimalMemOpType(uint64_t Size,
                                     unsigned DstAlign, unsigned SrcAlign,
-                                    bool IsZeroVal,
+                                    bool IsMemset, bool ZeroMemset,
                                     bool MemcpyStrSrc,
                                     MachineFunction &MF) const;
+
+    using TargetLowering::isZExtFree;
+    virtual bool isZExtFree(SDValue Val, EVT VT2) const;
 
     /// isLegalAddressingMode - Return true if the addressing mode represented
     /// by AM is legal for this target, for a load/store of the specified type.
@@ -358,7 +367,7 @@ namespace llvm {
 
     /// getRegClassFor - Return the register class that should be used for the
     /// specified value type.
-    virtual const TargetRegisterClass *getRegClassFor(EVT VT) const;
+    virtual const TargetRegisterClass *getRegClassFor(MVT VT) const;
 
     /// getMaximalGlobalOffset - Returns the maximal possible offset which can
     /// be used for loads / stores from the global.
@@ -466,7 +475,11 @@ namespace llvm {
                            SmallVectorImpl<SDValue> &InVals) const;
 
     void VarArgStyleRegisters(CCState &CCInfo, SelectionDAG &DAG,
-                              DebugLoc dl, SDValue &Chain, unsigned ArgOffset)
+                              DebugLoc dl, SDValue &Chain,
+                              const Value *OrigArg,
+                              unsigned OffsetFromOrigArg,
+                              unsigned ArgOffset,
+                              bool ForceMutable = false)
       const;
 
     void computeRegArea(CCState &CCInfo, MachineFunction &MF,
@@ -477,7 +490,7 @@ namespace llvm {
                 SmallVectorImpl<SDValue> &InVals) const;
 
     /// HandleByVal - Target-specific cleanup for ByVal support.
-    virtual void HandleByVal(CCState *, unsigned &) const;
+    virtual void HandleByVal(CCState *, unsigned &, unsigned) const;
 
     /// IsEligibleForTailCallOptimization - Check whether the call is eligible
     /// for tail call optimization. Targets which want to do tail call
@@ -491,6 +504,12 @@ namespace llvm {
                                     const SmallVectorImpl<SDValue> &OutVals,
                                     const SmallVectorImpl<ISD::InputArg> &Ins,
                                            SelectionDAG& DAG) const;
+
+    virtual bool CanLowerReturn(CallingConv::ID CallConv,
+                                MachineFunction &MF, bool isVarArg,
+                                const SmallVectorImpl<ISD::OutputArg> &Outs,
+                                LLVMContext &Context) const;
+
     virtual SDValue
       LowerReturn(SDValue Chain,
                   CallingConv::ID CallConv, bool isVarArg,
@@ -522,7 +541,9 @@ namespace llvm {
                                           unsigned Op1,
                                           unsigned Op2,
                                           bool NeedsCarry = false,
-                                          bool IsCmpxchg = false) const;
+                                          bool IsCmpxchg = false,
+                                          bool IsMinMax = false,
+                                          ARMCC::CondCodes CC = ARMCC::AL) const;
     MachineBasicBlock * EmitAtomicBinaryMinMax(MachineInstr *MI,
                                                MachineBasicBlock *BB,
                                                unsigned Size,
@@ -553,6 +574,16 @@ namespace llvm {
     FastISel *createFastISel(FunctionLoweringInfo &funcInfo,
                              const TargetLibraryInfo *libInfo);
   }
+
+  class ARMScalarTargetTransformImpl : public ScalarTargetTransformImpl {
+    const ARMSubtarget *Subtarget;
+  public:
+    explicit ARMScalarTargetTransformImpl(const TargetLowering *TL) :
+      ScalarTargetTransformImpl(TL),
+      Subtarget(&TL->getTargetMachine().getSubtarget<ARMSubtarget>()) {};
+
+    virtual unsigned getIntImmCost(const APInt &Imm, Type *Ty) const;
+  };
 }
 
 #endif  // ARMISELLOWERING_H

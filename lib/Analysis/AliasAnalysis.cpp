@@ -28,15 +28,15 @@
 #include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Pass.h"
 #include "llvm/BasicBlock.h"
+#include "llvm/DataLayout.h"
 #include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
 #include "llvm/Instructions.h"
+#include "llvm/IntrinsicInst.h"
 #include "llvm/LLVMContext.h"
-#include "llvm/Type.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/Pass.h"
 #include "llvm/Target/TargetLibraryInfo.h"
+#include "llvm/Type.h"
 using namespace llvm;
 
 // Register the AliasAnalysis interface, providing a nice name to refer to.
@@ -452,7 +452,7 @@ AliasAnalysis::~AliasAnalysis() {}
 /// AliasAnalysis interface before any other methods are called.
 ///
 void AliasAnalysis::InitializeAliasAnalysis(Pass *P) {
-  TD = P->getAnalysisIfAvailable<TargetData>();
+  TD = P->getAnalysisIfAvailable<DataLayout>();
   TLI = P->getAnalysisIfAvailable<TargetLibraryInfo>();
   AA = &P->getAnalysis<AliasAnalysis>();
 }
@@ -463,7 +463,7 @@ void AliasAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AliasAnalysis>();         // All AA's chain
 }
 
-/// getTypeStoreSize - Return the TargetData store size for the given type,
+/// getTypeStoreSize - Return the DataLayout store size for the given type,
 /// if known, or a conservative value otherwise.
 ///
 uint64_t AliasAnalysis::getTypeStoreSize(Type *Ty) {
@@ -503,7 +503,7 @@ bool AliasAnalysis::canInstructionRangeModify(const Instruction &I1,
 bool llvm::isNoAliasCall(const Value *V) {
   if (isa<CallInst>(V) || isa<InvokeInst>(V))
     return ImmutableCallSite(cast<Instruction>(V))
-      .paramHasAttr(0, Attribute::NoAlias);
+      .paramHasAttr(0, Attributes::NoAlias);
   return false;
 }
 

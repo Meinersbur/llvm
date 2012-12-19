@@ -14,9 +14,9 @@
 #ifndef LLVM_VALUE_H
 #define LLVM_VALUE_H
 
-#include "llvm/Use.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Use.h"
 
 namespace llvm {
 
@@ -257,11 +257,6 @@ public:
   /// hasValueHandle - Return true if there is a value handle associated with
   /// this value.
   bool hasValueHandle() const { return HasValueHandle; }
-  
-  // Methods for support type inquiry through isa, cast, and dyn_cast:
-  static inline bool classof(const Value *) {
-    return true; // Values are always values.
-  }
 
   /// stripPointerCasts - This method strips off any unneeded pointer casts and
   /// all-zero GEPs from the specified value, returning the original uncasted

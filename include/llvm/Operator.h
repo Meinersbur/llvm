@@ -16,8 +16,11 @@
 #define LLVM_OPERATOR_H
 
 #include "llvm/Constants.h"
+#include "llvm/DataLayout.h"
+#include "llvm/DerivedTypes.h"
 #include "llvm/Instruction.h"
 #include "llvm/Type.h"
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 
 namespace llvm {
 
@@ -35,8 +38,11 @@ private:
   void *operator new(size_t, unsigned) LLVM_DELETED_FUNCTION;
   void *operator new(size_t s) LLVM_DELETED_FUNCTION;
   Operator() LLVM_DELETED_FUNCTION;
-  // NOTE: cannot use LLVM_DELETED_FUNCTION because gcc errors when deleting
-  // an override of a non-deleted function.
+
+protected:
+  // NOTE: Cannot use LLVM_DELETED_FUNCTION because it's not legal to delete
+  // an overridden method that's not deleted in the base class. Cannot leave
+  // this unimplemented because that leads to an ODR-violation.
   ~Operator();
 
 public:
@@ -59,7 +65,6 @@ public:
     return Instruction::UserOp1;
   }
 
-  static inline bool classof(const Operator *) { return true; }
   static inline bool classof(const Instruction *) { return true; }
   static inline bool classof(const ConstantExpr *) { return true; }
   static inline bool classof(const Value *V) {
@@ -79,8 +84,6 @@ public:
   };
 
 private:
-  ~OverflowingBinaryOperator(); // DO NOT IMPLEMENT
-
   friend class BinaryOperator;
   friend class ConstantExpr;
   void setHasNoUnsignedWrap(bool B) {
@@ -105,7 +108,6 @@ public:
     return (SubclassOptionalData & NoSignedWrap) != 0;
   }
 
-  static inline bool classof(const OverflowingBinaryOperator *) { return true; }
   static inline bool classof(const Instruction *I) {
     return I->getOpcode() == Instruction::Add ||
            I->getOpcode() == Instruction::Sub ||
@@ -131,23 +133,21 @@ public:
   enum {
     IsExact = (1 << 0)
   };
-  
-private:
-  ~PossiblyExactOperator(); // DO NOT IMPLEMENT
 
+private:
   friend class BinaryOperator;
   friend class ConstantExpr;
   void setIsExact(bool B) {
     SubclassOptionalData = (SubclassOptionalData & ~IsExact) | (B * IsExact);
   }
-  
+
 public:
   /// isExact - Test whether this division is known to be exact, with
   /// zero remainder.
   bool isExact() const {
     return SubclassOptionalData & IsExact;
   }
-  
+
   static bool isPossiblyExactOpcode(unsigned OpC) {
     return OpC == Instruction::SDiv ||
            OpC == Instruction::UDiv ||
@@ -166,20 +166,139 @@ public:
   }
 };
 
+/// Convenience struct for specifying and reasoning about fast-math flags.
+class FastMathFlags {
+private:
+  friend class FPMathOperator;
+  unsigned Flags;
+  FastMathFlags(unsigned F) : Flags(F) { }
+
+public:
+  enum {
+    UnsafeAlgebra   = (1 << 0),
+    NoNaNs          = (1 << 1),
+    NoInfs          = (1 << 2),
+    NoSignedZeros   = (1 << 3),
+    AllowReciprocal = (1 << 4)
+  };
+
+  FastMathFlags() : Flags(0)
+  { }
+
+  /// Whether any flag is set
+  bool any() { return Flags != 0; }
+
+  /// Set all the flags to false
+  void clear() { Flags = 0; }
+
+  /// Flag queries
+  bool noNaNs()          { return 0 != (Flags & NoNaNs); }
+  bool noInfs()          { return 0 != (Flags & NoInfs); }
+  bool noSignedZeros()   { return 0 != (Flags & NoSignedZeros); }
+  bool allowReciprocal() { return 0 != (Flags & AllowReciprocal); }
+  bool unsafeAlgebra()   { return 0 != (Flags & UnsafeAlgebra); }
+
+  /// Flag setters
+  void setNoNaNs()          { Flags |= NoNaNs; }
+  void setNoInfs()          { Flags |= NoInfs; }
+  void setNoSignedZeros()   { Flags |= NoSignedZeros; }
+  void setAllowReciprocal() { Flags |= AllowReciprocal; }
+  void setUnsafeAlgebra() {
+    Flags |= UnsafeAlgebra;
+    setNoNaNs();
+    setNoInfs();
+    setNoSignedZeros();
+    setAllowReciprocal();
+  }
+};
+
+
 /// FPMathOperator - Utility class for floating point operations which can have
 /// information about relaxed accuracy requirements attached to them.
 class FPMathOperator : public Operator {
 private:
-  ~FPMathOperator(); // DO NOT IMPLEMENT
+  friend class Instruction;
+
+  void setHasUnsafeAlgebra(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~FastMathFlags::UnsafeAlgebra) |
+      (B * FastMathFlags::UnsafeAlgebra);
+
+    // Unsafe algebra implies all the others
+    if (B) {
+      setHasNoNaNs(true);
+      setHasNoInfs(true);
+      setHasNoSignedZeros(true);
+      setHasAllowReciprocal(true);
+    }
+  }
+  void setHasNoNaNs(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~FastMathFlags::NoNaNs) |
+      (B * FastMathFlags::NoNaNs);
+  }
+  void setHasNoInfs(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~FastMathFlags::NoInfs) |
+      (B * FastMathFlags::NoInfs);
+  }
+  void setHasNoSignedZeros(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~FastMathFlags::NoSignedZeros) |
+      (B * FastMathFlags::NoSignedZeros);
+  }
+  void setHasAllowReciprocal(bool B) {
+    SubclassOptionalData =
+      (SubclassOptionalData & ~FastMathFlags::AllowReciprocal) |
+      (B * FastMathFlags::AllowReciprocal);
+  }
+
+  /// Convenience function for setting all the fast-math flags
+  void setFastMathFlags(FastMathFlags FMF) {
+    SubclassOptionalData |= FMF.Flags;
+  }
 
 public:
+  /// Test whether this operation is permitted to be
+  /// algebraically transformed, aka the 'A' fast-math property.
+  bool hasUnsafeAlgebra() const {
+    return (SubclassOptionalData & FastMathFlags::UnsafeAlgebra) != 0;
+  }
+
+  /// Test whether this operation's arguments and results are to be
+  /// treated as non-NaN, aka the 'N' fast-math property.
+  bool hasNoNaNs() const {
+    return (SubclassOptionalData & FastMathFlags::NoNaNs) != 0;
+  }
+
+  /// Test whether this operation's arguments and results are to be
+  /// treated as NoN-Inf, aka the 'I' fast-math property.
+  bool hasNoInfs() const {
+    return (SubclassOptionalData & FastMathFlags::NoInfs) != 0;
+  }
+
+  /// Test whether this operation can treat the sign of zero
+  /// as insignificant, aka the 'S' fast-math property.
+  bool hasNoSignedZeros() const {
+    return (SubclassOptionalData & FastMathFlags::NoSignedZeros) != 0;
+  }
+
+  /// Test whether this operation is permitted to use
+  /// reciprocal instead of division, aka the 'R' fast-math property.
+  bool hasAllowReciprocal() const {
+    return (SubclassOptionalData & FastMathFlags::AllowReciprocal) != 0;
+  }
+
+  /// Convenience function for getting all the fast-math flags
+  FastMathFlags getFastMathFlags() const {
+    return FastMathFlags(SubclassOptionalData);
+  }
 
   /// \brief Get the maximum error permitted by this operation in ULPs.  An
   /// accuracy of 0.0 means that the operation should be performed with the
   /// default precision.
   float getFPAccuracy() const;
 
-  static inline bool classof(const FPMathOperator *) { return true; }
   static inline bool classof(const Instruction *I) {
     return I->getType()->isFPOrFPVectorTy();
   }
@@ -188,16 +307,12 @@ public:
   }
 };
 
-  
+
 /// ConcreteOperator - A helper template for defining operators for individual
 /// opcodes.
 template<typename SuperClass, unsigned Opc>
 class ConcreteOperator : public SuperClass {
-  ~ConcreteOperator() LLVM_DELETED_FUNCTION;
 public:
-  static inline bool classof(const ConcreteOperator<SuperClass, Opc> *) {
-    return true;
-  }
   static inline bool classof(const Instruction *I) {
     return I->getOpcode() == Opc;
   }
@@ -212,45 +327,35 @@ public:
 
 class AddOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Add> {
-  ~AddOperator() LLVM_DELETED_FUNCTION;
 };
 class SubOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Sub> {
-  ~SubOperator() LLVM_DELETED_FUNCTION;
 };
 class MulOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Mul> {
-  ~MulOperator() LLVM_DELETED_FUNCTION;
 };
 class ShlOperator
   : public ConcreteOperator<OverflowingBinaryOperator, Instruction::Shl> {
-  ~ShlOperator() LLVM_DELETED_FUNCTION;
 };
 
-  
+
 class SDivOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::SDiv> {
-  ~SDivOperator() LLVM_DELETED_FUNCTION;
 };
 class UDivOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::UDiv> {
-  ~UDivOperator() LLVM_DELETED_FUNCTION;
 };
 class AShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::AShr> {
-  ~AShrOperator() LLVM_DELETED_FUNCTION;
 };
 class LShrOperator
   : public ConcreteOperator<PossiblyExactOperator, Instruction::LShr> {
-  ~LShrOperator() LLVM_DELETED_FUNCTION;
 };
-  
-  
-  
+
+
+
 class GEPOperator
   : public ConcreteOperator<Operator, Instruction::GetElementPtr> {
-  ~GEPOperator() LLVM_DELETED_FUNCTION;
-
   enum {
     IsInBounds = (1 << 0)
   };
@@ -290,6 +395,12 @@ public:
     return getPointerOperand()->getType();
   }
 
+  /// getPointerAddressSpace - Method to return the address space of the
+  /// pointer operand.
+  unsigned getPointerAddressSpace() const {
+    return cast<PointerType>(getPointerOperandType())->getAddressSpace();
+  }
+
   unsigned getNumIndices() const {  // Note: always non-negative
     return getNumOperands() - 1;
   }
@@ -321,6 +432,45 @@ public:
     }
     return true;
   }
+
+  /// \brief Accumulate the constant address offset of this GEP if possible.
+  ///
+  /// This routine accepts an APInt into which it will accumulate the constant
+  /// offset of this GEP if the GEP is in fact constant. If the GEP is not
+  /// all-constant, it returns false and the value of the offset APInt is
+  /// undefined (it is *not* preserved!). The APInt passed into this routine
+  /// must be at least as wide as the IntPtr type for the address space of
+  /// the base GEP pointer.
+  bool accumulateConstantOffset(const DataLayout &DL, APInt &Offset) const {
+    assert(Offset.getBitWidth() ==
+           DL.getPointerSizeInBits(getPointerAddressSpace()) &&
+           "The offset must have exactly as many bits as our pointer.");
+
+    for (gep_type_iterator GTI = gep_type_begin(this), GTE = gep_type_end(this);
+         GTI != GTE; ++GTI) {
+      ConstantInt *OpC = dyn_cast<ConstantInt>(GTI.getOperand());
+      if (!OpC)
+        return false;
+      if (OpC->isZero())
+        continue;
+
+      // Handle a struct index, which adds its field offset to the pointer.
+      if (StructType *STy = dyn_cast<StructType>(*GTI)) {
+        unsigned ElementIdx = OpC->getZExtValue();
+        const StructLayout *SL = DL.getStructLayout(STy);
+        Offset += APInt(Offset.getBitWidth(),
+                        SL->getElementOffset(ElementIdx));
+        continue;
+      }
+
+      // For array or vector indices, scale the index by the size of the type.
+      APInt Index = OpC->getValue().sextOrTrunc(Offset.getBitWidth());
+      Offset += Index * APInt(Offset.getBitWidth(),
+                              DL.getTypeAllocSize(GTI.getIndexedType()));
+    }
+    return true;
+  }
+
 };
 
 } // End llvm namespace

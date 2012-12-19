@@ -15,29 +15,29 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Assembly/Writer.h"
-#include "llvm/Assembly/PrintModulePass.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Assembly/AssemblyAnnotationWriter.h"
-#include "llvm/LLVMContext.h"
+#include "llvm/Assembly/PrintModulePass.h"
 #include "llvm/CallingConv.h"
 #include "llvm/Constants.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/InlineAsm.h"
 #include "llvm/IntrinsicInst.h"
-#include "llvm/Operator.h"
+#include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
-#include "llvm/TypeFinder.h"
-#include "llvm/ValueSymbolTable.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/STLExtras.h"
+#include "llvm/Operator.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/FormattedStream.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/TypeFinder.h"
+#include "llvm/ValueSymbolTable.h"
 #include <algorithm>
 #include <cctype>
 using namespace llvm;
@@ -74,6 +74,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out)
     case CallingConv::X86_StdCall:  Out << "x86_stdcallcc"; break;
     case CallingConv::X86_FastCall: Out << "x86_fastcallcc"; break;
     case CallingConv::X86_ThisCall: Out << "x86_thiscallcc"; break;
+    case CallingConv::Intel_OCL_BI: Out << "intel_ocl_bicc"; break;
     case CallingConv::ARM_APCS:     Out << "arm_apcscc"; break;
     case CallingConv::ARM_AAPCS:    Out << "arm_aapcscc"; break;
     case CallingConv::ARM_AAPCS_VFP:Out << "arm_aapcs_vfpcc"; break;
@@ -83,7 +84,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out)
     default:                        Out << "cc" << cc; break;
   }
 }
- 
+
 // PrintEscapedString - Print each character of the specified string, escaping
 // it if it is not printable or if it is an escape char.
 static void PrintEscapedString(StringRef Name, raw_ostream &Out) {
@@ -702,6 +703,22 @@ static void writeAtomicRMWOperation(raw_ostream &Out,
 }
 
 static void WriteOptimizationInfo(raw_ostream &Out, const User *U) {
+  if (const FPMathOperator *FPO = dyn_cast<const FPMathOperator>(U)) {
+    // Unsafe algebra implies all the others, no need to write them all out
+    if (FPO->hasUnsafeAlgebra())
+      Out << " fast";
+    else {
+      if (FPO->hasNoNaNs())
+        Out << " nnan";
+      if (FPO->hasNoInfs())
+        Out << " ninf";
+      if (FPO->hasNoSignedZeros())
+        Out << " nsz";
+      if (FPO->hasAllowReciprocal())
+        Out << " arcp";
+    }
+  }
+
   if (const OverflowingBinaryOperator *OBO =
         dyn_cast<OverflowingBinaryOperator>(U)) {
     if (OBO->hasNoUnsignedWrap())
@@ -877,7 +894,7 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
     Out << ']';
     return;
   }
-  
+
   if (const ConstantDataArray *CA = dyn_cast<ConstantDataArray>(CV)) {
     // As a special case, print the array as a string if it is an array of
     // i8 with ConstantInt values.
@@ -1243,7 +1260,7 @@ void AssemblyWriter::writeParamOperand(const Value *Operand,
   // Print the type
   TypePrinter.print(Operand->getType(), Out);
   // Print parameter attributes list
-  if (Attrs != Attribute::None)
+  if (Attrs.hasAttributes())
     Out << ' ' << Attrs.getAsString();
   Out << ' ';
   // Print the operand
@@ -1284,21 +1301,6 @@ void AssemblyWriter::printModule(const Module *M) {
       PrintEscapedString(rest, Out);
       Out << "\"\n";
     }
-  }
-
-  // Loop over the dependent libraries and emit them.
-  Module::lib_iterator LI = M->lib_begin();
-  Module::lib_iterator LE = M->lib_end();
-  if (LI != LE) {
-    Out << '\n';
-    Out << "deplibs = [ ";
-    while (LI != LE) {
-      Out << '"' << *LI << '"';
-      ++LI;
-      if (LI != LE)
-        Out << ", ";
-    }
-    Out << " ]";
   }
 
   printTypeIdentities();
@@ -1554,9 +1556,9 @@ void AssemblyWriter::printFunction(const Function *F) {
   }
 
   FunctionType *FT = F->getFunctionType();
-  const AttrListPtr &Attrs = F->getAttributes();
+  const AttributeSet &Attrs = F->getAttributes();
   Attributes RetAttrs = Attrs.getRetAttributes();
-  if (RetAttrs != Attribute::None)
+  if (RetAttrs.hasAttributes())
     Out <<  Attrs.getRetAttributes().getAsString() << ' ';
   TypePrinter.print(F->getReturnType(), Out);
   Out << ' ';
@@ -1586,7 +1588,7 @@ void AssemblyWriter::printFunction(const Function *F) {
       TypePrinter.print(FT->getParamType(i), Out);
 
       Attributes ArgAttrs = Attrs.getParamAttributes(i+1);
-      if (ArgAttrs != Attribute::None)
+      if (ArgAttrs.hasAttributes())
         Out << ' ' << ArgAttrs.getAsString();
     }
   }
@@ -1600,7 +1602,7 @@ void AssemblyWriter::printFunction(const Function *F) {
   if (F->hasUnnamedAddr())
     Out << " unnamed_addr";
   Attributes FnAttrs = Attrs.getFnAttributes();
-  if (FnAttrs != Attribute::None)
+  if (FnAttrs.hasAttributes())
     Out << ' ' << Attrs.getFnAttributes().getAsString();
   if (F->hasSection()) {
     Out << " section \"";
@@ -1634,7 +1636,7 @@ void AssemblyWriter::printArgument(const Argument *Arg,
   TypePrinter.print(Arg->getType(), Out);
 
   // Output parameter attributes list
-  if (Attrs != Attribute::None)
+  if (Attrs.hasAttributes())
     Out << ' ' << Attrs.getAsString();
 
   // Output name, if available...
@@ -1847,9 +1849,9 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     PointerType *PTy = cast<PointerType>(Operand->getType());
     FunctionType *FTy = cast<FunctionType>(PTy->getElementType());
     Type *RetTy = FTy->getReturnType();
-    const AttrListPtr &PAL = CI->getAttributes();
+    const AttributeSet &PAL = CI->getAttributes();
 
-    if (PAL.getRetAttributes() != Attribute::None)
+    if (PAL.getRetAttributes().hasAttributes())
       Out << ' ' << PAL.getRetAttributes().getAsString();
 
     // If possible, print out the short form of the call instruction.  We can
@@ -1873,14 +1875,14 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       writeParamOperand(CI->getArgOperand(op), PAL.getParamAttributes(op + 1));
     }
     Out << ')';
-    if (PAL.getFnAttributes() != Attribute::None)
+    if (PAL.getFnAttributes().hasAttributes())
       Out << ' ' << PAL.getFnAttributes().getAsString();
   } else if (const InvokeInst *II = dyn_cast<InvokeInst>(&I)) {
     Operand = II->getCalledValue();
     PointerType *PTy = cast<PointerType>(Operand->getType());
     FunctionType *FTy = cast<FunctionType>(PTy->getElementType());
     Type *RetTy = FTy->getReturnType();
-    const AttrListPtr &PAL = II->getAttributes();
+    const AttributeSet &PAL = II->getAttributes();
 
     // Print the calling convention being used.
     if (II->getCallingConv() != CallingConv::C) {
@@ -1888,7 +1890,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       PrintCallingConv(II->getCallingConv(), Out);
     }
 
-    if (PAL.getRetAttributes() != Attribute::None)
+    if (PAL.getRetAttributes().hasAttributes())
       Out << ' ' << PAL.getRetAttributes().getAsString();
 
     // If possible, print out the short form of the invoke instruction. We can
@@ -1913,7 +1915,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     }
 
     Out << ')';
-    if (PAL.getFnAttributes() != Attribute::None)
+    if (PAL.getFnAttributes().hasAttributes())
       Out << ' ' << PAL.getFnAttributes().getAsString();
 
     Out << "\n          to ";

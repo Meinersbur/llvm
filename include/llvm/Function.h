@@ -18,11 +18,11 @@
 #ifndef LLVM_FUNCTION_H
 #define LLVM_FUNCTION_H
 
-#include "llvm/GlobalValue.h"
-#include "llvm/CallingConv.h"
-#include "llvm/BasicBlock.h"
 #include "llvm/Argument.h"
 #include "llvm/Attributes.h"
+#include "llvm/BasicBlock.h"
+#include "llvm/CallingConv.h"
+#include "llvm/GlobalValue.h"
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
@@ -85,11 +85,11 @@ private:
   BasicBlockListType  BasicBlocks;        ///< The basic blocks
   mutable ArgumentListType ArgumentList;  ///< The formal arguments
   ValueSymbolTable *SymTab;               ///< Symbol table of args/instructions
-  AttrListPtr AttributeList;              ///< Parameter attributes
+  AttributeSet AttributeList;              ///< Parameter attributes
 
   // HasLazyArguments is stored in Value::SubclassData.
   /*bool HasLazyArguments;*/
-                   
+
   // The Calling Convention is stored in Value::SubclassData.
   /*CallingConv::ID CallingConvention;*/
 
@@ -131,7 +131,7 @@ public:
   Type *getReturnType() const;           // Return the type of the ret val
   FunctionType *getFunctionType() const; // Return the FunctionType for me
 
-  /// getContext - Return a pointer to the LLVMContext associated with this 
+  /// getContext - Return a pointer to the LLVMContext associated with this
   /// function, or NULL if this function is not bound to a context yet.
   LLVMContext &getContext() const;
 
@@ -159,14 +159,14 @@ public:
     setValueSubclassData((getSubclassDataFromValue() & 1) |
                          (static_cast<unsigned>(CC) << 1));
   }
-  
+
   /// getAttributes - Return the attribute list for this Function.
   ///
-  const AttrListPtr &getAttributes() const { return AttributeList; }
+  const AttributeSet &getAttributes() const { return AttributeList; }
 
   /// setAttributes - Set the attribute list for this Function.
   ///
-  void setAttributes(const AttrListPtr &attrs) { AttributeList = attrs; }
+  void setAttributes(const AttributeSet &attrs) { AttributeList = attrs; }
 
   /// getFnAttributes - Return the function attributes for querying.
   ///
@@ -176,15 +176,15 @@ public:
 
   /// addFnAttr - Add function attributes to this function.
   ///
-  void addFnAttr(Attributes N) { 
-    // Function Attributes are stored at ~0 index 
-    addAttribute(~0U, N);
+  void addFnAttr(Attributes::AttrVal N) {
+    // Function Attributes are stored at ~0 index
+    addAttribute(AttributeSet::FunctionIndex, Attributes::get(getContext(), N));
   }
 
   /// removeFnAttr - Remove function attributes from this function.
   ///
   void removeFnAttr(Attributes N) {
-    // Function Attributes are stored at ~0 index 
+    // Function Attributes are stored at ~0 index
     removeAttribute(~0U, N);
   }
 
@@ -195,19 +195,20 @@ public:
   void setGC(const char *Str);
   void clearGC();
 
+
+  /// getRetAttributes - Return the return attributes for querying.
+  Attributes getRetAttributes() const {
+    return AttributeList.getRetAttributes();
+  }
+
   /// getParamAttributes - Return the parameter attributes for querying.
   Attributes getParamAttributes(unsigned Idx) const {
     return AttributeList.getParamAttributes(Idx);
   }
 
-  /// @brief Determine whether the function has the given attribute.
-  bool paramHasAttr(unsigned i, Attributes attr) const {
-    return AttributeList.paramHasAttr(i, attr);
-  }
-
   /// addAttribute - adds the attribute to the list of attributes.
   void addAttribute(unsigned i, Attributes attr);
-  
+
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attributes attr);
 
@@ -218,50 +219,44 @@ public:
 
   /// @brief Determine if the function does not access memory.
   bool doesNotAccessMemory() const {
-    return getFnAttributes().hasReadNoneAttr();
+    return getFnAttributes().hasAttribute(Attributes::ReadNone);
   }
-  void setDoesNotAccessMemory(bool DoesNotAccessMemory = true) {
-    if (DoesNotAccessMemory) addFnAttr(Attribute::ReadNone);
-    else removeFnAttr(Attribute::ReadNone);
+  void setDoesNotAccessMemory() {
+    addFnAttr(Attributes::ReadNone);
   }
 
   /// @brief Determine if the function does not access or only reads memory.
   bool onlyReadsMemory() const {
-    return doesNotAccessMemory() || getFnAttributes().hasReadOnlyAttr();
+    return doesNotAccessMemory() ||
+      getFnAttributes().hasAttribute(Attributes::ReadOnly);
   }
-  void setOnlyReadsMemory(bool OnlyReadsMemory = true) {
-    if (OnlyReadsMemory) addFnAttr(Attribute::ReadOnly);
-    else removeFnAttr(Attribute::ReadOnly | Attribute::ReadNone);
+  void setOnlyReadsMemory() {
+    addFnAttr(Attributes::ReadOnly);
   }
 
   /// @brief Determine if the function cannot return.
   bool doesNotReturn() const {
-    return getFnAttributes().hasNoReturnAttr();
+    return getFnAttributes().hasAttribute(Attributes::NoReturn);
   }
-  void setDoesNotReturn(bool DoesNotReturn = true) {
-    if (DoesNotReturn) addFnAttr(Attribute::NoReturn);
-    else removeFnAttr(Attribute::NoReturn);
+  void setDoesNotReturn() {
+    addFnAttr(Attributes::NoReturn);
   }
 
   /// @brief Determine if the function cannot unwind.
   bool doesNotThrow() const {
-    return getFnAttributes().hasNoUnwindAttr();
+    return getFnAttributes().hasAttribute(Attributes::NoUnwind);
   }
-  void setDoesNotThrow(bool DoesNotThrow = true) {
-    if (DoesNotThrow) addFnAttr(Attribute::NoUnwind);
-    else removeFnAttr(Attribute::NoUnwind);
+  void setDoesNotThrow() {
+    addFnAttr(Attributes::NoUnwind);
   }
 
   /// @brief True if the ABI mandates (or the user requested) that this
   /// function be in a unwind table.
   bool hasUWTable() const {
-    return getFnAttributes().hasUWTableAttr();
+    return getFnAttributes().hasAttribute(Attributes::UWTable);
   }
-  void setHasUWTable(bool HasUWTable = true) {
-    if (HasUWTable)
-      addFnAttr(Attribute::UWTable);
-    else
-      removeFnAttr(Attribute::UWTable);
+  void setHasUWTable() {
+    addFnAttr(Attributes::UWTable);
   }
 
   /// @brief True if this function needs an unwind table.
@@ -269,31 +264,28 @@ public:
     return hasUWTable() || !doesNotThrow();
   }
 
-  /// @brief Determine if the function returns a structure through first 
+  /// @brief Determine if the function returns a structure through first
   /// pointer argument.
   bool hasStructRetAttr() const {
-    return getParamAttributes(1).hasStructRetAttr();
+    return getParamAttributes(1).hasAttribute(Attributes::StructRet);
   }
 
   /// @brief Determine if the parameter does not alias other parameters.
   /// @param n The parameter to check. 1 is the first parameter, 0 is the return
   bool doesNotAlias(unsigned n) const {
-    return n != 0 ? getParamAttributes(n).hasNoAliasAttr() :
-      AttributeList.getRetAttributes().hasNoAliasAttr();
+    return getParamAttributes(n).hasAttribute(Attributes::NoAlias);
   }
-  void setDoesNotAlias(unsigned n, bool DoesNotAlias = true) {
-    if (DoesNotAlias) addAttribute(n, Attribute::NoAlias);
-    else removeAttribute(n, Attribute::NoAlias);
+  void setDoesNotAlias(unsigned n) {
+    addAttribute(n, Attributes::get(getContext(), Attributes::NoAlias));
   }
 
   /// @brief Determine if the parameter can be captured.
   /// @param n The parameter to check. 1 is the first parameter, 0 is the return
   bool doesNotCapture(unsigned n) const {
-    return getParamAttributes(n).hasNoCaptureAttr();
+    return getParamAttributes(n).hasAttribute(Attributes::NoCapture);
   }
-  void setDoesNotCapture(unsigned n, bool DoesNotCapture = true) {
-    if (DoesNotCapture) addAttribute(n, Attribute::NoCapture);
-    else removeAttribute(n, Attribute::NoCapture);
+  void setDoesNotCapture(unsigned n) {
+    addAttribute(n, Attributes::get(getContext(), Attributes::NoCapture));
   }
 
   /// copyAttributesFrom - copy all additional attributes (those not needed to
@@ -406,7 +398,6 @@ public:
   void viewCFGOnly() const;
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast:
-  static inline bool classof(const Function *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == Value::FunctionVal;
   }

@@ -15,9 +15,9 @@
 #ifndef LLVM_ANALYSIS_DIBUILDER_H
 #define LLVM_ANALYSIS_DIBUILDER_H
 
-#include "llvm/Support/DataTypes.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/DataTypes.h"
 
 namespace llvm {
   class BasicBlock;
@@ -331,12 +331,10 @@ namespace llvm {
     /// @param SizeInBits   Member size.
     /// @param AlignInBits  Member alignment.
     /// @param Elements     Enumeration elements.
-    /// @param Flags        Flags (e.g. forward decl)
     DIType createEnumerationType(DIDescriptor Scope, StringRef Name, 
                                  DIFile File, unsigned LineNumber, 
                                  uint64_t SizeInBits, uint64_t AlignInBits,
-                                 DIArray Elements, DIType ClassType,
-                                 unsigned Flags);
+                                 DIArray Elements, DIType ClassType);
 
     /// createSubroutineType - Create subroutine type.
     /// @param File           File in which this subroutine is defined.
@@ -357,7 +355,8 @@ namespace llvm {
 
     /// createForwardDecl - Create a temporary forward-declared type.
     DIType createForwardDecl(unsigned Tag, StringRef Name, DIDescriptor Scope,
-                             DIFile F, unsigned Line, unsigned RuntimeLang = 0);
+                             DIFile F, unsigned Line, unsigned RuntimeLang = 0,
+                             uint64_t SizeInBits = 0, uint64_t AlignInBits = 0);
 
     /// retainType - Retain DIType in a module even if it is not referenced 
     /// through debug info anchors.
@@ -372,7 +371,7 @@ namespace llvm {
 
     /// getOrCreateSubrange - Create a descriptor for a value range.  This
     /// implicitly uniques the values returned.
-    DISubrange getOrCreateSubrange(int64_t Lo, int64_t Hi);
+    DISubrange getOrCreateSubrange(int64_t Lo, int64_t Count);
 
     /// createGlobalVariable - Create a new descriptor for the specified global.
     /// @param Name        Name of the variable.

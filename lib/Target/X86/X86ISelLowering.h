@@ -15,14 +15,15 @@
 #ifndef X86ISELLOWERING_H
 #define X86ISELLOWERING_H
 
-#include "X86Subtarget.h"
-#include "X86RegisterInfo.h"
 #include "X86MachineFunctionInfo.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetOptions.h"
+#include "X86RegisterInfo.h"
+#include "X86Subtarget.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/SelectionDAG.h"
-#include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/Target/TargetTransformImpl.h"
 
 namespace llvm {
   namespace X86ISD {
@@ -142,6 +143,10 @@ namespace llvm {
       /// mnemonic, so do I; blame Intel.
       MOVDQ2Q,
 
+      /// MMX_MOVD2W - Copies a 32-bit value from the low word of a MMX
+      /// vector to a GPR.
+      MMX_MOVD2W,
+
       /// PEXTRB - Extract an 8-bit value from a vector and zero extend it to
       /// i32, corresponds to X86::PEXTRB.
       PEXTRB,
@@ -171,13 +176,14 @@ namespace llvm {
       /// PSIGN - Copy integer sign.
       PSIGN,
 
-      /// BLENDV - Blend where the selector is an XMM.
+      /// BLENDV - Blend where the selector is a register.
       BLENDV,
 
-      /// BLENDxx - Blend where the selector is an immediate.
-      BLENDPW,
-      BLENDPS,
-      BLENDPD,
+      /// BLENDI - Blend where the selector is an immediate.
+      BLENDI,
+
+      // SUBUS - Integer sub with unsigned saturation.
+      SUBUS,
 
       /// HADD - Integer horizontal add.
       HADD,
@@ -217,6 +223,12 @@ namespace llvm {
       // EH_RETURN - Exception Handling helpers.
       EH_RETURN,
 
+      // EH_SJLJ_SETJMP - SjLj exception handling setjmp.
+      EH_SJLJ_SETJMP,
+
+      // EH_SJLJ_LONGJMP - SjLj exception handling longjmp.
+      EH_SJLJ_LONGJMP,
+
       /// TC_RETURN - Tail call return.
       ///   operand #0 chain
       ///   operand #1 callee (register or absolute)
@@ -230,8 +242,17 @@ namespace llvm {
       // VSEXT_MOVL - Vector move low and sign extend.
       VSEXT_MOVL,
 
+      // VZEXT - Vector integer zero-extend.
+      VZEXT,
+
+      // VSEXT - Vector integer signed-extend.
+      VSEXT,
+
       // VFPEXT - Vector FP extend.
       VFPEXT,
+
+      // VFPROUND - Vector FP round.
+      VFPROUND,
 
       // VSHL, VSRL - 128-bit vector logical left / right shift
       VSHLDQ, VSRLDQ,
@@ -251,8 +272,6 @@ namespace llvm {
       // ADD, SUB, SMUL, etc. - Arithmetic operations with FLAGS results.
       ADD, SUB, ADC, SBB, SMUL,
       INC, DEC, OR, XOR, AND,
-
-      ANDN, // ANDN - Bitwise AND NOT with FLAGS results.
 
       BLSI,   // BLSI - Extract lowest set isolated bit
       BLSMSK, // BLSMSK - Get mask up to lowest set bit
@@ -465,10 +484,6 @@ namespace llvm {
     getPICJumpTableRelocBaseExpr(const MachineFunction *MF,
                                  unsigned JTI, MCContext &Ctx) const;
 
-    /// getStackPtrReg - Return the stack pointer register we are using: either
-    /// ESP or RSP.
-    unsigned getStackPtrReg() const { return X86StackPtr; }
-
     /// getByValTypeAlignment - Return the desired alignment for ByVal aggregate
     /// function arguments in the caller parameter area. For X86, aggregates
     /// that contains are placed at 16-byte boundaries while the rest are at
@@ -480,23 +495,29 @@ namespace llvm {
     /// lowering. If DstAlign is zero that means it's safe to destination
     /// alignment can satisfy any constraint. Similarly if SrcAlign is zero it
     /// means there isn't a need to check it against alignment requirement,
-    /// probably because the source does not need to be loaded. If
-    /// 'IsZeroVal' is true, that means it's safe to return a
-    /// non-scalar-integer type, e.g. empty string source, constant, or loaded
-    /// from memory. 'MemcpyStrSrc' indicates whether the memcpy source is
-    /// constant so it does not need to be loaded.
+    /// probably because the source does not need to be loaded. If 'IsMemset' is
+    /// true, that means it's expanding a memset. If 'ZeroMemset' is true, that
+    /// means it's a memset of zero. 'MemcpyStrSrc' indicates whether the memcpy
+    /// source is constant so it does not need to be loaded.
     /// It returns EVT::Other if the type should be determined using generic
     /// target-independent logic.
     virtual EVT
-    getOptimalMemOpType(uint64_t Size, unsigned DstAlign, unsigned SrcAlign,
-                        bool IsZeroVal, bool MemcpyStrSrc,
+    getOptimalMemOpType(uint64_t Size, unsigned DstAlign, unsigned SrcAlign, 
+                        bool IsMemset, bool ZeroMemset, bool MemcpyStrSrc,
                         MachineFunction &MF) const;
 
+    /// isSafeMemOpType - Returns true if it's safe to use load / store of the
+    /// specified type to expand memcpy / memset inline. This is mostly true
+    /// for all types except for some special cases. For example, on X86
+    /// targets without SSE2 f64 load / store are done with fldl / fstpl which
+    /// also does type conversion. Note the specified type doesn't have to be
+    /// legal as the hook is used before type legalization.
+    virtual bool isSafeMemOpType(MVT VT) const;
+
     /// allowsUnalignedMemoryAccesses - Returns true if the target allows
-    /// unaligned memory accesses. of the specified type.
-    virtual bool allowsUnalignedMemoryAccesses(EVT VT) const {
-      return true;
-    }
+    /// unaligned memory accesses. of the specified type. Returns whether it
+    /// is "fast" by reference in the second argument.
+    virtual bool allowsUnalignedMemoryAccesses(EVT VT, bool *Fast) const;
 
     /// LowerOperation - Provide custom lowering hooks for some operations.
     ///
@@ -614,6 +635,7 @@ namespace llvm {
     /// result out to 64 bits.
     virtual bool isZExtFree(Type *Ty1, Type *Ty2) const;
     virtual bool isZExtFree(EVT VT1, EVT VT2) const;
+    virtual bool isZExtFree(SDValue Val, EVT VT2) const;
 
     /// isFMAFasterThanMulAndAdd - Return true if an FMA operation is faster than
     /// a pair of mul and add instructions. fmuladd intrinsics will be expanded to
@@ -701,10 +723,7 @@ namespace llvm {
     /// make the right decision when generating code for different targets.
     const X86Subtarget *Subtarget;
     const X86RegisterInfo *RegInfo;
-    const TargetData *TD;
-
-    /// X86StackPtr - X86 physical register used as stack ptr.
-    unsigned X86StackPtr;
+    const DataLayout *TD;
 
     /// X86ScalarSSEf32, X86ScalarSSEf64 - Select between SSE or x87
     /// floating point ops.
@@ -786,8 +805,12 @@ namespace llvm {
     SDValue LowerUINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i64(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i32(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerUINT_TO_FP_vec(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerZERO_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_SINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_UINT(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFABS(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) const;
@@ -806,19 +829,22 @@ namespace llvm {
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAME_TO_ARGS_OFFSET(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_SETJMP(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINIT_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerShift(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
 
-    // Utility functions to help LowerVECTOR_SHUFFLE
+    // Utility functions to help LowerVECTOR_SHUFFLE & LowerBUILD_VECTOR
     SDValue LowerVectorBroadcast(SDValue Op, SelectionDAG &DAG) const;
     SDValue NormalizeVectorShuffle(SDValue Op, SelectionDAG &DAG) const;
+    SDValue buildFromShuffleMostly(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerVectorAllZeroTest(SDValue Op, SelectionDAG &DAG) const;
 
-    SDValue LowerVectorFpExtend(SDValue &Op, SelectionDAG &DAG) const;
+    SDValue lowerVectorIntExtend(SDValue Op, SelectionDAG &DAG) const;
 
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
@@ -850,21 +876,6 @@ namespace llvm {
                    bool isVarArg,
                    const SmallVectorImpl<ISD::OutputArg> &Outs,
                    LLVMContext &Context) const;
-
-    /// Utility function to emit string processing sse4.2 instructions
-    /// that return in xmm0.
-    /// This takes the instruction to expand, the associated machine basic
-    /// block, the number of args, and whether or not the second arg is
-    /// in memory or not.
-    MachineBasicBlock *EmitPCMP(MachineInstr *BInstr, MachineBasicBlock *BB,
-                                unsigned argNum, bool inMem) const;
-
-    /// Utility functions to emit monitor and mwait instructions. These
-    /// need to make sure that the arguments to the intrinsic are in the
-    /// correct registers.
-    MachineBasicBlock *EmitMonitor(MachineInstr *MI,
-                                   MachineBasicBlock *BB) const;
-    MachineBasicBlock *EmitMwait(MachineInstr *MI, MachineBasicBlock *BB) const;
 
     /// Utility function to emit atomic-load-arith operations (and, or, xor,
     /// nand, max, min, umax, umin). It takes the corresponding instruction to
@@ -904,6 +915,12 @@ namespace llvm {
     MachineBasicBlock *emitLoweredTLSAddr(MachineInstr *MI,
                                           MachineBasicBlock *BB) const;
 
+    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr *MI,
+                                        MachineBasicBlock *MBB) const;
+
+    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
+                                         MachineBasicBlock *MBB) const;
+
     /// Emit nodes that will be selected as "test Op0,Op0", or something
     /// equivalent, for use with the given x86 condition code.
     SDValue EmitTest(SDValue Op0, unsigned X86CC, SelectionDAG &DAG) const;
@@ -921,6 +938,31 @@ namespace llvm {
     FastISel *createFastISel(FunctionLoweringInfo &funcInfo,
                              const TargetLibraryInfo *libInfo);
   }
+
+  class X86ScalarTargetTransformImpl : public ScalarTargetTransformImpl {
+  public:
+    explicit X86ScalarTargetTransformImpl(const TargetLowering *TL) :
+      ScalarTargetTransformImpl(TL) {};
+
+    virtual PopcntHwSupport getPopcntHwSupport(unsigned TyWidth) const;
+  };
+
+  class X86VectorTargetTransformInfo : public VectorTargetTransformImpl {
+  public:
+    explicit X86VectorTargetTransformInfo(const TargetLowering *TL) :
+    VectorTargetTransformImpl(TL) {}
+
+    virtual unsigned getArithmeticInstrCost(unsigned Opcode, Type *Ty) const;
+
+    virtual unsigned getVectorInstrCost(unsigned Opcode, Type *Val,
+                                        unsigned Index) const;
+
+    unsigned getCmpSelInstrCost(unsigned Opcode, Type *ValTy,
+                                Type *CondTy) const;
+
+    virtual unsigned getCastInstrCost(unsigned Opcode, Type *Dst,
+                                      Type *Src) const;
+  };
 }
 
 #endif    // X86ISELLOWERING_H

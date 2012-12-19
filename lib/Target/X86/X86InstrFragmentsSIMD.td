@@ -90,7 +90,18 @@ def X86vsmovl  : SDNode<"X86ISD::VSEXT_MOVL",
 def X86vzload  : SDNode<"X86ISD::VZEXT_LOAD", SDTLoad,
                         [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
+def X86vzext   : SDNode<"X86ISD::VZEXT",
+                         SDTypeProfile<1, 1, [SDTCisVec<0>, SDTCisVec<1>,
+                                              SDTCisInt<0>, SDTCisInt<1>]>>;
+
+def X86vsext   : SDNode<"X86ISD::VSEXT",
+                         SDTypeProfile<1, 1, [SDTCisVec<0>, SDTCisVec<1>,
+                                              SDTCisInt<0>, SDTCisInt<1>]>>;
+
 def X86vfpext  : SDNode<"X86ISD::VFPEXT",
+                        SDTypeProfile<1, 1, [SDTCisVec<0>, SDTCisVec<1>,
+                                             SDTCisFP<0>, SDTCisFP<1>]>>;
+def X86vfpround: SDNode<"X86ISD::VFPROUND",
                         SDTypeProfile<1, 1, [SDTCisVec<0>, SDTCisVec<1>,
                                              SDTCisFP<0>, SDTCisFP<1>]>>;
 
@@ -117,6 +128,7 @@ def X86vsrai   : SDNode<"X86ISD::VSRAI", SDTIntShiftOp>;
 def SDTX86CmpPTest : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
                                           SDTCisVec<1>,
                                           SDTCisSameAs<2, 1>]>;
+def X86subus   : SDNode<"X86ISD::SUBUS", SDTIntBinOp>;
 def X86ptest   : SDNode<"X86ISD::PTEST", SDTX86CmpPTest>;
 def X86testp   : SDNode<"X86ISD::TESTP", SDTX86CmpPTest>;
 
@@ -176,9 +188,7 @@ def X86VPerm2x128 : SDNode<"X86ISD::VPERM2X128", SDTShuff3OpI>;
 
 def X86VBroadcast : SDNode<"X86ISD::VBROADCAST", SDTVBroadcast>;
 
-def X86Blendpw   : SDNode<"X86ISD::BLENDPW",   SDTBlend>;
-def X86Blendps   : SDNode<"X86ISD::BLENDPS",   SDTBlend>;
-def X86Blendpd   : SDNode<"X86ISD::BLENDPD",   SDTBlend>;
+def X86Blendi    : SDNode<"X86ISD::BLENDI",   SDTBlend>;
 def X86Fmadd     : SDNode<"X86ISD::FMADD",     SDTFma>;
 def X86Fnmadd    : SDNode<"X86ISD::FNMADD",    SDTFma>;
 def X86Fmsub     : SDNode<"X86ISD::FMSUB",     SDTFma>;

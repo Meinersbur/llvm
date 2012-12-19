@@ -20,10 +20,10 @@
 #ifndef LLVM_GLOBAL_VARIABLE_H
 #define LLVM_GLOBAL_VARIABLE_H
 
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_node.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/OperandTraits.h"
-#include "llvm/ADT/ilist_node.h"
-#include "llvm/ADT/Twine.h"
 
 namespace llvm {
 
@@ -174,7 +174,6 @@ public:
   virtual void replaceUsesOfWithOnConstant(Value *From, Value *To, Use *U);
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
-  static inline bool classof(const GlobalVariable *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == Value::GlobalVariableVal;
   }

@@ -7,29 +7,28 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Module.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/PassManager.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Pass.h"
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/CallGraphSCCPass.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Constants.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Function.h"
-#include "llvm/CallingConv.h"
-#include "llvm/BasicBlock.h"
-#include "llvm/Instructions.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/PassManager.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/Verifier.h"
 #include "llvm/Assembly/PrintModulePass.h"
+#include "llvm/BasicBlock.h"
+#include "llvm/CallGraphSCCPass.h"
+#include "llvm/CallingConv.h"
+#include "llvm/Constants.h"
+#include "llvm/DataLayout.h"
+#include "llvm/DerivedTypes.h"
+#include "llvm/Function.h"
+#include "llvm/GlobalVariable.h"
+#include "llvm/InlineAsm.h"
+#include "llvm/Instructions.h"
+#include "llvm/LLVMContext.h"
+#include "llvm/Module.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -94,7 +93,7 @@ namespace llvm {
         initializeModuleNDMPass(*PassRegistry::getPassRegistry());
       }
       virtual bool runOnModule(Module &M) {
-        EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         run++;
         return false;
       }
@@ -148,6 +147,10 @@ namespace llvm {
     template<typename T, typename P>
     struct PassTest : public PassTestBase<P> {
     public:
+#ifndef _MSC_VER // MSVC complains that Pass is not base class.
+      using llvm::Pass::doInitialization;
+      using llvm::Pass::doFinalization;
+#endif
       virtual bool doInitialization(T &t) {
         EXPECT_FALSE(PassTestBase<P>::initialized);
         PassTestBase<P>::initialized = true;
@@ -167,7 +170,7 @@ namespace llvm {
         initializeCGPassPass(*PassRegistry::getPassRegistry());
       }
       virtual bool runOnSCC(CallGraphSCC &SCMM) {
-        EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         run();
         return false;
       }
@@ -177,7 +180,7 @@ namespace llvm {
     public:
       virtual bool runOnFunction(Function &F) {
         // FIXME: PR4112
-        // EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        // EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         run();
         return false;
       }
@@ -198,13 +201,15 @@ namespace llvm {
         EXPECT_EQ(run, initcount);
         EXPECT_EQ(finalized, fincount);
       }
+      using llvm::Pass::doInitialization;
+      using llvm::Pass::doFinalization;
       virtual bool doInitialization(Loop* L, LPPassManager &LPM) {
         initialized = true;
         initcount++;
         return false;
       }
       virtual bool runOnLoop(Loop *L, LPPassManager &LPM) {
-        EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         run();
         return false;
       }
@@ -241,7 +246,7 @@ namespace llvm {
         return false;
       }
       virtual bool runOnBasicBlock(BasicBlock &BB) {
-        EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         run();
         return false;
       }
@@ -266,7 +271,7 @@ namespace llvm {
         initializeFPassPass(*PassRegistry::getPassRegistry());
       }
       virtual bool runOnModule(Module &M) {
-        EXPECT_TRUE(getAnalysisIfAvailable<TargetData>());
+        EXPECT_TRUE(getAnalysisIfAvailable<DataLayout>());
         for (Module::iterator I=M.begin(),E=M.end(); I != E; ++I) {
           Function &F = *I;
           {
@@ -292,7 +297,7 @@ namespace llvm {
       mNDM->run = mNDNM->run = mDNM->run = mNDM2->run = 0;
 
       PassManager Passes;
-      Passes.add(new TargetData(&M));
+      Passes.add(new DataLayout(&M));
       Passes.add(mNDM2);
       Passes.add(mNDM);
       Passes.add(mNDNM);
@@ -316,7 +321,7 @@ namespace llvm {
       mNDM->run = mNDNM->run = mDNM->run = mNDM2->run = 0;
 
       PassManager Passes;
-      Passes.add(new TargetData(&M));
+      Passes.add(new DataLayout(&M));
       Passes.add(mNDM);
       Passes.add(mNDNM);
       Passes.add(mNDM2);// invalidates mNDM needed by mDNM
@@ -338,7 +343,7 @@ namespace llvm {
       OwningPtr<Module> M(makeLLVMModule());
       T *P = new T();
       PassManager Passes;
-      Passes.add(new TargetData(M.get()));
+      Passes.add(new DataLayout(M.get()));
       Passes.add(P);
       Passes.run(*M);
       T::finishedOK(run);
@@ -349,7 +354,7 @@ namespace llvm {
       Module *M = makeLLVMModule();
       T *P = new T();
       PassManager Passes;
-      Passes.add(new TargetData(M));
+      Passes.add(new DataLayout(M));
       Passes.add(P);
       Passes.run(*M);
       T::finishedOK(run, N);
@@ -387,7 +392,7 @@ namespace llvm {
         SCOPED_TRACE("Running OnTheFlyTest");
         struct OnTheFlyTest *O = new OnTheFlyTest();
         PassManager Passes;
-        Passes.add(new TargetData(M));
+        Passes.add(new DataLayout(M));
         Passes.add(O);
         Passes.run(*M);
 
@@ -426,7 +431,7 @@ namespace llvm {
         /*Linkage=*/GlobalValue::ExternalLinkage,
         /*Name=*/"test1", mod);
       func_test1->setCallingConv(CallingConv::C);
-      AttrListPtr func_test1_PAL;
+      AttributeSet func_test1_PAL;
       func_test1->setAttributes(func_test1_PAL);
 
       Function* func_test2 = Function::Create(
@@ -434,7 +439,7 @@ namespace llvm {
         /*Linkage=*/GlobalValue::ExternalLinkage,
         /*Name=*/"test2", mod);
       func_test2->setCallingConv(CallingConv::C);
-      AttrListPtr func_test2_PAL;
+      AttributeSet func_test2_PAL;
       func_test2->setAttributes(func_test2_PAL);
 
       Function* func_test3 = Function::Create(
@@ -442,7 +447,7 @@ namespace llvm {
         /*Linkage=*/GlobalValue::ExternalLinkage,
         /*Name=*/"test3", mod);
       func_test3->setCallingConv(CallingConv::C);
-      AttrListPtr func_test3_PAL;
+      AttributeSet func_test3_PAL;
       func_test3->setAttributes(func_test3_PAL);
 
       Function* func_test4 = Function::Create(
@@ -450,7 +455,7 @@ namespace llvm {
         /*Linkage=*/GlobalValue::ExternalLinkage,
         /*Name=*/"test4", mod);
       func_test4->setCallingConv(CallingConv::C);
-      AttrListPtr func_test4_PAL;
+      AttributeSet func_test4_PAL;
       func_test4->setAttributes(func_test4_PAL);
 
       // Global Variable Declarations
@@ -470,7 +475,7 @@ namespace llvm {
         // Block entry (label_entry)
         CallInst* int32_3 = CallInst::Create(func_test2, "", label_entry);
         int32_3->setCallingConv(CallingConv::C);
-        int32_3->setTailCall(false);AttrListPtr int32_3_PAL;
+        int32_3->setTailCall(false);AttributeSet int32_3_PAL;
         int32_3->setAttributes(int32_3_PAL);
 
         ReturnInst::Create(getGlobalContext(), int32_3, label_entry);
@@ -485,7 +490,7 @@ namespace llvm {
         // Block entry (label_entry_5)
         CallInst* int32_6 = CallInst::Create(func_test3, "", label_entry_5);
         int32_6->setCallingConv(CallingConv::C);
-        int32_6->setTailCall(false);AttrListPtr int32_6_PAL;
+        int32_6->setTailCall(false);AttributeSet int32_6_PAL;
         int32_6->setAttributes(int32_6_PAL);
 
         ReturnInst::Create(getGlobalContext(), int32_6, label_entry_5);
@@ -500,7 +505,7 @@ namespace llvm {
         // Block entry (label_entry_8)
         CallInst* int32_9 = CallInst::Create(func_test1, "", label_entry_8);
         int32_9->setCallingConv(CallingConv::C);
-        int32_9->setTailCall(false);AttrListPtr int32_9_PAL;
+        int32_9->setTailCall(false);AttributeSet int32_9_PAL;
         int32_9->setAttributes(int32_9_PAL);
 
         ReturnInst::Create(getGlobalContext(), int32_9, label_entry_8);

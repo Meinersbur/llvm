@@ -17,18 +17,18 @@
 #include "X86MachineFunctionInfo.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
-#include "llvm/Function.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/DataLayout.h"
+#include "llvm/Function.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/Target/TargetOptions.h"
 
 using namespace llvm;
 
@@ -313,11 +313,11 @@ void X86FrameLowering::emitCalleeSavedFrameMoves(MachineFunction &MF,
   if (CSI.empty()) return;
 
   std::vector<MachineMove> &Moves = MMI.getFrameMoves();
-  const TargetData *TD = TM.getTargetData();
+  const X86RegisterInfo *RegInfo = TM.getRegisterInfo();
   bool HasFP = hasFP(MF);
 
   // Calculate amount of bytes used for return address storing.
-  int stackGrowth = -TD->getPointerSize();
+  int stackGrowth = -RegInfo->getSlotSize();
 
   // FIXME: This is dirty hack. The code itself is pretty mess right now.
   // It should be rewritten from scratch and generalized sometimes.
@@ -674,7 +674,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   // function, and use up to 128 bytes of stack space, don't have a frame
   // pointer, calls, or dynamic alloca then we do not need to adjust the
   // stack pointer (we fit in the Red Zone).
-  if (Is64Bit && !Fn->getFnAttributes().hasNoRedZoneAttr() &&
+  if (Is64Bit && !Fn->getFnAttributes().hasAttribute(Attributes::NoRedZone) &&
       !RegInfo->needsStackRealignment(MF) &&
       !MFI->hasVarSizedObjects() &&                     // No dynamic alloca.
       !MFI->adjustsStack() &&                           // No calls.
@@ -715,9 +715,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   //        ELSE                        => DW_CFA_offset_extended
 
   std::vector<MachineMove> &Moves = MMI.getFrameMoves();
-  const TargetData *TD = MF.getTarget().getTargetData();
   uint64_t NumBytes = 0;
-  int stackGrowth = -TD->getPointerSize();
+  int stackGrowth = -SlotSize;
 
   if (HasFP) {
     // Calculate required stack adjustment.
@@ -835,8 +834,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     // The EFLAGS implicit def is dead.
     MI->getOperand(3).setIsDead();
   }
-
-  DL = MBB.findDebugLoc(MBBI);
 
   // If there is an SUB32ri of ESP immediately before this instruction, merge
   // the two. This can be the case when tail call elimination is enabled and

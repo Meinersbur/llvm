@@ -15,10 +15,10 @@
 #ifndef LLVM_GLOBAL_ALIAS_H
 #define LLVM_GLOBAL_ALIAS_H
 
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_node.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/OperandTraits.h"
-#include "llvm/ADT/ilist_node.h"
-#include "llvm/ADT/Twine.h"
 
 namespace llvm {
 
@@ -76,7 +76,6 @@ public:
   const GlobalValue *resolveAliasedGlobal(bool stopOnWeak = true) const;
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
-  static inline bool classof(const GlobalAlias *) { return true; }
   static inline bool classof(const Value *V) {
     return V->getValueID() == Value::GlobalAliasVal;
   }

@@ -23,12 +23,12 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCParser/AsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetAsmLexer.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -366,8 +366,9 @@ int EDDisassembler::parseInst(SmallVectorImpl<MCParsedAsmOperand*> &operands,
     instName = OpcodeToken.getString();
     instLoc = OpcodeToken.getLoc();
     
+    ParseInstructionInfo Info;
     if (NextToken.isNot(AsmToken::Eof) &&
-        TargetParser->ParseInstruction(instName, instLoc, operands))
+        TargetParser->ParseInstruction(Info, instName, instLoc, operands))
       ret = -1;
   } else {
     ret = -1;

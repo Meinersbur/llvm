@@ -12,11 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/DIBuilder.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Constants.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
 
@@ -492,7 +492,8 @@ DIType DIBuilder::createStructType(DIDescriptor Context, StringRef Name,
     NULL,
     Elements,
     ConstantInt::get(Type::getInt32Ty(VMContext), RunTimeLang),
-    Constant::getNullValue(Type::getInt32Ty(VMContext))
+    ConstantInt::get(Type::getInt32Ty(VMContext), 0),
+    ConstantInt::get(Type::getInt32Ty(VMContext), 0),
   };
   return DIType(MDNode::get(VMContext, Elts));
 }
@@ -550,7 +551,7 @@ DIType DIBuilder::createEnumerationType(DIDescriptor Scope, StringRef Name,
                                         uint64_t SizeInBits,
                                         uint64_t AlignInBits,
                                         DIArray Elements,
-                                        DIType ClassType, unsigned Flags) {
+                                        DIType ClassType) {
   // TAG_enumeration_type is encoded in DICompositeType format.
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_enumeration_type),
@@ -561,7 +562,7 @@ DIType DIBuilder::createEnumerationType(DIDescriptor Scope, StringRef Name,
     ConstantInt::get(Type::getInt64Ty(VMContext), SizeInBits),
     ConstantInt::get(Type::getInt64Ty(VMContext), AlignInBits),
     ConstantInt::get(Type::getInt32Ty(VMContext), 0),
-    ConstantInt::get(Type::getInt32Ty(VMContext), Flags),
+    ConstantInt::get(Type::getInt32Ty(VMContext), 0),
     ClassType,
     Elements,
     ConstantInt::get(Type::getInt32Ty(VMContext), 0),
@@ -706,7 +707,9 @@ DIType DIBuilder::createTemporaryType(DIFile F) {
 /// can be RAUW'd if the full type is seen.
 DIType DIBuilder::createForwardDecl(unsigned Tag, StringRef Name,
                                     DIDescriptor Scope, DIFile F,
-                                    unsigned Line, unsigned RuntimeLang) {
+                                    unsigned Line, unsigned RuntimeLang,
+                                    uint64_t SizeInBits,
+                                    uint64_t AlignInBits) {
   // Create a temporary MDNode.
   Value *Elts[] = {
     GetTagConstant(VMContext, Tag),
@@ -714,9 +717,8 @@ DIType DIBuilder::createForwardDecl(unsigned Tag, StringRef Name,
     MDString::get(VMContext, Name),
     F,
     ConstantInt::get(Type::getInt32Ty(VMContext), Line),
-    // To ease transition include sizes etc of 0.
-    ConstantInt::get(Type::getInt32Ty(VMContext), 0),
-    ConstantInt::get(Type::getInt32Ty(VMContext), 0),
+    ConstantInt::get(Type::getInt64Ty(VMContext), SizeInBits),
+    ConstantInt::get(Type::getInt64Ty(VMContext), AlignInBits),
     ConstantInt::get(Type::getInt32Ty(VMContext), 0),
     ConstantInt::get(Type::getInt32Ty(VMContext),
                      DIDescriptor::FlagFwdDecl),
@@ -739,11 +741,11 @@ DIArray DIBuilder::getOrCreateArray(ArrayRef<Value *> Elements) {
 
 /// getOrCreateSubrange - Create a descriptor for a value range.  This
 /// implicitly uniques the values returned.
-DISubrange DIBuilder::getOrCreateSubrange(int64_t Lo, int64_t Hi) {
+DISubrange DIBuilder::getOrCreateSubrange(int64_t Lo, int64_t Count) {
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_subrange_type),
     ConstantInt::get(Type::getInt64Ty(VMContext), Lo),
-    ConstantInt::get(Type::getInt64Ty(VMContext), Hi)
+    ConstantInt::get(Type::getInt64Ty(VMContext), Count)
   };
 
   return DISubrange(MDNode::get(VMContext, Elts));

@@ -11,23 +11,24 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Value.h"
 #include "LLVMContextImpl.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Constant.h"
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/InstrTypes.h"
 #include "llvm/Instructions.h"
-#include "llvm/Operator.h"
 #include "llvm/Module.h"
-#include "llvm/ValueSymbolTable.h"
-#include "llvm/ADT/SmallString.h"
+#include "llvm/Operator.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/LeakDetector.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/ValueHandle.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ValueSymbolTable.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -394,7 +395,7 @@ static bool isDereferenceablePointer(const Value *V,
   // It's also not always safe to follow a bitcast, for example:
   //   bitcast i8* (alloca i8) to i32*
   // would result in a 4-byte load from a 1-byte alloca. Some cases could
-  // be handled using TargetData to check sizes and alignments though.
+  // be handled using DataLayout to check sizes and alignments though.
 
   // These are obviously ok.
   if (isa<AllocaInst>(V)) return true;

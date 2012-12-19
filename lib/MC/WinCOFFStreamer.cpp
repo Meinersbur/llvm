@@ -13,19 +13,19 @@
 
 #define DEBUG_TYPE "WinCOFFStreamer"
 
-#include "llvm/MC/MCObjectStreamer.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCSection.h"
-#include "llvm/MC/MCSymbol.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCValue.h"
-#include "llvm/MC/MCAssembler.h"
-#include "llvm/MC/MCAsmLayout.h"
-#include "llvm/MC/MCCodeEmitter.h"
-#include "llvm/MC/MCSectionCOFF.h"
-#include "llvm/MC/MCWin64EH.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCAsmBackend.h"
-
+#include "llvm/MC/MCAsmLayout.h"
+#include "llvm/MC/MCAssembler.h"
+#include "llvm/MC/MCCodeEmitter.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCObjectStreamer.h"
+#include "llvm/MC/MCSection.h"
+#include "llvm/MC/MCSectionCOFF.h"
+#include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCValue.h"
+#include "llvm/MC/MCWin64EH.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -51,6 +51,7 @@ public:
 
   virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
+  virtual void EmitDebugLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
   virtual void EmitThumbFunc(MCSymbol *Func);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
@@ -70,11 +71,6 @@ public:
                             uint64_t Size,unsigned ByteAlignment);
   virtual void EmitTBSSSymbol(const MCSection *Section, MCSymbol *Symbol,
                               uint64_t Size, unsigned ByteAlignment);
-  virtual void EmitBytes(StringRef Data, unsigned AddrSpace);
-  virtual void EmitValueToAlignment(unsigned ByteAlignment, int64_t Value,
-                                   unsigned ValueSize, unsigned MaxBytesToEmit);
-  virtual void EmitCodeAlignment(unsigned ByteAlignment,
-                                 unsigned MaxBytesToEmit);
   virtual void EmitFileDirective(StringRef Filename);
   virtual void EmitInstruction(const MCInst &Instruction);
   virtual void EmitWin64EHHandlerData();
@@ -181,6 +177,9 @@ void WinCOFFStreamer::EmitLabel(MCSymbol *Symbol) {
   MCObjectStreamer::EmitLabel(Symbol);
 }
 
+void WinCOFFStreamer::EmitDebugLabel(MCSymbol *Symbol) {
+  EmitLabel(Symbol);
+}
 void WinCOFFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
   llvm_unreachable("not implemented");
 }
@@ -198,11 +197,7 @@ void WinCOFFStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   // don't really even do.
 
   if (Value->getKind() != MCExpr::SymbolRef) {
-    // TODO: This is exactly the same as MachOStreamer. Consider merging into
-    // MCObjectStreamer.
-    getAssembler().getOrCreateSymbolData(*Symbol);
-    AddValueSymbols(Value);
-    Symbol->setVariableValue(Value);
+    MCObjectStreamer::EmitAssignment(Symbol, Value);
   } else {
     // FIXME: This is a horrible way to do this :(. This should really be
     // handled after we are done with the MC* objects and immediately before
@@ -297,9 +292,10 @@ void WinCOFFStreamer::EmitCOFFSecRel32(MCSymbol const *Symbol)
 {
   MCDataFragment *DF = getOrCreateDataFragment();
 
-  DF->addFixup(MCFixup::Create(DF->getContents().size(),
-                               MCSymbolRefExpr::Create (Symbol, getContext ()),
-                               FK_SecRel_4));
+  DF->getFixups().push_back(
+      MCFixup::Create(DF->getContents().size(),
+                      MCSymbolRefExpr::Create (Symbol, getContext ()),
+                      FK_SecRel_4));
   DF->getContents().resize(DF->getContents().size() + 4, 0);
 }
 
@@ -333,43 +329,6 @@ void WinCOFFStreamer::EmitTBSSSymbol(const MCSection *Section, MCSymbol *Symbol,
   llvm_unreachable("not implemented");
 }
 
-void WinCOFFStreamer::EmitBytes(StringRef Data, unsigned AddrSpace) {
-  // TODO: This is copied exactly from the MachOStreamer. Consider merging into
-  // MCObjectStreamer?
-  getOrCreateDataFragment()->getContents().append(Data.begin(), Data.end());
-}
-
-void WinCOFFStreamer::EmitValueToAlignment(unsigned ByteAlignment,
-                                           int64_t Value,
-                                           unsigned ValueSize,
-                                           unsigned MaxBytesToEmit) {
-  // TODO: This is copied exactly from the MachOStreamer. Consider merging into
-  // MCObjectStreamer?
-  if (MaxBytesToEmit == 0)
-    MaxBytesToEmit = ByteAlignment;
-  new MCAlignFragment(ByteAlignment, Value, ValueSize, MaxBytesToEmit,
-                      getCurrentSectionData());
-
-  // Update the maximum alignment on the current section if necessary.
-  if (ByteAlignment > getCurrentSectionData()->getAlignment())
-    getCurrentSectionData()->setAlignment(ByteAlignment);
-}
-
-void WinCOFFStreamer::EmitCodeAlignment(unsigned ByteAlignment,
-                                        unsigned MaxBytesToEmit) {
-  // TODO: This is copied exactly from the MachOStreamer. Consider merging into
-  // MCObjectStreamer?
-  if (MaxBytesToEmit == 0)
-    MaxBytesToEmit = ByteAlignment;
-  MCAlignFragment *F = new MCAlignFragment(ByteAlignment, 0, 1, MaxBytesToEmit,
-                                           getCurrentSectionData());
-  F->setEmitNops(true);
-
-  // Update the maximum alignment on the current section if necessary.
-  if (ByteAlignment > getCurrentSectionData()->getAlignment())
-    getCurrentSectionData()->setAlignment(ByteAlignment);
-}
-
 void WinCOFFStreamer::EmitFileDirective(StringRef Filename) {
   // Ignore for now, linkers don't care, and proper debug
   // info will be a much large effort.
@@ -385,7 +344,7 @@ void WinCOFFStreamer::EmitInstruction(const MCInst &Instruction) {
   MCInstFragment *Fragment =
     new MCInstFragment(Instruction, getCurrentSectionData());
 
-  raw_svector_ostream VecOS(Fragment->getCode());
+  raw_svector_ostream VecOS(Fragment->getContents());
 
   getAssembler().getEmitter().EncodeInstruction(Instruction, VecOS,
                                                 Fragment->getFixups());

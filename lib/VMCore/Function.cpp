@@ -11,22 +11,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Module.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/Support/CallSite.h"
-#include "llvm/Support/InstIterator.h"
-#include "llvm/Support/LeakDetector.h"
-#include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/StringPool.h"
-#include "llvm/Support/RWMutex.h"
-#include "llvm/Support/Threading.h"
+#include "llvm/Function.h"
 #include "SymbolTableListTraitsImpl.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/DerivedTypes.h"
+#include "llvm/IntrinsicInst.h"
+#include "llvm/LLVMContext.h"
+#include "llvm/Module.h"
+#include "llvm/Support/CallSite.h"
+#include "llvm/Support/InstIterator.h"
+#include "llvm/Support/LeakDetector.h"
+#include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/RWMutex.h"
+#include "llvm/Support/StringPool.h"
+#include "llvm/Support/Threading.h"
 using namespace llvm;
 
 // Explicit instantiations of SymbolTableListTraits since some of the methods
@@ -61,11 +62,11 @@ void Argument::setParent(Function *parent) {
 }
 
 /// getArgNo - Return the index of this formal argument in its containing
-/// function.  For example in "void foo(int a, float b)" a is 0 and b is 1. 
+/// function.  For example in "void foo(int a, float b)" a is 0 and b is 1.
 unsigned Argument::getArgNo() const {
   const Function *F = getParent();
   assert(F && "Argument is not in a function");
-  
+
   Function::const_arg_iterator AI = F->arg_begin();
   unsigned ArgIdx = 0;
   for (; &*AI != this; ++AI)
@@ -78,34 +79,38 @@ unsigned Argument::getArgNo() const {
 /// in its containing function.
 bool Argument::hasByValAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getParamAttributes(getArgNo()+1).hasByValAttr();
+  return getParent()->getParamAttributes(getArgNo()+1).
+    hasAttribute(Attributes::ByVal);
 }
 
 unsigned Argument::getParamAlignment() const {
   assert(getType()->isPointerTy() && "Only pointers have alignments");
   return getParent()->getParamAlignment(getArgNo()+1);
-  
+
 }
 
 /// hasNestAttr - Return true if this argument has the nest attribute on
 /// it in its containing function.
 bool Argument::hasNestAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getParamAttributes(getArgNo()+1).hasNestAttr();
+  return getParent()->getParamAttributes(getArgNo()+1).
+    hasAttribute(Attributes::Nest);
 }
 
 /// hasNoAliasAttr - Return true if this argument has the noalias attribute on
 /// it in its containing function.
 bool Argument::hasNoAliasAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getParamAttributes(getArgNo()+1).hasNoAliasAttr();
+  return getParent()->getParamAttributes(getArgNo()+1).
+    hasAttribute(Attributes::NoAlias);
 }
 
 /// hasNoCaptureAttr - Return true if this argument has the nocapture attribute
 /// on it in its containing function.
 bool Argument::hasNoCaptureAttr() const {
   if (!getType()->isPointerTy()) return false;
-  return getParent()->getParamAttributes(getArgNo()+1).hasNoCaptureAttr();
+  return getParent()->getParamAttributes(getArgNo()+1).
+    hasAttribute(Attributes::NoCapture);
 }
 
 /// hasSRetAttr - Return true if this argument has the sret attribute on
@@ -114,7 +119,8 @@ bool Argument::hasStructRetAttr() const {
   if (!getType()->isPointerTy()) return false;
   if (this != getParent()->arg_begin())
     return false; // StructRet param must be first param
-  return getParent()->getParamAttributes(1).hasStructRetAttr();
+  return getParent()->getParamAttributes(1).
+    hasAttribute(Attributes::StructRet);
 }
 
 /// addAttr - Add a Attribute to an argument
@@ -162,7 +168,7 @@ void Function::eraseFromParent() {
 
 Function::Function(FunctionType *Ty, LinkageTypes Linkage,
                    const Twine &name, Module *ParentModule)
-  : GlobalValue(PointerType::getUnqual(Ty), 
+  : GlobalValue(PointerType::getUnqual(Ty),
                 Value::FunctionVal, 0, 0, Linkage, name) {
   assert(FunctionType::isValidReturnType(getReturnType()) &&
          "invalid return type");
@@ -171,7 +177,7 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage,
   // If the function has arguments, mark them as lazily built.
   if (Ty->getNumParams())
     setValueSubclassData(1);   // Set the "has lazy arguments" bit.
-  
+
   // Make sure that we get added to a function
   LeakDetector::addGarbageObject(this);
 
@@ -180,7 +186,7 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage,
 
   // Ensure intrinsics have the right parameter attributes.
   if (unsigned IID = getIntrinsicID())
-    setAttributes(Intrinsic::getAttributes(Intrinsic::ID(IID)));
+    setAttributes(Intrinsic::getAttributes(getContext(), Intrinsic::ID(IID)));
 
 }
 
@@ -203,7 +209,7 @@ void Function::BuildLazyArguments() const {
            "Cannot have void typed arguments!");
     ArgumentList.push_back(new Argument(FT->getParamType(i)));
   }
-  
+
   // Clear the lazy arguments bit.
   unsigned SDC = getSubclassDataFromValue();
   const_cast<Function*>(this)->setValueSubclassData(SDC &= ~1);
@@ -235,7 +241,7 @@ void Function::setParent(Module *parent) {
 void Function::dropAllReferences() {
   for (iterator I = begin(), E = end(); I != E; ++I)
     I->dropAllReferences();
-  
+
   // Delete all basic blocks. They are now unused, except possibly by
   // blockaddresses, but BasicBlock's destructor takes care of those.
   while (!BasicBlocks.empty())
@@ -243,14 +249,14 @@ void Function::dropAllReferences() {
 }
 
 void Function::addAttribute(unsigned i, Attributes attr) {
-  AttrListPtr PAL = getAttributes();
-  PAL = PAL.addAttr(i, attr);
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.addAttr(getContext(), i, attr);
   setAttributes(PAL);
 }
 
 void Function::removeAttribute(unsigned i, Attributes attr) {
-  AttrListPtr PAL = getAttributes();
-  PAL = PAL.removeAttr(i, attr);
+  AttributeSet PAL = getAttributes();
+  PAL = PAL.removeAttr(getContext(), i, attr);
   setAttributes(PAL);
 }
 
@@ -324,7 +330,7 @@ unsigned Function::getIntrinsicID() const {
     return 0;
   unsigned Len = ValName->getKeyLength();
   const char *Name = ValName->getKeyData();
-  
+
   if (Len < 5 || Name[4] != '.' || Name[0] != 'l' || Name[1] != 'l'
       || Name[2] != 'v' || Name[3] != 'm')
     return 0;  // All intrinsics start with 'llvm.'
@@ -348,7 +354,7 @@ std::string Intrinsic::getName(ID id, ArrayRef<Type*> Tys) {
   std::string Result(Table[id]);
   for (unsigned i = 0; i < Tys.size(); ++i) {
     if (PointerType* PTyp = dyn_cast<PointerType>(Tys[i])) {
-      Result += ".p" + llvm::utostr(PTyp->getAddressSpace()) + 
+      Result += ".p" + llvm::utostr(PTyp->getAddressSpace()) +
                 EVT::getEVT(PTyp->getElementType()).getEVTString();
     }
     else if (Tys[i])
@@ -380,7 +386,7 @@ enum IIT_Info {
   IIT_MMX  = 13,
   IIT_PTR  = 14,
   IIT_ARG  = 15,
-  
+
   // Values from 16+ are only encodable with the inefficient encoding.
   IIT_METADATA = 16,
   IIT_EMPTYSTRUCT = 17,
@@ -399,7 +405,7 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
   IIT_Info Info = IIT_Info(Infos[NextElt++]);
   unsigned StructElts = 2;
   using namespace Intrinsic;
-  
+
   switch (Info) {
   case IIT_Done:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Void, 0));
@@ -456,7 +462,7 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
     DecodeIITType(NextElt, Infos, OutputTable);
     return;
   case IIT_ANYPTR: {  // [ANYPTR addrspace, subtype]
-    OutputTable.push_back(IITDescriptor::get(IITDescriptor::Pointer, 
+    OutputTable.push_back(IITDescriptor::get(IITDescriptor::Pointer,
                                              Infos[NextElt++]));
     DecodeIITType(NextElt, Infos, OutputTable);
     return;
@@ -500,11 +506,11 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
 #include "llvm/Intrinsics.gen"
 #undef GET_INTRINSIC_GENERATOR_GLOBAL
 
-void Intrinsic::getIntrinsicInfoTableEntries(ID id, 
+void Intrinsic::getIntrinsicInfoTableEntries(ID id,
                                              SmallVectorImpl<IITDescriptor> &T){
   // Check to see if the intrinsic's type was expressible by the table.
   unsigned TableVal = IIT_Table[id-1];
-  
+
   // Decode the TableVal into an array of IITValues.
   SmallVector<unsigned char, 8> IITValues;
   ArrayRef<unsigned char> IITEntries;
@@ -512,7 +518,7 @@ void Intrinsic::getIntrinsicInfoTableEntries(ID id,
   if ((TableVal >> 31) != 0) {
     // This is an offset into the IIT_LongEncodingTable.
     IITEntries = IIT_LongEncodingTable;
-    
+
     // Strip sentinel bit.
     NextElt = (TableVal << 1) >> 1;
   } else {
@@ -522,7 +528,7 @@ void Intrinsic::getIntrinsicInfoTableEntries(ID id,
       IITValues.push_back(TableVal & 0xF);
       TableVal >>= 4;
     } while (TableVal);
-    
+
     IITEntries = IITValues;
     NextElt = 0;
   }
@@ -539,14 +545,14 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
   using namespace Intrinsic;
   IITDescriptor D = Infos.front();
   Infos = Infos.slice(1);
-  
+
   switch (D.Kind) {
   case IITDescriptor::Void: return Type::getVoidTy(Context);
   case IITDescriptor::MMX: return Type::getX86_MMXTy(Context);
   case IITDescriptor::Metadata: return Type::getMetadataTy(Context);
   case IITDescriptor::Float: return Type::getFloatTy(Context);
   case IITDescriptor::Double: return Type::getDoubleTy(Context);
-      
+
   case IITDescriptor::Integer:
     return IntegerType::get(Context, D.Integer_Width);
   case IITDescriptor::Vector:
@@ -567,7 +573,7 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
   case IITDescriptor::ExtendVecArgument:
     return VectorType::getExtendedElementVectorType(cast<VectorType>(
                                                   Tys[D.getArgumentNumber()]));
-      
+
   case IITDescriptor::TruncVecArgument:
     return VectorType::getTruncatedElementVectorType(cast<VectorType>(
                                                   Tys[D.getArgumentNumber()]));
@@ -581,15 +587,15 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
                                  ID id, ArrayRef<Type*> Tys) {
   SmallVector<IITDescriptor, 8> Table;
   getIntrinsicInfoTableEntries(id, Table);
-  
+
   ArrayRef<IITDescriptor> TableRef = Table;
   Type *ResultTy = DecodeFixedType(TableRef, Tys, Context);
-    
+
   SmallVector<Type*, 8> ArgTys;
   while (!TableRef.empty())
     ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context));
 
-  return FunctionType::get(ResultTy, ArgTys, false); 
+  return FunctionType::get(ResultTy, ArgTys, false);
 }
 
 bool Intrinsic::isOverloaded(ID id) {

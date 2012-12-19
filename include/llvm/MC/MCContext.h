@@ -10,10 +10,10 @@
 #ifndef LLVM_MC_MCCONTEXT_H
 #define LLVM_MC_MCCONTEXT_H
 
-#include "llvm/MC/SectionKind.h"
-#include "llvm/MC/MCDwarf.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/MC/MCDwarf.h"
+#include "llvm/MC/SectionKind.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
@@ -94,6 +94,9 @@ namespace llvm {
     /// .secure_log_reset appearing between them.
     bool SecureLogUsed;
 
+    /// The compilation directory to use for DW_AT_comp_dir.
+    std::string CompilationDir;
+
     /// The dwarf file and directory tables from the dwarf .file directive.
     std::vector<MCDwarfFile *> MCDwarfFiles;
     std::vector<StringRef> MCDwarfDirs;
@@ -137,11 +140,15 @@ namespace llvm {
 
     void *MachOUniquingMap, *ELFUniquingMap, *COFFUniquingMap;
 
+    /// Do automatic reset in destructor
+    bool AutoReset;
+
     MCSymbol *CreateSymbol(StringRef Name);
 
   public:
     explicit MCContext(const MCAsmInfo &MAI, const MCRegisterInfo &MRI,
-                       const MCObjectFileInfo *MOFI, const SourceMgr *Mgr = 0);
+                       const MCObjectFileInfo *MOFI, const SourceMgr *Mgr = 0,
+                       bool DoAutoReset = true);
     ~MCContext();
 
     const SourceMgr *getSourceManager() const { return SrcMgr; }
@@ -153,6 +160,15 @@ namespace llvm {
     const MCObjectFileInfo *getObjectFileInfo() const { return MOFI; }
 
     void setAllowTemporaryLabels(bool Value) { AllowTemporaryLabels = Value; }
+
+    /// @name Module Lifetime Management
+    /// @{
+
+    /// reset - return object to right after construction state to prepare
+    /// to process a new module
+    void reset();
+
+    /// @}
 
     /// @name Symbol Management
     /// @{
@@ -234,6 +250,16 @@ namespace llvm {
 
     /// @name Dwarf Management
     /// @{
+
+    /// \brief Get the compilation directory for DW_AT_comp_dir
+    /// This can be overridden by clients which want to control the reported
+    /// compilation directory and have it be something other than the current
+    /// working directory.
+    const std::string &getCompilationDir() const { return CompilationDir; }
+
+    /// \brief Set the compilation directory for DW_AT_comp_dir
+    /// Override the default (CWD) compilation directory.
+    void setCompilationDir(StringRef S) { CompilationDir = S.str(); }
 
     /// GetDwarfFile - creates an entry in the dwarf file and directory tables.
     unsigned GetDwarfFile(StringRef Directory, StringRef FileName,
