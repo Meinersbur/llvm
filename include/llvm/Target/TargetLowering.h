@@ -26,6 +26,7 @@
 #include "llvm/AddressingMode.h"
 #include "llvm/Attributes.h"
 #include "llvm/CallingConv.h"
+#include "llvm/CodeGen/DAGCombine.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/InlineAsm.h"
@@ -67,7 +68,6 @@ namespace llvm {
       VLIW              // Scheduling for VLIW targets.
     };
   }
-
 
 //===----------------------------------------------------------------------===//
 /// TargetLowering - This class defines information used to lower LLVM code to
@@ -250,9 +250,8 @@ public:
 
   /// getRepRegClassCostFor - Return the cost of the 'representative' register
   /// class for the specified value type.
-  virtual uint8_t getRepRegClassCostFor(EVT VT) const {
-    assert(VT.isSimple() && "getRepRegClassCostFor called on illegal type!");
-    return RepRegClassCostForVT[VT.getSimpleVT().SimpleTy];
+  virtual uint8_t getRepRegClassCostFor(MVT VT) const {
+    return RepRegClassCostForVT[VT.SimpleTy];
   }
 
   /// isTypeLegal - Return true if the target has native support for the
@@ -340,7 +339,7 @@ public:
   unsigned getVectorTypeBreakdown(LLVMContext &Context, EVT VT,
                                   EVT &IntermediateVT,
                                   unsigned &NumIntermediates,
-                                  EVT &RegisterVT) const;
+                                  MVT &RegisterVT) const;
 
   /// getTgtMemIntrinsic: Given an intrinsic, checks if on the target the
   /// intrinsic will need to map to a MemIntrinsicNode (touches memory). If
@@ -414,6 +413,15 @@ public:
        getOperationAction(Op, VT) == Custom);
   }
 
+  /// isOperationLegalOrPromote - Return true if the specified operation is
+  /// legal on this target or can be made legal using promotion. This
+  /// is used to help guide high-level lowering decisions.
+  bool isOperationLegalOrPromote(unsigned Op, EVT VT) const {
+    return (VT == MVT::Other || isTypeLegal(VT)) &&
+      (getOperationAction(Op, VT) == Legal ||
+       getOperationAction(Op, VT) == Promote);
+  }
+
   /// isOperationExpand - Return true if the specified operation is illegal on
   /// this target or unlikely to be made legal with custom lowering. This is
   /// used to help guide high-level lowering decisions.
@@ -449,19 +457,18 @@ public:
   /// treated: either it is legal, needs to be promoted to a larger size, needs
   /// to be expanded to some other code sequence, or the target has a custom
   /// expander for it.
-  LegalizeAction getTruncStoreAction(EVT ValVT, EVT MemVT) const {
-    assert(ValVT.getSimpleVT() < MVT::LAST_VALUETYPE &&
-           MemVT.getSimpleVT() < MVT::LAST_VALUETYPE &&
+  LegalizeAction getTruncStoreAction(MVT ValVT, MVT MemVT) const {
+    assert(ValVT < MVT::LAST_VALUETYPE && MemVT < MVT::LAST_VALUETYPE &&
            "Table isn't big enough!");
-    return (LegalizeAction)TruncStoreActions[ValVT.getSimpleVT().SimpleTy]
-                                            [MemVT.getSimpleVT().SimpleTy];
+    return (LegalizeAction)TruncStoreActions[ValVT.SimpleTy]
+                                            [MemVT.SimpleTy];
   }
 
   /// isTruncStoreLegal - Return true if the specified store with truncation is
   /// legal on this target.
   bool isTruncStoreLegal(EVT ValVT, EVT MemVT) const {
     return isTypeLegal(ValVT) && MemVT.isSimple() &&
-           getTruncStoreAction(ValVT, MemVT) == Legal;
+      getTruncStoreAction(ValVT.getSimpleVT(), MemVT.getSimpleVT()) == Legal;
   }
 
   /// getIndexedLoadAction - Return how the indexed load should be treated:
@@ -469,11 +476,10 @@ public:
   /// expanded to some other code sequence, or the target has a custom expander
   /// for it.
   LegalizeAction
-  getIndexedLoadAction(unsigned IdxMode, EVT VT) const {
-    assert(IdxMode < ISD::LAST_INDEXED_MODE &&
-           VT.getSimpleVT() < MVT::LAST_VALUETYPE &&
+  getIndexedLoadAction(unsigned IdxMode, MVT VT) const {
+    assert(IdxMode < ISD::LAST_INDEXED_MODE && VT < MVT::LAST_VALUETYPE &&
            "Table isn't big enough!");
-    unsigned Ty = (unsigned)VT.getSimpleVT().SimpleTy;
+    unsigned Ty = (unsigned)VT.SimpleTy;
     return (LegalizeAction)((IndexedModeActions[Ty][IdxMode] & 0xf0) >> 4);
   }
 
@@ -481,8 +487,8 @@ public:
   /// on this target.
   bool isIndexedLoadLegal(unsigned IdxMode, EVT VT) const {
     return VT.isSimple() &&
-      (getIndexedLoadAction(IdxMode, VT) == Legal ||
-       getIndexedLoadAction(IdxMode, VT) == Custom);
+      (getIndexedLoadAction(IdxMode, VT.getSimpleVT()) == Legal ||
+       getIndexedLoadAction(IdxMode, VT.getSimpleVT()) == Custom);
   }
 
   /// getIndexedStoreAction - Return how the indexed store should be treated:
@@ -490,11 +496,10 @@ public:
   /// expanded to some other code sequence, or the target has a custom expander
   /// for it.
   LegalizeAction
-  getIndexedStoreAction(unsigned IdxMode, EVT VT) const {
-    assert(IdxMode < ISD::LAST_INDEXED_MODE &&
-           VT.getSimpleVT() < MVT::LAST_VALUETYPE &&
+  getIndexedStoreAction(unsigned IdxMode, MVT VT) const {
+    assert(IdxMode < ISD::LAST_INDEXED_MODE && VT < MVT::LAST_VALUETYPE &&
            "Table isn't big enough!");
-    unsigned Ty = (unsigned)VT.getSimpleVT().SimpleTy;
+    unsigned Ty = (unsigned)VT.SimpleTy;
     return (LegalizeAction)(IndexedModeActions[Ty][IdxMode] & 0x0f);
   }
 
@@ -502,54 +507,54 @@ public:
   /// on this target.
   bool isIndexedStoreLegal(unsigned IdxMode, EVT VT) const {
     return VT.isSimple() &&
-      (getIndexedStoreAction(IdxMode, VT) == Legal ||
-       getIndexedStoreAction(IdxMode, VT) == Custom);
+      (getIndexedStoreAction(IdxMode, VT.getSimpleVT()) == Legal ||
+       getIndexedStoreAction(IdxMode, VT.getSimpleVT()) == Custom);
   }
 
   /// getCondCodeAction - Return how the condition code should be treated:
   /// either it is legal, needs to be expanded to some other code sequence,
   /// or the target has a custom expander for it.
   LegalizeAction
-  getCondCodeAction(ISD::CondCode CC, EVT VT) const {
+  getCondCodeAction(ISD::CondCode CC, MVT VT) const {
     assert((unsigned)CC < array_lengthof(CondCodeActions) &&
-           (unsigned)VT.getSimpleVT().SimpleTy < sizeof(CondCodeActions[0])*4 &&
+           (unsigned)VT.SimpleTy < sizeof(CondCodeActions[0])*4 &&
            "Table isn't big enough!");
     /// The lower 5 bits of the SimpleTy index into Nth 2bit set from the 64bit
     /// value and the upper 27 bits index into the second dimension of the
     /// array to select what 64bit value to use.
     LegalizeAction Action = (LegalizeAction)
-      ((CondCodeActions[CC][VT.getSimpleVT().SimpleTy >> 5]
-        >> (2*(VT.getSimpleVT().SimpleTy & 0x1F))) & 3);
+      ((CondCodeActions[CC][VT.SimpleTy >> 5] >> (2*(VT.SimpleTy & 0x1F))) & 3);
     assert(Action != Promote && "Can't promote condition code!");
     return Action;
   }
 
   /// isCondCodeLegal - Return true if the specified condition code is legal
   /// on this target.
-  bool isCondCodeLegal(ISD::CondCode CC, EVT VT) const {
-    return getCondCodeAction(CC, VT) == Legal ||
-           getCondCodeAction(CC, VT) == Custom;
+  bool isCondCodeLegal(ISD::CondCode CC, MVT VT) const {
+    return
+      getCondCodeAction(CC, VT) == Legal ||
+      getCondCodeAction(CC, VT) == Custom;
   }
 
 
   /// getTypeToPromoteTo - If the action for this operation is to promote, this
   /// method returns the ValueType to promote to.
-  EVT getTypeToPromoteTo(unsigned Op, EVT VT) const {
+  MVT getTypeToPromoteTo(unsigned Op, MVT VT) const {
     assert(getOperationAction(Op, VT) == Promote &&
            "This operation isn't promoted!");
 
     // See if this has an explicit type specified.
     std::map<std::pair<unsigned, MVT::SimpleValueType>,
              MVT::SimpleValueType>::const_iterator PTTI =
-      PromoteToType.find(std::make_pair(Op, VT.getSimpleVT().SimpleTy));
+      PromoteToType.find(std::make_pair(Op, VT.SimpleTy));
     if (PTTI != PromoteToType.end()) return PTTI->second;
 
     assert((VT.isInteger() || VT.isFloatingPoint()) &&
            "Cannot autopromote this type, add it with AddPromotedToType.");
 
-    EVT NVT = VT;
+    MVT NVT = VT;
     do {
-      NVT = (MVT::SimpleValueType)(NVT.getSimpleVT().SimpleTy+1);
+      NVT = (MVT::SimpleValueType)(NVT.SimpleTy+1);
       assert(NVT.isInteger() == VT.isInteger() && NVT != MVT::isVoid &&
              "Didn't find type to promote to!");
     } while (!isTypeLegal(NVT) ||
@@ -589,21 +594,22 @@ public:
 
   /// getRegisterType - Return the type of registers that this ValueType will
   /// eventually require.
-  EVT getRegisterType(MVT VT) const {
+  MVT getRegisterType(MVT VT) const {
     assert((unsigned)VT.SimpleTy < array_lengthof(RegisterTypeForVT));
     return RegisterTypeForVT[VT.SimpleTy];
   }
 
   /// getRegisterType - Return the type of registers that this ValueType will
   /// eventually require.
-  EVT getRegisterType(LLVMContext &Context, EVT VT) const {
+  MVT getRegisterType(LLVMContext &Context, EVT VT) const {
     if (VT.isSimple()) {
       assert((unsigned)VT.getSimpleVT().SimpleTy <
                 array_lengthof(RegisterTypeForVT));
       return RegisterTypeForVT[VT.getSimpleVT().SimpleTy];
     }
     if (VT.isVector()) {
-      EVT VT1, RegisterVT;
+      EVT VT1;
+      MVT RegisterVT;
       unsigned NumIntermediates;
       (void)getVectorTypeBreakdown(Context, VT, VT1,
                                    NumIntermediates, RegisterVT);
@@ -628,7 +634,8 @@ public:
       return NumRegistersForVT[VT.getSimpleVT().SimpleTy];
     }
     if (VT.isVector()) {
-      EVT VT1, VT2;
+      EVT VT1;
+      MVT VT2;
       unsigned NumIntermediates;
       return getVectorTypeBreakdown(Context, VT, VT1, NumIntermediates, VT2);
     }
@@ -957,18 +964,20 @@ public:
 
   struct DAGCombinerInfo {
     void *DC;  // The DAG Combiner object.
-    bool BeforeLegalize;
-    bool BeforeLegalizeOps;
+    CombineLevel Level;
     bool CalledByLegalizer;
   public:
     SelectionDAG &DAG;
 
-    DAGCombinerInfo(SelectionDAG &dag, bool bl, bool blo, bool cl, void *dc)
-      : DC(dc), BeforeLegalize(bl), BeforeLegalizeOps(blo),
-        CalledByLegalizer(cl), DAG(dag) {}
+    DAGCombinerInfo(SelectionDAG &dag, CombineLevel level,  bool cl, void *dc)
+      : DC(dc), Level(level), CalledByLegalizer(cl), DAG(dag) {}
 
-    bool isBeforeLegalize() const { return BeforeLegalize; }
-    bool isBeforeLegalizeOps() const { return BeforeLegalizeOps; }
+    bool isBeforeLegalize() const { return Level == BeforeLegalizeTypes; }
+    bool isBeforeLegalizeOps() const { return Level < AfterLegalizeVectorOps; }
+    bool isAfterLegalizeVectorOps() const {
+      return Level == AfterLegalizeDAG;
+    }
+    CombineLevel getDAGCombineLevel() { return Level; }
     bool isCalledByLegalizer() const { return CalledByLegalizer; }
 
     void AddToWorklist(SDNode *N);
@@ -1130,16 +1139,16 @@ protected:
   /// addRegisterClass - Add the specified register class as an available
   /// regclass for the specified value type.  This indicates the selector can
   /// handle values of that class natively.
-  void addRegisterClass(EVT VT, const TargetRegisterClass *RC) {
-    assert((unsigned)VT.getSimpleVT().SimpleTy < array_lengthof(RegClassForVT));
+  void addRegisterClass(MVT VT, const TargetRegisterClass *RC) {
+    assert((unsigned)VT.SimpleTy < array_lengthof(RegClassForVT));
     AvailableRegClasses.push_back(std::make_pair(VT, RC));
-    RegClassForVT[VT.getSimpleVT().SimpleTy] = RC;
+    RegClassForVT[VT.SimpleTy] = RC;
   }
 
   /// findRepresentativeClass - Return the largest legal super-reg register class
   /// of the register class for the specified type and its associated "cost".
   virtual std::pair<const TargetRegisterClass*, uint8_t>
-  findRepresentativeClass(EVT VT) const;
+  findRepresentativeClass(MVT VT) const;
 
   /// computeRegisterProperties - Once all of the register classes are added,
   /// this allows us to compute derived properties we expose.
@@ -1353,9 +1362,9 @@ public:
                      FunctionType *FTy, bool isTailCall, SDValue callee,
                      ArgListTy &args, SelectionDAG &dag, DebugLoc dl,
                      ImmutableCallSite &cs)
-    : Chain(chain), RetTy(retTy), RetSExt(cs.paramHasAttr(0, Attributes::SExt)),
-      RetZExt(cs.paramHasAttr(0, Attributes::ZExt)), IsVarArg(FTy->isVarArg()),
-      IsInReg(cs.paramHasAttr(0, Attributes::InReg)),
+    : Chain(chain), RetTy(retTy), RetSExt(cs.paramHasAttr(0, Attribute::SExt)),
+      RetZExt(cs.paramHasAttr(0, Attribute::ZExt)), IsVarArg(FTy->isVarArg()),
+      IsInReg(cs.paramHasAttr(0, Attribute::InReg)),
       DoesNotReturn(cs.doesNotReturn()),
       IsReturnValueUsed(!cs.getInstruction()->use_empty()),
       IsTailCall(isTailCall), NumFixedArgs(FTy->getNumParams()),
@@ -1448,9 +1457,9 @@ public:
   /// but this is not true all the time, e.g. i1 on x86-64. It is also not
   /// necessary for non-C calling conventions. The frontend should handle this
   /// and include all of the necessary information.
-  virtual EVT getTypeForExtArgOrReturn(LLVMContext &Context, EVT VT,
+  virtual MVT getTypeForExtArgOrReturn(MVT VT,
                                        ISD::NodeType /*ExtendKind*/) const {
-    EVT MinVT = getRegisterType(Context, MVT::i32);
+    MVT MinVT = getRegisterType(MVT::i32);
     return VT.bitsLT(MinVT) ? MinVT : VT;
   }
 
@@ -1557,7 +1566,7 @@ public:
     Value *CallOperandVal;
 
     /// ConstraintVT - The ValueType for the operand value.
-    EVT ConstraintVT;
+    MVT ConstraintVT;
 
     /// isMatchingInputConstraint - Return true of this is an input operand that
     /// is a matching constraint like "4".
@@ -1935,7 +1944,7 @@ private:
   /// each ValueType the target supports natively.
   const TargetRegisterClass *RegClassForVT[MVT::LAST_VALUETYPE];
   unsigned char NumRegistersForVT[MVT::LAST_VALUETYPE];
-  EVT RegisterTypeForVT[MVT::LAST_VALUETYPE];
+  MVT RegisterTypeForVT[MVT::LAST_VALUETYPE];
 
   /// RepRegClassForVT - This indicates the "representative" register class to
   /// use for each ValueType the target supports natively. This information is
@@ -1955,7 +1964,7 @@ private:
   /// contains one step of the expand (e.g. i64 -> i32), even if there are
   /// multiple steps required (e.g. i64 -> i16).  For types natively supported
   /// by the system, this holds the same type (e.g. i32 -> i32).
-  EVT TransformToType[MVT::LAST_VALUETYPE];
+  MVT TransformToType[MVT::LAST_VALUETYPE];
 
   /// OpActions - For each operation and each value type, keep a LegalizeAction
   /// that indicates how instruction selection should deal with the operation.
@@ -1996,19 +2005,22 @@ public:
   getTypeConversion(LLVMContext &Context, EVT VT) const {
     // If this is a simple type, use the ComputeRegisterProp mechanism.
     if (VT.isSimple()) {
-      assert((unsigned)VT.getSimpleVT().SimpleTy <
-             array_lengthof(TransformToType));
-      EVT NVT = TransformToType[VT.getSimpleVT().SimpleTy];
-      LegalizeTypeAction LA = ValueTypeActions.getTypeAction(VT.getSimpleVT());
+      MVT SVT = VT.getSimpleVT();
+      assert((unsigned)SVT.SimpleTy < array_lengthof(TransformToType));
+      MVT NVT = TransformToType[SVT.SimpleTy];
+      LegalizeTypeAction LA = ValueTypeActions.getTypeAction(SVT);
 
       assert(
-        (!(NVT.isSimple() && LA != TypeLegal) ||
-         ValueTypeActions.getTypeAction(NVT.getSimpleVT()) != TypePromoteInteger)
+        (LA == TypeLegal ||
+         ValueTypeActions.getTypeAction(NVT) != TypePromoteInteger)
          && "Promote may not follow Expand or Promote");
 
       if (LA == TypeSplitVector)
-        NVT = EVT::getVectorVT(Context, VT.getVectorElementType(),
-                               VT.getVectorNumElements() / 2);
+        return LegalizeKind(LA, EVT::getVectorVT(Context,
+                                                 SVT.getVectorElementType(),
+                                                 SVT.getVectorNumElements()/2));
+      if (LA == TypeScalarizeVector)
+        return LegalizeKind(LA, SVT.getVectorElementType());
       return LegalizeKind(LA, NVT);
     }
 
@@ -2112,7 +2124,7 @@ public:
   }
 
 private:
-  std::vector<std::pair<EVT, const TargetRegisterClass*> > AvailableRegClasses;
+  std::vector<std::pair<MVT, const TargetRegisterClass*> > AvailableRegClasses;
 
   /// TargetDAGCombineArray - Targets can specify ISD nodes that they would
   /// like PerformDAGCombine callbacks for by calling setTargetDAGCombine(),
@@ -2205,7 +2217,7 @@ private:
 /// GetReturnInfo - Given an LLVM IR type and return type attributes,
 /// compute the return value EVTs and flags, and optionally also
 /// the offsets, if the return value is being lowered to memory.
-void GetReturnInfo(Type* ReturnType, Attributes attr,
+void GetReturnInfo(Type* ReturnType, Attribute attr,
                    SmallVectorImpl<ISD::OutputArg> &Outs,
                    const TargetLowering &TLI);
 

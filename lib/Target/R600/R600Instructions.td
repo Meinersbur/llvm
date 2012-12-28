@@ -338,7 +338,7 @@ class R600_TEX <bits<11> inst, string opName, list<dag> pattern,
 def TEX_SHADOW : PatLeaf<
   (imm),
   [{uint32_t TType = (uint32_t)N->getZExtValue();
-    return (TType >= 6 && TType <= 8) || TType == 11 || TType == 12;
+    return (TType >= 6 && TType <= 8) || (TType >= 11 && TType <= 13);
   }]
 >;
 
@@ -674,7 +674,7 @@ def ADD_INT : R600_2OP_Helper <0x34, "ADD_INT", add>;
 def SUB_INT : R600_2OP_Helper <0x35, "SUB_INT", sub>;
 def MAX_INT : R600_2OP_Helper <0x36, "MAX_INT", AMDGPUsmax>;
 def MIN_INT : R600_2OP_Helper <0x37, "MIN_INT", AMDGPUsmin>;
-def MAX_UINT : R600_2OP_Helper <0x38, "MAX_UINT", AMDGPUsmax>;
+def MAX_UINT : R600_2OP_Helper <0x38, "MAX_UINT", AMDGPUumax>;
 def MIN_UINT : R600_2OP_Helper <0x39, "MIN_UINT", AMDGPUumin>;
 
 def SETE_INT : R600_2OP <
@@ -1543,6 +1543,71 @@ def FNEG_R600 : FNEG<R600_Reg32>;
 let isTerminator = 1, isReturn = 1, isBarrier = 1, hasCtrlDep = 1 in {
   def RETURN          : ILFormat<(outs), (ins variable_ops),
       "RETURN", [(IL_retflag)]>;
+}
+
+//===--------------------------------------------------------------------===//
+// Instructions support
+//===--------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
+// Custom Inserter for Branches and returns, this eventually will be a
+// seperate pass
+//===---------------------------------------------------------------------===//
+let isTerminator = 1, usesCustomInserter = 1, isBranch = 1, isBarrier = 1 in {
+  def BRANCH : ILFormat<(outs), (ins brtarget:$target),
+      "; Pseudo unconditional branch instruction",
+      [(br bb:$target)]>;
+  defm BRANCH_COND : BranchConditional<IL_brcond>;
+}
+
+//===---------------------------------------------------------------------===//
+// Flow and Program control Instructions
+//===---------------------------------------------------------------------===//
+let isTerminator=1 in {
+  def SWITCH      : ILFormat< (outs), (ins GPRI32:$src),
+  !strconcat("SWITCH", " $src"), []>;
+  def CASE        : ILFormat< (outs), (ins GPRI32:$src),
+      !strconcat("CASE", " $src"), []>;
+  def BREAK       : ILFormat< (outs), (ins),
+      "BREAK", []>;
+  def CONTINUE    : ILFormat< (outs), (ins),
+      "CONTINUE", []>;
+  def DEFAULT     : ILFormat< (outs), (ins),
+      "DEFAULT", []>;
+  def ELSE        : ILFormat< (outs), (ins),
+      "ELSE", []>;
+  def ENDSWITCH   : ILFormat< (outs), (ins),
+      "ENDSWITCH", []>;
+  def ENDMAIN     : ILFormat< (outs), (ins),
+      "ENDMAIN", []>;
+  def END         : ILFormat< (outs), (ins),
+      "END", []>;
+  def ENDFUNC     : ILFormat< (outs), (ins),
+      "ENDFUNC", []>;
+  def ENDIF       : ILFormat< (outs), (ins),
+      "ENDIF", []>;
+  def WHILELOOP   : ILFormat< (outs), (ins),
+      "WHILE", []>;
+  def ENDLOOP     : ILFormat< (outs), (ins),
+      "ENDLOOP", []>;
+  def FUNC        : ILFormat< (outs), (ins),
+      "FUNC", []>;
+  def RETDYN      : ILFormat< (outs), (ins),
+      "RET_DYN", []>;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm IF_LOGICALNZ  : BranchInstr<"IF_LOGICALNZ">;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm IF_LOGICALZ   : BranchInstr<"IF_LOGICALZ">;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm BREAK_LOGICALNZ : BranchInstr<"BREAK_LOGICALNZ">;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm BREAK_LOGICALZ : BranchInstr<"BREAK_LOGICALZ">;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm CONTINUE_LOGICALNZ : BranchInstr<"CONTINUE_LOGICALNZ">;
+  // This opcode has custom swizzle pattern encoded in Swizzle Encoder
+  defm CONTINUE_LOGICALZ : BranchInstr<"CONTINUE_LOGICALZ">;
+  defm IFC         : BranchInstr2<"IFC">;
+  defm BREAKC      : BranchInstr2<"BREAKC">;
+  defm CONTINUEC   : BranchInstr2<"CONTINUEC">;
 }
 
 //===----------------------------------------------------------------------===//

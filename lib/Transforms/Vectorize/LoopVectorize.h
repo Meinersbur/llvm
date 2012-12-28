@@ -47,12 +47,12 @@
 #define LV_NAME "loop-vectorize"
 #define DEBUG_TYPE LV_NAME
 
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/IRBuilder.h" 
-
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/IRBuilder.h"
 #include <algorithm>
 using namespace llvm;
 
@@ -160,6 +160,9 @@ private:
   /// Get a uniform vector of constant integers. We use this to get
   /// vectors of ones and zeros for the reduction code.
   Constant* getUniformVector(unsigned Val, Type* ScalarTy);
+
+  /// Generate a shuffle sequence that will reverse the vector Vec.
+  Value *reverseVector(Value *Vec);
 
   typedef DenseMap<Value*, Value*> ValueMap;
 
@@ -304,7 +307,7 @@ public:
 
   /// InductionList saves induction variables and maps them to the
   /// induction descriptor.
-  typedef DenseMap<PHINode*, InductionInfo> InductionList;
+  typedef MapVector<PHINode*, InductionInfo> InductionList;
 
   /// Returns true if it is legal to vectorize this loop.
   /// This does not mean that it is profitable to vectorize this
@@ -331,7 +334,11 @@ public:
   /// when the last index of the GEP is the induction variable, or that the
   /// pointer itself is an induction variable.
   /// This check allows us to vectorize A[idx] into a wide load/store.
-  bool isConsecutivePtr(Value *Ptr);
+  /// Returns:
+  /// 0 - Stride is unknown or non consecutive.
+  /// 1 - Address is consecutive.
+  /// -1 - Address is consecutive, and decreasing.
+  int isConsecutivePtr(Value *Ptr);
 
   /// Returns true if the value V is uniform within the loop.
   bool isUniform(Value *V);

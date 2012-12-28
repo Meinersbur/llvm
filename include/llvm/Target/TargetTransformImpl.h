@@ -69,11 +69,10 @@ public:
 
   virtual ~VectorTargetTransformImpl() {}
 
-  virtual unsigned getInstrCost(unsigned Opcode, Type *Ty1, Type *Ty2) const;
-
   virtual unsigned getArithmeticInstrCost(unsigned Opcode, Type *Ty) const;
 
-  virtual unsigned getBroadcastCost(Type *Tp) const;
+  virtual unsigned getShuffleCost(ShuffleKind Kind, Type *Tp,
+                                  int Index) const;
 
   virtual unsigned getCastInstrCost(unsigned Opcode, Type *Dst,
                                     Type *Src) const;

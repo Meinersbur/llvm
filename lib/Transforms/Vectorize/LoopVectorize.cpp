@@ -15,7 +15,6 @@
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
-#include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Analysis/Verifier.h"
@@ -44,7 +43,7 @@ VectorizationFactor("force-vector-width", cl::init(0), cl::Hidden,
                     cl::desc("Sets the SIMD width. Zero is autoselect."));
 
 static cl::opt<bool>
-EnableIfConversion("enable-if-conversion", cl::init(false), cl::Hidden,
+EnableIfConversion("enable-if-conversion", cl::init(true), cl::Hidden,
                    cl::desc("Enable if-conversion during vectorization."));
 
 namespace {
@@ -95,7 +94,7 @@ struct LoopVectorize : public LoopPass {
     // Check the function attribues to find out if this function should be
     // optimized for size.
     Function *F = L->getHeader()->getParent();
-    Attributes::AttrVal SzAttr= Attributes::OptimizeForSize;
+    Attribute::AttrKind SzAttr= Attribute::OptimizeForSize;
     bool OptForSize = F->getFnAttributes().hasAttribute(SzAttr);
 
     unsigned VF = CM.selectVectorizationFactor(OptForSize, VectorizationFactor);
@@ -203,7 +202,7 @@ Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, bool Negate) {
   return Builder.CreateAdd(Val, Cv, "induction");
 }
 
-bool LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
+int LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
   assert(Ptr->getType()->isPointerTy() && "Unexpected non ptr");
 
   // If this value is a pointer induction variable we know it is consecutive.
@@ -211,12 +210,12 @@ bool LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
   if (Phi && Inductions.count(Phi)) {
     InductionInfo II = Inductions[Phi];
     if (PtrInduction == II.IK)
-      return true;
+      return 1;
   }
 
   GetElementPtrInst *Gep = dyn_cast_or_null<GetElementPtrInst>(Ptr);
   if (!Gep)
-    return false;
+    return 0;
 
   unsigned NumOperands = Gep->getNumOperands();
   Value *LastIndex = Gep->getOperand(NumOperands - 1);
@@ -224,7 +223,7 @@ bool LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
   // Check that all of the gep indices are uniform except for the last.
   for (unsigned i = 0; i < NumOperands - 1; ++i)
     if (!SE->isLoopInvariant(SE->getSCEV(Gep->getOperand(i)), TheLoop))
-      return false;
+      return 0;
 
   // We can emit wide load/stores only if the last index is the induction
   // variable.
@@ -235,10 +234,12 @@ bool LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
     // The memory is consecutive because the last index is consecutive
     // and all other indices are loop invariant.
     if (Step->isOne())
-      return true;
+      return 1;
+    if (Step->isAllOnesValue())
+      return -1;
   }
 
-  return false;
+  return 0;
 }
 
 bool LoopVectorizationLegality::isUniform(Value *V) {
@@ -264,6 +265,17 @@ InnerLoopVectorizer::getUniformVector(unsigned Val, Type* ScalarTy) {
   return ConstantVector::getSplat(VF, ConstantInt::get(ScalarTy, Val, true));
 }
 
+Value *InnerLoopVectorizer::reverseVector(Value *Vec) {
+  assert(Vec->getType()->isVectorTy() && "Invalid type");
+  SmallVector<Constant*, 8> ShuffleMask;
+  for (unsigned i = 0; i < VF; ++i)
+    ShuffleMask.push_back(Builder.getInt32(VF - i - 1));
+
+  return Builder.CreateShuffleVector(Vec, UndefValue::get(Vec->getType()),
+                                     ConstantVector::get(ShuffleMask),
+                                     "reverse");
+}
+
 void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr) {
   assert(!Instr->getType()->isAggregateType() && "Can't handle vectors");
   // Holds vector parameters or scalars, in case of uniform vals.
@@ -284,7 +296,7 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr) {
 
     // If the src is an instruction that appeared earlier in the basic block
     // then it should already be vectorized.
-    if (SrcInst && SrcInst->getParent() == Instr->getParent()) {
+    if (SrcInst && OrigLoop->contains(SrcInst)) {
       assert(WidenMap.count(SrcInst) && "Source operand is unavailable");
       // The parameter is a vector value from earlier.
       Params.push_back(WidenMap[SrcInst]);
@@ -712,6 +724,7 @@ isTriviallyVectorizableIntrinsic(Instruction *Inst) {
   case Intrinsic::nearbyint:
   case Intrinsic::pow:
   case Intrinsic::fma:
+  case Intrinsic::fmuladd:
     return true;
   default:
     return false;
@@ -941,8 +954,7 @@ Value *InnerLoopVectorizer::createBlockInMask(BasicBlock *BB) {
 void
 InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
                                           BasicBlock *BB, PhiVector *PV) {
-  Constant *Zero =
-  ConstantInt::get(IntegerType::getInt32Ty(BB->getContext()), 0);
+  Constant *Zero = Builder.getInt32(0);
 
   // For each instruction in the old loop.
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
@@ -1142,14 +1154,15 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
       assert(!Legal->isUniform(Ptr) &&
              "We do not allow storing to uniform addresses");
 
-      GetElementPtrInst *Gep = dyn_cast<GetElementPtrInst>(Ptr);
 
-      // This store does not use GEPs.
-      if (!Legal->isConsecutivePtr(Ptr)) {
+      int Stride = Legal->isConsecutivePtr(Ptr);
+      bool Reverse = Stride < 0;
+      if (Stride == 0) {
         scalarizeInstruction(it);
         break;
       }
 
+      GetElementPtrInst *Gep = dyn_cast<GetElementPtrInst>(Ptr);
       if (Gep) {
         // The last index does not have to be the induction. It can be
         // consecutive and be a function of the index. For example A[I+1];
@@ -1166,8 +1179,16 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
         assert(isa<PHINode>(Ptr) && "Invalid induction ptr");
         Ptr = Builder.CreateExtractElement(getVectorValue(Ptr), Zero);
       }
+
+      // If the address is consecutive but reversed, then the
+      // wide load needs to start at the last vector element.
+      if (Reverse)
+        Ptr = Builder.CreateGEP(Ptr, Builder.getInt32(1 - VF));
+
       Ptr = Builder.CreateBitCast(Ptr, StTy->getPointerTo());
       Value *Val = getVectorValue(SI->getValueOperand());
+      if (Reverse)
+        Val = reverseVector(Val);
       Builder.CreateStore(Val, Ptr)->setAlignment(Alignment);
       break;
     }
@@ -1177,16 +1198,17 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
       Type *RetTy = VectorType::get(LI->getType(), VF);
       Value *Ptr = LI->getPointerOperand();
       unsigned Alignment = LI->getAlignment();
-      GetElementPtrInst *Gep = dyn_cast<GetElementPtrInst>(Ptr);
 
       // If the pointer is loop invariant or if it is non consecutive,
       // scalarize the load.
-      bool Con = Legal->isConsecutivePtr(Ptr);
-      if (Legal->isUniform(Ptr) || !Con) {
+      int Stride = Legal->isConsecutivePtr(Ptr);
+      bool Reverse = Stride < 0;
+      if (Legal->isUniform(Ptr) || Stride == 0) {
         scalarizeInstruction(it);
         break;
       }
 
+      GetElementPtrInst *Gep = dyn_cast<GetElementPtrInst>(Ptr);
       if (Gep) {
         // The last index does not have to be the induction. It can be
         // consecutive and be a function of the index. For example A[I+1];
@@ -1203,12 +1225,17 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
         assert(isa<PHINode>(Ptr) && "Invalid induction ptr");
         Ptr = Builder.CreateExtractElement(getVectorValue(Ptr), Zero);
       }
+      // If the address is consecutive but reversed, then the
+      // wide load needs to start at the last vector element.
+      if (Reverse)
+        Ptr = Builder.CreateGEP(Ptr, Builder.getInt32(1 - VF));
 
       Ptr = Builder.CreateBitCast(Ptr, RetTy->getPointerTo());
       LI = Builder.CreateLoad(Ptr);
       LI->setAlignment(Alignment);
+
       // Use this vector value for all users of the load.
-      WidenMap[it] = LI;
+      WidenMap[it] = Reverse ? reverseVector(LI) :  LI;
       break;
     }
     case Instruction::ZExt:
@@ -1465,11 +1492,18 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
         return false;
       }
 
-      // We do not re-vectorize vectors.
+      // Check that the instruction return type is vectorizable.
       if (!VectorType::isValidElementType(it->getType()) &&
           !it->getType()->isVoidTy()) {
         DEBUG(dbgs() << "LV: Found unvectorizable type." << "\n");
         return false;
+      }
+
+      // Check that the stored type is vectorizable.
+      if (StoreInst *ST = dyn_cast<StoreInst>(it)) {
+        Type *T = ST->getValueOperand()->getType();
+        if (!VectorType::isValidElementType(T))
+          return false;
       }
 
       // Reduction instructions are allowed to have exit users.
@@ -1593,8 +1627,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
 
   ValueVector::iterator I, IE;
   for (I = Stores.begin(), IE = Stores.end(); I != IE; ++I) {
-    StoreInst *ST = dyn_cast<StoreInst>(*I);
-    assert(ST && "Bad StoreInst");
+    StoreInst *ST = cast<StoreInst>(*I);
     Value* Ptr = ST->getPointerOperand();
 
     if (isUniform(Ptr)) {
@@ -1609,8 +1642,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
   }
 
   for (I = Loads.begin(), IE = Loads.end(); I != IE; ++I) {
-    LoadInst *LD = dyn_cast<LoadInst>(*I);
-    assert(LD && "Bad LoadInst");
+    LoadInst *LD = cast<LoadInst>(*I);
     Value* Ptr = LD->getPointerOperand();
     // If we did *not* see this pointer before, insert it to the
     // read list. If we *did* see it before, then it is already in
@@ -1620,7 +1652,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     // If the address of i is unknown (for example A[B[i]]) then we may
     // read a few words, modify, and write a few words, and some of the
     // words may be written to the same address.
-    if (Seen.insert(Ptr) || !isConsecutivePtr(Ptr))
+    if (Seen.insert(Ptr) || 0 == isConsecutivePtr(Ptr))
       Reads.push_back(Ptr);
   }
 
@@ -1633,13 +1665,13 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
 
   // Find pointers with computable bounds. We are going to use this information
   // to place a runtime bound check.
-  bool RT = true;
+  bool CanDoRT = true;
   for (I = ReadWrites.begin(), IE = ReadWrites.end(); I != IE; ++I)
     if (hasComputableBounds(*I)) {
       PtrRtCheck.insert(SE, TheLoop, *I);
       DEBUG(dbgs() << "LV: Found a runtime check ptr:" << **I <<"\n");
     } else {
-      RT = false;
+      CanDoRT = false;
       break;
     }
   for (I = Reads.begin(), IE = Reads.end(); I != IE; ++I)
@@ -1647,22 +1679,22 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
       PtrRtCheck.insert(SE, TheLoop, *I);
       DEBUG(dbgs() << "LV: Found a runtime check ptr:" << **I <<"\n");
     } else {
-      RT = false;
+      CanDoRT = false;
       break;
     }
 
   // Check that we did not collect too many pointers or found a
   // unsizeable pointer.
-  if (!RT || PtrRtCheck.Pointers.size() > RuntimeMemoryCheckThreshold) {
+  if (!CanDoRT || PtrRtCheck.Pointers.size() > RuntimeMemoryCheckThreshold) {
     PtrRtCheck.reset();
-    RT = false;
+    CanDoRT = false;
   }
 
-  PtrRtCheck.Need = RT;
-
-  if (RT) {
+  if (CanDoRT) {
     DEBUG(dbgs() << "LV: We can perform a memory runtime check if needed.\n");
   }
+
+  bool NeedRTCheck = false;
 
   // Now that the pointers are in two lists (Reads and ReadWrites), we
   // can check that there are no conflicts between each of the writes and
@@ -1672,18 +1704,20 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
 
   // Check that the read-writes do not conflict with other read-write
   // pointers.
+  bool AllWritesIdentified = true;
   for (I = ReadWrites.begin(), IE = ReadWrites.end(); I != IE; ++I) {
     GetUnderlyingObjects(*I, TempObjects, DL);
     for (ValueVector::iterator it=TempObjects.begin(), e=TempObjects.end();
          it != e; ++it) {
       if (!isIdentifiedObject(*it)) {
         DEBUG(dbgs() << "LV: Found an unidentified write ptr:"<< **it <<"\n");
-        return RT;
+        NeedRTCheck = true;
+        AllWritesIdentified = false;
       }
       if (!WriteObjects.insert(*it)) {
         DEBUG(dbgs() << "LV: Found a possible write-write reorder:"
               << **it <<"\n");
-        return RT;
+        return false;
       }
     }
     TempObjects.clear();
@@ -1694,22 +1728,31 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     GetUnderlyingObjects(*I, TempObjects, DL);
     for (ValueVector::iterator it=TempObjects.begin(), e=TempObjects.end();
          it != e; ++it) {
-      if (!isIdentifiedObject(*it)) {
+      // If all of the writes are identified then we don't care if the read
+      // pointer is identified or not.
+      if (!AllWritesIdentified && !isIdentifiedObject(*it)) {
         DEBUG(dbgs() << "LV: Found an unidentified read ptr:"<< **it <<"\n");
-        return RT;
+        NeedRTCheck = true;
       }
       if (WriteObjects.count(*it)) {
         DEBUG(dbgs() << "LV: Found a possible read/write reorder:"
               << **it <<"\n");
-        return RT;
+        return false;
       }
     }
     TempObjects.clear();
   }
 
-  // It is safe to vectorize and we don't need any runtime checks.
-  DEBUG(dbgs() << "LV: We don't need a runtime memory check.\n");
-  PtrRtCheck.reset();
+  PtrRtCheck.Need = NeedRTCheck;
+  if (NeedRTCheck && !CanDoRT) {
+    DEBUG(dbgs() << "LV: We can't vectorize because we can't find " <<
+          "the array bounds.\n");
+    PtrRtCheck.reset();
+    return false;
+  }
+
+  DEBUG(dbgs() << "LV: We "<< (NeedRTCheck ? "" : "don't") <<
+        " need a runtime memory check.\n");
   return true;
 }
 
@@ -1733,10 +1776,9 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
   Instruction *ExitInstruction = 0;
 
   // Iter is our iterator. We start with the PHI node and scan for all of the
-  // users of this instruction. All users must be instructions which can be
+  // users of this instruction. All users must be instructions that can be
   // used as reduction variables (such as ADD). We may have a single
-  // out-of-block user. They cycle must end with the original PHI.
-  // Also, we can't have multiple block-local users.
+  // out-of-block user. The cycle must end with the original PHI.
   Instruction *Iter = Phi;
   while (true) {
     // If the instruction has no users then this is a broken
@@ -1748,9 +1790,9 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
     if (!isReductionInstr(Iter, Kind))
       return false;
 
-    // Did we find a user inside this block ?
+    // Did we find a user inside this loop already ?
     bool FoundInBlockUser = false;
-    // Did we reach the initial PHI node ?
+    // Did we reach the initial PHI node already ?
     bool FoundStartPHI = false;
 
     // For each of the *users* of iter.
@@ -1775,8 +1817,10 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
       // We allow in-loop PHINodes which are not the original reduction PHI
       // node. If this PHI is the only user of Iter (happens in IF w/ no ELSE
       // structure) then don't skip this PHI.
-      if (isa<PHINode>(U) && U->getParent() != TheLoop->getHeader() &&
-          TheLoop->contains(U) && Iter->getNumUses() > 1)
+      if (isa<PHINode>(Iter) && isa<PHINode>(U) &&
+          U->getParent() != TheLoop->getHeader() &&
+          TheLoop->contains(U) &&
+          Iter->getNumUses() > 1)
         continue;
 
       // We can't have multiple inside users.
@@ -2076,17 +2120,25 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
     VectorTy = ToVectorTy(ValTy, VF);
 
     if (VF == 1)
-      return VTTI->getMemoryOpCost(I->getOpcode(), ValTy,
+      return VTTI->getMemoryOpCost(I->getOpcode(), VectorTy,
                                    SI->getAlignment(),
                                    SI->getPointerAddressSpace());
 
     // Scalarized stores.
-    if (!Legal->isConsecutivePtr(SI->getPointerOperand())) {
+    int Stride = Legal->isConsecutivePtr(SI->getPointerOperand());
+    bool Reverse = Stride < 0;
+    if (0 == Stride) {
       unsigned Cost = 0;
-      unsigned ExtCost = VTTI->getInstrCost(Instruction::ExtractElement,
-                                            ValTy);
-      // The cost of extracting from the value vector.
-      Cost += VF * (ExtCost);
+
+      // The cost of extracting from the value vector and pointer vector.
+      Type *PtrTy = ToVectorTy(I->getOperand(0)->getType(), VF);
+      for (unsigned i = 0; i < VF; ++i) {
+        Cost += VTTI->getVectorInstrCost(Instruction::ExtractElement,
+                                         VectorTy, i);
+        Cost += VTTI->getVectorInstrCost(Instruction::ExtractElement,
+                                         PtrTy, i);
+      }
+
       // The cost of the scalar stores.
       Cost += VF * VTTI->getMemoryOpCost(I->getOpcode(),
                                          ValTy->getScalarType(),
@@ -2096,23 +2148,39 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
     }
 
     // Wide stores.
-    return VTTI->getMemoryOpCost(I->getOpcode(), VectorTy, SI->getAlignment(),
-                                 SI->getPointerAddressSpace());
+    unsigned Cost = VTTI->getMemoryOpCost(I->getOpcode(), VectorTy,
+                                          SI->getAlignment(),
+                                          SI->getPointerAddressSpace());
+    if (Reverse)
+      Cost += VTTI->getShuffleCost(VectorTargetTransformInfo::Reverse,
+                                   VectorTy, 0);
+    return Cost;
   }
   case Instruction::Load: {
     LoadInst *LI = cast<LoadInst>(I);
 
     if (VF == 1)
-      return VTTI->getMemoryOpCost(I->getOpcode(), RetTy,
+      return VTTI->getMemoryOpCost(I->getOpcode(), VectorTy,
                                    LI->getAlignment(),
                                    LI->getPointerAddressSpace());
 
     // Scalarized loads.
-    if (!Legal->isConsecutivePtr(LI->getPointerOperand())) {
+    int Stride = Legal->isConsecutivePtr(LI->getPointerOperand());
+    bool Reverse = Stride < 0;
+    if (0 == Stride) {
       unsigned Cost = 0;
-      unsigned InCost = VTTI->getInstrCost(Instruction::InsertElement, RetTy);
-      // The cost of inserting the loaded value into the result vector.
-      Cost += VF * (InCost);
+      Type *PtrTy = ToVectorTy(I->getOperand(0)->getType(), VF);
+
+      // The cost of extracting from the pointer vector.
+      for (unsigned i = 0; i < VF; ++i)
+        Cost += VTTI->getVectorInstrCost(Instruction::ExtractElement,
+                                         PtrTy, i);
+
+      // The cost of inserting data to the result vector.
+      for (unsigned i = 0; i < VF; ++i)
+        Cost += VTTI->getVectorInstrCost(Instruction::InsertElement,
+                                         VectorTy, i);
+
       // The cost of the scalar stores.
       Cost += VF * VTTI->getMemoryOpCost(I->getOpcode(),
                                          RetTy->getScalarType(),
@@ -2122,8 +2190,13 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
     }
 
     // Wide loads.
-    return VTTI->getMemoryOpCost(I->getOpcode(), VectorTy, LI->getAlignment(),
-                                 LI->getPointerAddressSpace());
+    unsigned Cost = VTTI->getMemoryOpCost(I->getOpcode(), VectorTy,
+                                          LI->getAlignment(),
+                                          LI->getPointerAddressSpace());
+    if (Reverse)
+      Cost += VTTI->getShuffleCost(VectorTargetTransformInfo::Reverse,
+                                   VectorTy, 0);
+    return Cost;
   }
   case Instruction::ZExt:
   case Instruction::SExt:
@@ -2162,21 +2235,20 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
     // elements, times the vector width.
     unsigned Cost = 0;
 
-    bool IsVoid = RetTy->isVoidTy();
+    if (!RetTy->isVoidTy() && VF != 1) {
+      unsigned InsCost = VTTI->getVectorInstrCost(Instruction::InsertElement,
+                                                  VectorTy);
+      unsigned ExtCost = VTTI->getVectorInstrCost(Instruction::ExtractElement,
+                                                  VectorTy);
 
-    unsigned InsCost = (IsVoid ? 0 :
-                        VTTI->getInstrCost(Instruction::InsertElement,
-                                           VectorTy));
+      // The cost of inserting the results plus extracting each one of the
+      // operands.
+      Cost += VF * (InsCost + ExtCost * I->getNumOperands());
+    }
 
-    unsigned ExtCost = VTTI->getInstrCost(Instruction::ExtractElement,
-                                          VectorTy);
-
-    // The cost of inserting the results plus extracting each one of the
-    // operands.
-    Cost += VF * (InsCost + ExtCost * I->getNumOperands());
-
-    // The cost of executing VF copies of the scalar instruction.
-    Cost += VF * VTTI->getInstrCost(I->getOpcode(), RetTy);
+    // The cost of executing VF copies of the scalar instruction. This opcode
+    // is unknown. Assume that it is the same as 'mul'.
+    Cost += VF * VTTI->getArithmeticInstrCost(Instruction::Mul, VectorTy);
     return Cost;
   }
   }// end of switch.

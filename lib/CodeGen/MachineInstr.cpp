@@ -518,20 +518,20 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, const MachineMemOperand &MMO) {
 // MachineInstr Implementation
 //===----------------------------------------------------------------------===//
 
-void MachineInstr::addImplicitDefUseOperands() {
+void MachineInstr::addImplicitDefUseOperands(MachineFunction &MF) {
   if (MCID->ImplicitDefs)
     for (const uint16_t *ImpDefs = MCID->getImplicitDefs(); *ImpDefs; ++ImpDefs)
-      addOperand(MachineOperand::CreateReg(*ImpDefs, true, true));
+      addOperand(MF, MachineOperand::CreateReg(*ImpDefs, true, true));
   if (MCID->ImplicitUses)
     for (const uint16_t *ImpUses = MCID->getImplicitUses(); *ImpUses; ++ImpUses)
-      addOperand(MachineOperand::CreateReg(*ImpUses, false, true));
+      addOperand(MF, MachineOperand::CreateReg(*ImpUses, false, true));
 }
 
 /// MachineInstr ctor - This constructor creates a MachineInstr and adds the
 /// implicit operands. It reserves space for the number of operands specified by
 /// the MCInstrDesc.
-MachineInstr::MachineInstr(const MCInstrDesc &tid, const DebugLoc dl,
-                           bool NoImp)
+MachineInstr::MachineInstr(MachineFunction &MF, const MCInstrDesc &tid,
+                           const DebugLoc dl, bool NoImp)
   : MCID(&tid), Flags(0), AsmPrinterFlags(0),
     NumMemRefs(0), MemRefs(0), Parent(0), debugLoc(dl) {
   unsigned NumImplicitOps = 0;
@@ -539,7 +539,7 @@ MachineInstr::MachineInstr(const MCInstrDesc &tid, const DebugLoc dl,
     NumImplicitOps = MCID->getNumImplicitDefs() + MCID->getNumImplicitUses();
   Operands.reserve(NumImplicitOps + MCID->getNumOperands());
   if (!NoImp)
-    addImplicitDefUseOperands();
+    addImplicitDefUseOperands(MF);
   // Make sure that we get added to a machine basicblock
   LeakDetector::addGarbageObject(this);
 }
@@ -554,7 +554,7 @@ MachineInstr::MachineInstr(MachineFunction &MF, const MachineInstr &MI)
 
   // Add operands
   for (unsigned i = 0; i != MI.getNumOperands(); ++i)
-    addOperand(MI.getOperand(i));
+    addOperand(MF, MI.getOperand(i));
 
   // Copy all the sensible flags.
   setFlags(MI.Flags);
@@ -568,7 +568,7 @@ MachineInstr::MachineInstr(MachineFunction &MF, const MachineInstr &MI)
 MachineInstr::~MachineInstr() {
   LeakDetector::removeGarbageObject(this);
 #ifndef NDEBUG
-  for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
+  for (unsigned i = 0, e = getNumOperands(); i != e; ++i) {
     assert(Operands[i].ParentMI == this && "ParentMI mismatch!");
     assert((!Operands[i].isReg() || !Operands[i].isOnRegUseList()) &&
            "Reg operand def/use list corrupted");
@@ -589,7 +589,7 @@ MachineRegisterInfo *MachineInstr::getRegInfo() {
 /// this instruction from their respective use lists.  This requires that the
 /// operands already be on their use lists.
 void MachineInstr::RemoveRegOperandsFromUseLists(MachineRegisterInfo &MRI) {
-  for (unsigned i = 0, e = Operands.size(); i != e; ++i)
+  for (unsigned i = 0, e = getNumOperands(); i != e; ++i)
     if (Operands[i].isReg())
       MRI.removeRegOperandFromUseList(&Operands[i]);
 }
@@ -598,16 +598,24 @@ void MachineInstr::RemoveRegOperandsFromUseLists(MachineRegisterInfo &MRI) {
 /// this instruction from their respective use lists.  This requires that the
 /// operands not be on their use lists yet.
 void MachineInstr::AddRegOperandsToUseLists(MachineRegisterInfo &MRI) {
-  for (unsigned i = 0, e = Operands.size(); i != e; ++i)
+  for (unsigned i = 0, e = getNumOperands(); i != e; ++i)
     if (Operands[i].isReg())
       MRI.addRegOperandToUseList(&Operands[i]);
+}
+
+void MachineInstr::addOperand(const MachineOperand &Op) {
+  MachineBasicBlock *MBB = getParent();
+  assert(MBB && "Use MachineInstrBuilder to add operands to dangling instrs");
+  MachineFunction *MF = MBB->getParent();
+  assert(MF && "Use MachineInstrBuilder to add operands to dangling instrs");
+  addOperand(*MF, Op);
 }
 
 /// addOperand - Add the specified operand to the instruction.  If it is an
 /// implicit operand, it is added to the end of the operand list.  If it is
 /// an explicit operand it is added at the end of the explicit operand list
 /// (before the first implicit operand).
-void MachineInstr::addOperand(const MachineOperand &Op) {
+void MachineInstr::addOperand(MachineFunction &MF, const MachineOperand &Op) {
   assert(MCID && "Cannot add operands before providing an instr descriptor");
   bool isImpReg = Op.isReg() && Op.isImplicit();
   MachineRegisterInfo *RegInfo = getRegInfo();
@@ -615,11 +623,11 @@ void MachineInstr::addOperand(const MachineOperand &Op) {
   // If the Operands backing store is reallocated, all register operands must
   // be removed and re-added to RegInfo.  It is storing pointers to operands.
   bool Reallocate = RegInfo &&
-    !Operands.empty() && Operands.size() == Operands.capacity();
+    !Operands.empty() && getNumOperands() == Operands.capacity();
 
   // Find the insert location for the new operand.  Implicit registers go at
   // the end, everything goes before the implicit regs.
-  unsigned OpNo = Operands.size();
+  unsigned OpNo = getNumOperands();
 
   // Remove all the implicit operands from RegInfo if they need to be shifted.
   // FIXME: Allow mixed explicit and implicit operands on inline asm.
@@ -688,7 +696,7 @@ void MachineInstr::addOperand(const MachineOperand &Op) {
 
   // Re-add all the implicit ops.
   if (RegInfo) {
-    for (unsigned i = OpNo + 1, e = Operands.size(); i != e; ++i) {
+    for (unsigned i = OpNo + 1, e = getNumOperands(); i != e; ++i) {
       assert(Operands[i].isReg() && "Should only be an implicit reg!");
       RegInfo->addRegOperandToUseList(&Operands[i]);
     }
@@ -699,25 +707,14 @@ void MachineInstr::addOperand(const MachineOperand &Op) {
 /// fewer operand than it started with.
 ///
 void MachineInstr::RemoveOperand(unsigned OpNo) {
-  assert(OpNo < Operands.size() && "Invalid operand number");
+  assert(OpNo < getNumOperands() && "Invalid operand number");
   untieRegOperand(OpNo);
   MachineRegisterInfo *RegInfo = getRegInfo();
 
-  // Special case removing the last one.
-  if (OpNo == Operands.size()-1) {
-    // If needed, remove from the reg def/use list.
-    if (RegInfo && Operands.back().isReg() && Operands.back().isOnRegUseList())
-      RegInfo->removeRegOperandFromUseList(&Operands.back());
-
-    Operands.pop_back();
-    return;
-  }
-
-  // Otherwise, we are removing an interior operand.  If we have reginfo to
-  // update, remove all operands that will be shifted down from their reg lists,
-  // move everything down, then re-add them.
+  // If we have reginfo to update, remove all operands that will be shifted
+  // down from their reg lists, move everything down, then re-add them.
   if (RegInfo) {
-    for (unsigned i = OpNo, e = Operands.size(); i != e; ++i) {
+    for (unsigned i = OpNo, e = getNumOperands(); i != e; ++i) {
       if (Operands[i].isReg())
         RegInfo->removeRegOperandFromUseList(&Operands[i]);
     }
@@ -725,7 +722,7 @@ void MachineInstr::RemoveOperand(unsigned OpNo) {
 
 #ifndef NDEBUG
   // Moving tied operands would break the ties.
-  for (unsigned i = OpNo + 1, e = Operands.size(); i != e; ++i)
+  for (unsigned i = OpNo + 1, e = getNumOperands(); i != e; ++i)
     if (Operands[i].isReg())
       assert(!Operands[i].isTied() && "Cannot move tied operands");
 #endif
@@ -733,7 +730,7 @@ void MachineInstr::RemoveOperand(unsigned OpNo) {
   Operands.erase(Operands.begin()+OpNo);
 
   if (RegInfo) {
-    for (unsigned i = OpNo, e = Operands.size(); i != e; ++i) {
+    for (unsigned i = OpNo, e = getNumOperands(); i != e; ++i) {
       if (Operands[i].isReg())
         RegInfo->addRegOperandToUseList(&Operands[i]);
     }
@@ -1209,41 +1206,6 @@ void MachineInstr::clearKillInfo() {
   }
 }
 
-/// copyKillDeadInfo - Copies kill / dead operand properties from MI.
-///
-void MachineInstr::copyKillDeadInfo(const MachineInstr *MI) {
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
-    if (!MO.isReg() || (!MO.isKill() && !MO.isDead()))
-      continue;
-    for (unsigned j = 0, ee = getNumOperands(); j != ee; ++j) {
-      MachineOperand &MOp = getOperand(j);
-      if (!MOp.isIdenticalTo(MO))
-        continue;
-      if (MO.isKill())
-        MOp.setIsKill();
-      else
-        MOp.setIsDead();
-      break;
-    }
-  }
-}
-
-/// copyPredicates - Copies predicate operand(s) from MI.
-void MachineInstr::copyPredicates(const MachineInstr *MI) {
-  assert(!isBundle() && "MachineInstr::copyPredicates() can't handle bundles");
-
-  const MCInstrDesc &MCID = MI->getDesc();
-  if (!MCID.isPredicable())
-    return;
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    if (MCID.OpInfo[i].isPredicate()) {
-      // Predicated operands must be last operands.
-      addOperand(MI->getOperand(i));
-    }
-  }
-}
-
 void MachineInstr::substituteRegister(unsigned FromReg,
                                       unsigned ToReg,
                                       unsigned SubIdx,
@@ -1438,12 +1400,13 @@ bool MachineInstr::allDefsAreDead() const {
 
 /// copyImplicitOps - Copy implicit register operands from specified
 /// instruction to this instruction.
-void MachineInstr::copyImplicitOps(const MachineInstr *MI) {
+void MachineInstr::copyImplicitOps(MachineFunction &MF,
+                                   const MachineInstr *MI) {
   for (unsigned i = MI->getDesc().getNumOperands(), e = MI->getNumOperands();
        i != e; ++i) {
     const MachineOperand &MO = MI->getOperand(i);
     if (MO.isReg() && MO.isImplicit())
-      addOperand(MO);
+      addOperand(MF, MO);
   }
 }
 

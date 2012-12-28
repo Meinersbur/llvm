@@ -197,6 +197,12 @@ namespace llvm {
       /// FHSUB - Floating point horizontal sub.
       FHSUB,
 
+      /// UMAX, UMIN - Unsigned integer max and min.
+      UMAX, UMIN,
+
+      /// SMAX, SMIN - Signed integer max and min.
+      SMAX, SMIN,
+
       /// FMAX, FMIN - Floating point max and min.
       ///
       FMAX, FMIN,
@@ -716,7 +722,7 @@ namespace llvm {
 
   protected:
     std::pair<const TargetRegisterClass*, uint8_t>
-    findRepresentativeClass(EVT VT) const;
+    findRepresentativeClass(MVT VT) const;
 
   private:
     /// Subtarget - Keep a pointer to the X86Subtarget around so that we can
@@ -807,7 +813,9 @@ namespace llvm {
     SDValue LowerUINT_TO_FP_i32(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerUINT_TO_FP_vec(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
-    SDValue lowerZERO_EXTEND(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerZERO_EXTEND(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerSIGN_EXTEND(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerANY_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_SINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_UINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) const;
@@ -867,9 +875,8 @@ namespace llvm {
 
     virtual bool mayBeEmittedAsTailCall(CallInst *CI) const;
 
-    virtual EVT
-    getTypeForExtArgOrReturn(LLVMContext &Context, EVT VT,
-                             ISD::NodeType ExtendKind) const;
+    virtual MVT
+    getTypeForExtArgOrReturn(MVT VT, ISD::NodeType ExtendKind) const;
 
     virtual bool
     CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
@@ -954,14 +961,20 @@ namespace llvm {
 
     virtual unsigned getArithmeticInstrCost(unsigned Opcode, Type *Ty) const;
 
+    virtual unsigned getMemoryOpCost(unsigned Opcode, Type *Src,
+                                     unsigned Alignment,
+                                     unsigned AddressSpace) const;
+
     virtual unsigned getVectorInstrCost(unsigned Opcode, Type *Val,
                                         unsigned Index) const;
 
-    unsigned getCmpSelInstrCost(unsigned Opcode, Type *ValTy,
-                                Type *CondTy) const;
+    virtual unsigned getCmpSelInstrCost(unsigned Opcode, Type *ValTy,
+                                        Type *CondTy) const;
 
     virtual unsigned getCastInstrCost(unsigned Opcode, Type *Dst,
                                       Type *Src) const;
+
+    unsigned getShuffleCost(ShuffleKind Kind, Type *Tp, int Index) const;
   };
 }
 
