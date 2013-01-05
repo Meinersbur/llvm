@@ -15,13 +15,13 @@
 #ifndef NVPTX_TARGETMACHINE_H
 #define NVPTX_TARGETMACHINE_H
 
-#include "NVPTXInstrInfo.h"
+#include "ManagedStringPool.h"
+#include "NVPTXFrameLowering.h"
 #include "NVPTXISelLowering.h"
+#include "NVPTXInstrInfo.h"
 #include "NVPTXRegisterInfo.h"
 #include "NVPTXSubtarget.h"
-#include "NVPTXFrameLowering.h"
-#include "ManagedStringPool.h"
-#include "llvm/DataLayout.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetSelectionDAGInfo.h"

@@ -12,14 +12,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "LLLexer.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Instruction.h"
-#include "llvm/LLVMContext.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Assembly/Parser.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cctype>
@@ -564,6 +564,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(nonlazybind);
   KEYWORD(address_safety);
   KEYWORD(minsize);
+  KEYWORD(noduplicate);
 
   KEYWORD(type);
   KEYWORD(opaque);

@@ -21,6 +21,10 @@ User Guides
    SphinxQuickstartTemplate
    Phabricator
    TestingGuide
+   tutorial/index
+   ReleaseNotes
+   Passes
+   YamlIO
 
 * :ref:`getting_started`
     
@@ -37,13 +41,12 @@ User Guides
 
    Notes on building and testing LLVM/Clang on ARM.
 
-* `Getting Started with the LLVM System using Microsoft Visual Studio
-  <GettingStartedVS.html>`_
+* :doc:`GettingStartedVS`
 
    An addendum to the main Getting Started guide for those using Visual Studio
    on Windows.
     
-* `LLVM Tutorial <tutorial/>`_
+* :doc:`tutorial/index`
 
    A walk through the process of using LLVM for a custom language, and the
    facilities LLVM offers in tutorial form.
@@ -57,15 +60,15 @@ User Guides
    A reference manual for the LLVM command line utilities ("man" pages for LLVM
    tools).
     
-* `LLVM's Analysis and Transform Passes <Passes.html>`_
+* :doc:`Passes`
 
    A list of optimizations and analyses implemented in LLVM.
-    
+
 * :ref:`faq`
 
    A list of common questions and problems and their solutions.
     
-* `Release notes for the current release <ReleaseNotes.html>`_
+* :doc:`Release notes for the current release <ReleaseNotes>`
 
    This describes new features, known bugs, and other limitations.
 
@@ -98,6 +101,10 @@ User Guides
 
    Instructions for adding new builder to LLVM buildbot master.
     
+* :ref:`yamlio`
+
+   A reference guide for using LLVM's YAML I/O library.
+
 * **IRC** -- You can probably find help on the unofficial LLVM IRC.
 
    We often are on irc.oftc.net in the #llvm channel.  If you are using the

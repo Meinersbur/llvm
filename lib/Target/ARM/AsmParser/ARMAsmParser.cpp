@@ -7,31 +7,31 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/ARMBaseInfo.h"
-#include "MCTargetDesc/ARMAddressingModes.h"
-#include "MCTargetDesc/ARMMCExpr.h"
-#include "llvm/MC/MCParser/MCAsmLexer.h"
-#include "llvm/MC/MCParser/MCAsmParser.h"
-#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCInstrDesc.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetAsmParser.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/raw_ostream.h"
+#include "MCTargetDesc/ARMAddressingModes.h"
+#include "MCTargetDesc/ARMBaseInfo.h"
+#include "MCTargetDesc/ARMMCExpr.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrDesc.h"
+#include "llvm/MC/MCParser/MCAsmLexer.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCParsedAsmOperand.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -5723,7 +5723,12 @@ processInstruction(MCInst &Inst,
   }
   // Aliases for alternate PC+imm syntax of LDR instructions.
   case ARM::t2LDRpcrel:
-    Inst.setOpcode(ARM::t2LDRpci);
+    // Select the narrow version if the immediate will fit.
+    if (Inst.getOperand(1).getImm() > 0 &&
+        Inst.getOperand(1).getImm() <= 0xff)
+      Inst.setOpcode(ARM::tLDRpci);
+    else
+      Inst.setOpcode(ARM::t2LDRpci);
     return true;
   case ARM::t2LDRBpcrel:
     Inst.setOpcode(ARM::t2LDRBpci);
@@ -7824,13 +7829,10 @@ bool ARMAsmParser::parseDirectiveEabiAttr(SMLoc L) {
   return true;
 }
 
-extern "C" void LLVMInitializeARMAsmLexer();
-
 /// Force static initialization.
 extern "C" void LLVMInitializeARMAsmParser() {
   RegisterMCAsmParser<ARMAsmParser> X(TheARMTarget);
   RegisterMCAsmParser<ARMAsmParser> Y(TheThumbTarget);
-  LLVMInitializeARMAsmLexer();
 }
 
 #define GET_REGISTER_MATCHER

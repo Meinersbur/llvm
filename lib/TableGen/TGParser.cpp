@@ -12,12 +12,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "TGParser.h"
-#include "llvm/TableGen/Record.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/TableGen/Record.h"
 #include <algorithm>
 #include <sstream>
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/CommandLine.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -2406,7 +2406,11 @@ bool TGParser::ParseDefm(MultiClass *CurMultiClass) {
 
   Init *DefmPrefix = 0;
 
-  if (Lex.Lex() == tgtok::Id) {  // eat the defm.
+  Lex.Lex(); // eat the defm.
+
+  // Note that tgtok::paste is here to allow starting with #NAME.
+  if (Lex.getCode() == tgtok::Id ||
+      Lex.getCode() == tgtok::paste) {
     DefmPrefix = ParseObjectName(CurMultiClass);
   }
 

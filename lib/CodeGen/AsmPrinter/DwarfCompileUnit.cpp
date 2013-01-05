@@ -13,28 +13,29 @@
 
 #define DEBUG_TYPE "dwarfdebug"
 
-#include "DwarfAccelTable.h"
 #include "DwarfCompileUnit.h"
+#include "DwarfAccelTable.h"
 #include "DwarfDebug.h"
-#include "llvm/Constants.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/DIBuilder.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/Mangler.h"
-#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/ADT/APFloat.h"
-#include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
 
 /// CompileUnit - Compile unit constructor.
-CompileUnit::CompileUnit(unsigned I, unsigned L, DIE *D, AsmPrinter *A,
-                         DwarfDebug *DW)
-  : ID(I), Language(L), CUDie(D), Asm(A), DD(DW), IndexTyDie(0) {
+CompileUnit::CompileUnit(unsigned UID, unsigned L, DIE *D, AsmPrinter *A,
+                         DwarfDebug *DW, DwarfUnits *DWU)
+  : UniqueID(UID), Language(L), CUDie(D), Asm(A), DD(DW), DU(DWU),
+    IndexTyDie(0) {
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
 }
 
@@ -49,6 +50,50 @@ CompileUnit::~CompileUnit() {
 DIEEntry *CompileUnit::createDIEEntry(DIE *Entry) {
   DIEEntry *Value = new (DIEValueAllocator) DIEEntry(Entry);
   return Value;
+}
+
+/// getDefaultLowerBound - Return the default lower bound for an array. If the
+/// DWARF version doesn't handle the language, return -1.
+int64_t CompileUnit::getDefaultLowerBound() const {
+  switch (Language) {
+  default:
+    break;
+
+  case dwarf::DW_LANG_C89:
+  case dwarf::DW_LANG_C99:
+  case dwarf::DW_LANG_C:
+  case dwarf::DW_LANG_C_plus_plus:
+  case dwarf::DW_LANG_ObjC:
+  case dwarf::DW_LANG_ObjC_plus_plus:
+    return 0;
+
+  case dwarf::DW_LANG_Fortran77:
+  case dwarf::DW_LANG_Fortran90:
+  case dwarf::DW_LANG_Fortran95:
+    return 1;
+
+  // The languages below have valid values only if the DWARF version >= 4.
+  case dwarf::DW_LANG_Java:
+  case dwarf::DW_LANG_Python:
+  case dwarf::DW_LANG_UPC:
+  case dwarf::DW_LANG_D:
+    if (dwarf::DWARF_VERSION >= 4)
+      return 0;
+    break;
+
+  case dwarf::DW_LANG_Ada83:
+  case dwarf::DW_LANG_Ada95:
+  case dwarf::DW_LANG_Cobol74:
+  case dwarf::DW_LANG_Cobol85:
+  case dwarf::DW_LANG_Modula2:
+  case dwarf::DW_LANG_Pascal83:
+  case dwarf::DW_LANG_PLI:
+    if (dwarf::DWARF_VERSION >= 4)
+      return 1;
+    break;
+  }
+
+  return -1;
 }
 
 /// addFlag - Add a flag that is true.
@@ -83,12 +128,12 @@ void CompileUnit::addSInt(DIE *Die, unsigned Attribute,
 /// reference to the string pool instead of immediate strings so that DIEs have
 /// more predictable sizes.
 void CompileUnit::addString(DIE *Die, unsigned Attribute, StringRef String) {
-  MCSymbol *Symb = DD->getStringPoolEntry(String);
+  MCSymbol *Symb = DU->getStringPoolEntry(String);
   DIEValue *Value;
   if (Asm->needsRelocationsForDwarfStringPool())
     Value = new (DIEValueAllocator) DIELabel(Symb);
   else {
-    MCSymbol *StringPool = DD->getStringPool();
+    MCSymbol *StringPool = DU->getStringPoolSym();
     Value = new (DIEValueAllocator) DIEDelta(Symb, StringPool);
   }
   Die->addValue(Attribute, dwarf::DW_FORM_strp, Value);
@@ -1250,22 +1295,25 @@ void CompileUnit::constructSubrangeDIE(DIE &Buffer, DISubrange SR,
                                        DIE *IndexTy) {
   DIE *DW_Subrange = new DIE(dwarf::DW_TAG_subrange_type);
   addDIEEntry(DW_Subrange, dwarf::DW_AT_type, dwarf::DW_FORM_ref4, IndexTy);
-  uint64_t L = SR.getLo();
-  uint64_t H = SR.getHi();
 
-  // The L value defines the lower bounds which is typically zero for C/C++. The
-  // H value is the upper bounds.  Values are 64 bit.  H - L + 1 is the size
-  // of the array. If L > H then do not emit DW_AT_lower_bound and
-  // DW_AT_upper_bound attributes. If L is zero and H is also zero then the
-  // array has one element and in such case do not emit lower bound.
+  // The LowerBound value defines the lower bounds which is typically zero for
+  // C/C++. The Count value is the number of elements.  Values are 64 bit. If
+  // Count == -1 then the array is unbounded and we do not emit
+  // DW_AT_lower_bound and DW_AT_upper_bound attributes. If LowerBound == 0 and
+  // Count == 0, then the array has zero elements in which case we do not emit
+  // an upper bound.
+  int64_t LowerBound = SR.getLo();
+  int64_t DefaultLowerBound = getDefaultLowerBound();
+  int64_t Count = SR.getCount();
 
-  if (L > H) {
-    Buffer.addChild(DW_Subrange);
-    return;
-  }
-  if (L)
-    addUInt(DW_Subrange, dwarf::DW_AT_lower_bound, 0, L);
-  addUInt(DW_Subrange, dwarf::DW_AT_upper_bound, 0, H);
+  if (DefaultLowerBound == -1 || LowerBound != DefaultLowerBound)
+    addUInt(DW_Subrange, dwarf::DW_AT_lower_bound, 0, LowerBound);
+
+  if (Count != -1 && Count != 0)
+    // FIXME: An unbounded array should reference the expression that defines
+    // the array.
+    addUInt(DW_Subrange, dwarf::DW_AT_upper_bound, 0, LowerBound + Count - 1);
+
   Buffer.addChild(DW_Subrange);
 }
 
@@ -1281,10 +1329,13 @@ void CompileUnit::constructArrayTypeDIE(DIE &Buffer,
   DIArray Elements = CTy->getTypeArray();
 
   // Get an anonymous type for index type.
+  // FIXME: This type should be passed down from the front end
+  // as different languages may have different sizes for indexes.
   DIE *IdxTy = getIndexTyDie();
   if (!IdxTy) {
     // Construct an anonymous type for index type.
     IdxTy = new DIE(dwarf::DW_TAG_base_type);
+    addString(IdxTy, dwarf::DW_AT_name, "int");
     addUInt(IdxTy, dwarf::DW_AT_byte_size, 0, sizeof(int32_t));
     addUInt(IdxTy, dwarf::DW_AT_encoding, dwarf::DW_FORM_data1,
             dwarf::DW_ATE_signed);
@@ -1327,8 +1378,6 @@ void CompileUnit::constructContainingTypeDIEs() {
 /// constructVariableDIE - Construct a DIE for the given DbgVariable.
 DIE *CompileUnit::constructVariableDIE(DbgVariable *DV, bool isScopeAbstract) {
   StringRef Name = DV->getName();
-  if (Name.empty())
-    return NULL;
 
   // Translate tag to proper Dwarf tag.
   unsigned Tag = DV->getTag();
@@ -1511,6 +1560,9 @@ DIE *CompileUnit::createMemberDIE(DIDerivedType DT) {
     if (DIEEntry *PropertyDie = getDIEEntry(PNode))
       MemberDie->addValue(dwarf::DW_AT_APPLE_property, dwarf::DW_FORM_ref4,
                           PropertyDie);
+
+  if (DT.isArtificial())
+    addFlag(MemberDie, dwarf::DW_AT_artificial);
 
   // This is only for backward compatibility.
   StringRef PropertyName = DT.getObjCPropertyName();

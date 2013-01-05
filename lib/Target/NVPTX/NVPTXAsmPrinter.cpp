@@ -13,36 +13,37 @@
 //===----------------------------------------------------------------------===//
 
 #include "NVPTXAsmPrinter.h"
+#include "MCTargetDesc/NVPTXMCAsmInfo.h"
 #include "NVPTX.h"
 #include "NVPTXInstrInfo.h"
-#include "NVPTXTargetMachine.h"
-#include "NVPTXRegisterInfo.h"
-#include "NVPTXUtilities.h"
-#include "MCTargetDesc/NVPTXMCAsmInfo.h"
 #include "NVPTXNumRegisters.h"
+#include "NVPTXRegisterInfo.h"
+#include "NVPTXTargetMachine.h"
+#include "NVPTXUtilities.h"
+#include "cl_common_defines.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/DebugInfo.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Module.h"
+#include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Assembly/Writer.h"
 #include "llvm/CodeGen/Analysis.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/DebugInfo.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/Mangler.h"
-#include "llvm/Target/TargetLoweringObjectFile.h"
-#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Support/TimeValue.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Assembly/Writer.h"
-#include "cl_common_defines.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/TimeValue.h"
+#include "llvm/Target/Mangler.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 #include <sstream>
 using namespace llvm;
 
@@ -164,20 +165,14 @@ const MCExpr *nvptx::LowerConstant(const Constant *CV, AsmPrinter &AP) {
   case Instruction::GetElementPtr: {
     const DataLayout &TD = *AP.TM.getDataLayout();
     // Generate a symbolic expression for the byte address
-    const Constant *PtrVal = CE->getOperand(0);
-    SmallVector<Value*, 8> IdxVec(CE->op_begin()+1, CE->op_end());
-    int64_t Offset = TD.getIndexedOffset(PtrVal->getType(), IdxVec);
+    APInt OffsetAI(TD.getPointerSizeInBits(), 0);
+    cast<GEPOperator>(CE)->accumulateConstantOffset(TD, OffsetAI);
 
     const MCExpr *Base = LowerConstant(CE->getOperand(0), AP);
-    if (Offset == 0)
+    if (!OffsetAI)
       return Base;
 
-    // Truncate/sext the offset to the pointer size.
-    if (TD.getPointerSizeInBits() != 64) {
-      int SExtAmount = 64-TD.getPointerSizeInBits();
-      Offset = (Offset << SExtAmount) >> SExtAmount;
-    }
-
+    int64_t Offset = OffsetAI.getSExtValue();
     return MCBinaryExpr::CreateAdd(Base, MCConstantExpr::Create(Offset, Ctx),
                                    Ctx);
   }
@@ -1487,7 +1482,7 @@ void NVPTXAsmPrinter::printParamName(int paramIndex, raw_ostream &O) {
 void NVPTXAsmPrinter::emitFunctionParamList(const Function *F,
                                             raw_ostream &O) {
   const DataLayout *TD = TM.getDataLayout();
-  const AttrListPtr &PAL = F->getAttributes();
+  const AttributeSet &PAL = F->getAttributes();
   const TargetLowering *TLI = TM.getTargetLowering();
   Function::const_arg_iterator I, E;
   unsigned paramIndex = 0;
@@ -1521,8 +1516,7 @@ void NVPTXAsmPrinter::emitFunctionParamList(const Function *F,
       continue;
     }
 
-    if (PAL.getParamAttributes(paramIndex+1).
-          hasAttribute(Attributes::ByVal) == false) {
+    if (PAL.hasAttribute(paramIndex+1, Attribute::ByVal) == false) {
       // Just a scalar
       const PointerType *PTy = dyn_cast<PointerType>(Ty);
       if (isKernelFunc) {

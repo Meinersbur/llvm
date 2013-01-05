@@ -15,10 +15,10 @@
 #ifndef LLVM_TRANSFORMS_UTILS_LOCAL_H
 #define LLVM_TRANSFORMS_UTILS_LOCAL_H
 
-#include "llvm/IRBuilder.h"
-#include "llvm/Operator.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/DataLayout.h"
 
 namespace llvm {
 
@@ -251,6 +251,16 @@ bool LowerDbgDeclare(Function &F);
 /// FindAllocaDbgDeclare - Finds the llvm.dbg.declare intrinsic corresponding to
 /// an alloca, if any.
 DbgDeclareInst *FindAllocaDbgDeclare(Value *V);
+
+/// replaceDbgDeclareForAlloca - Replaces llvm.dbg.declare instruction when
+/// alloca is replaced with a new value.
+bool replaceDbgDeclareForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
+                                DIBuilder &Builder);
+
+/// \brief Remove all blocks that can not be reached from the function's entry.
+///
+/// Returns true if any basic block was removed.
+bool removeUnreachableBlocks(Function &F);
 
 } // End llvm namespace
 

@@ -14,20 +14,19 @@
 
 #define DEBUG_TYPE "misched"
 
-#include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/MachineScheduler.h"
+#include "llvm/ADT/OwningPtr.h"
+#include "llvm/ADT/PriorityQueue.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/ScheduleDFS.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
-#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/PriorityQueue.h"
-
 #include <queue>
 
 using namespace llvm;
@@ -954,23 +953,26 @@ public:
     unsigned CritResIdx;
     // Number of micro-ops left to schedule.
     unsigned RemainingMicroOps;
-    // Is the unscheduled zone resource limited.
-    bool IsResourceLimited;
-
-    unsigned MaxRemainingCount;
 
     void reset() {
       CriticalPath = 0;
       RemainingCounts.clear();
       CritResIdx = 0;
       RemainingMicroOps = 0;
-      IsResourceLimited = false;
-      MaxRemainingCount = 0;
     }
 
     SchedRemainder() { reset(); }
 
     void init(ScheduleDAGMI *DAG, const TargetSchedModel *SchedModel);
+
+    unsigned getMaxRemainingCount(const TargetSchedModel *SchedModel) const {
+      if (!SchedModel->hasInstrSchedModel())
+        return 0;
+
+      return std::max(
+        RemainingMicroOps * SchedModel->getMicroOpFactor(),
+        RemainingCounts[CritResIdx]);
+    }
   };
 
   /// Each Scheduling boundary is associated with ready queues. It tracks the
@@ -1011,9 +1013,6 @@ public:
 
     unsigned ExpectedCount;
 
-    // Policy flag: attempt to find ILP until expected latency is covered.
-    bool ShouldIncreaseILP;
-
 #ifndef NDEBUG
     // Remember the greatest min operand latency.
     unsigned MaxMinLatency;
@@ -1034,7 +1033,6 @@ public:
       CritResIdx = 0;
       IsResourceLimited = false;
       ExpectedCount = 0;
-      ShouldIncreaseILP = false;
 #ifndef NDEBUG
       MaxMinLatency = 0;
 #endif
@@ -1062,7 +1060,7 @@ public:
     unsigned getUnscheduledLatency(SUnit *SU) const {
       if (isTop())
         return SU->getHeight();
-      return SU->getDepth();
+      return SU->getDepth() + SU->Latency;
     }
 
     unsigned getCriticalCount() const {
@@ -1071,7 +1069,7 @@ public:
 
     bool checkHazard(SUnit *SU);
 
-    void checkILPPolicy();
+    void setLatencyPolicy(CandPolicy &Policy);
 
     void releaseNode(SUnit *SU, unsigned ReadyCycle);
 
@@ -1167,6 +1165,13 @@ init(ScheduleDAGMI *DAG, const TargetSchedModel *SchedModel) {
       RemainingCounts[PIdx] += (Factor * PI->Cycles);
     }
   }
+  for (unsigned PIdx = 0, PEnd = SchedModel->getNumProcResourceKinds();
+       PIdx != PEnd; ++PIdx) {
+    if ((int)(RemainingCounts[PIdx] - RemainingCounts[CritResIdx])
+        >= (int)SchedModel->getLatencyFactor()) {
+      CritResIdx = PIdx;
+    }
+  }
 }
 
 void ConvergingScheduler::SchedBoundary::
@@ -1204,7 +1209,7 @@ void ConvergingScheduler::releaseTopNode(SUnit *SU) {
   if (SU->isScheduled)
     return;
 
-  for (SUnit::succ_iterator I = SU->Preds.begin(), E = SU->Preds.end();
+  for (SUnit::pred_iterator I = SU->Preds.begin(), E = SU->Preds.end();
        I != E; ++I) {
     unsigned PredReadyCycle = I->getSUnit()->TopReadyCycle;
     unsigned MinLatency = I->getMinLatency();
@@ -1275,12 +1280,27 @@ bool ConvergingScheduler::SchedBoundary::checkHazard(SUnit *SU) {
   return false;
 }
 
-/// If expected latency is covered, disable ILP policy.
-void ConvergingScheduler::SchedBoundary::checkILPPolicy() {
-  if (ShouldIncreaseILP
-      && (IsResourceLimited || ExpectedLatency <= CurrCycle)) {
-    ShouldIncreaseILP = false;
-    DEBUG(dbgs() << "Disable ILP: " << Available.getName() << '\n');
+/// Compute the remaining latency to determine whether ILP should be increased.
+void ConvergingScheduler::SchedBoundary::setLatencyPolicy(CandPolicy &Policy) {
+  // FIXME: compile time. In all, we visit four queues here one we should only
+  // need to visit the one that was last popped if we cache the result.
+  unsigned RemLatency = 0;
+  for (ReadyQueue::iterator I = Available.begin(), E = Available.end();
+       I != E; ++I) {
+    unsigned L = getUnscheduledLatency(*I);
+    if (L > RemLatency)
+      RemLatency = L;
+  }
+  for (ReadyQueue::iterator I = Pending.begin(), E = Pending.end();
+       I != E; ++I) {
+    unsigned L = getUnscheduledLatency(*I);
+    if (L > RemLatency)
+      RemLatency = L;
+  }
+  if (RemLatency + ExpectedLatency >= Rem->CriticalPath + ILPWindow
+      && RemLatency > Rem->getMaxRemainingCount(SchedModel)) {
+    Policy.ReduceLatency = true;
+    DEBUG(dbgs() << "Increase ILP: " << Available.getName() << '\n');
   }
 }
 
@@ -1299,15 +1319,6 @@ void ConvergingScheduler::SchedBoundary::releaseNode(SUnit *SU,
 
   // Record this node as an immediate dependent of the scheduled node.
   NextSUs.insert(SU);
-
-  // If CriticalPath has been computed, then check if the unscheduled nodes
-  // exceed the ILP window. Before registerRoots, CriticalPath==0.
-  if (Rem->CriticalPath && (ExpectedLatency + getUnscheduledLatency(SU)
-                            > Rem->CriticalPath + ILPWindow)) {
-    ShouldIncreaseILP = true;
-    DEBUG(dbgs() << "Increase ILP: " << Available.getName() << " "
-          << ExpectedLatency << " + " << getUnscheduledLatency(SU) << '\n');
-  }
 }
 
 /// Move the boundary of scheduled code by one cycle.
@@ -1354,9 +1365,6 @@ void ConvergingScheduler::SchedBoundary::countResource(unsigned PIdx,
   ResourceCounts[PIdx] += Count;
   assert(Rem->RemainingCounts[PIdx] >= Count && "resource double counted");
   Rem->RemainingCounts[PIdx] -= Count;
-
-  // Reset MaxRemainingCount for sanity.
-  Rem->MaxRemainingCount = 0;
 
   // Check if this resource exceeds the current critical resource by a full
   // cycle. If so, it becomes the critical resource.
@@ -1489,9 +1497,7 @@ SUnit *ConvergingScheduler::SchedBoundary::pickOnlyChoice() {
 /// resources.
 ///
 /// If the CriticalZone is latency limited, don't force a policy for the
-/// candidates here. Instead, When releasing each candidate, releaseNode
-/// compares the region's critical path to the candidate's height or depth and
-/// the scheduled zone's expected latency then sets ShouldIncreaseILP.
+/// candidates here. Instead, setLatencyPolicy sets ReduceLatency if needed.
 void ConvergingScheduler::balanceZones(
   ConvergingScheduler::SchedBoundary &CriticalZone,
   ConvergingScheduler::SchedCandidate &CriticalCand,
@@ -1500,6 +1506,7 @@ void ConvergingScheduler::balanceZones(
 
   if (!CriticalZone.IsResourceLimited)
     return;
+  assert(SchedModel->hasInstrSchedModel() && "required schedmodel");
 
   SchedRemainder *Rem = CriticalZone.Rem;
 
@@ -1507,7 +1514,7 @@ void ConvergingScheduler::balanceZones(
   // remainder, try to reduce it.
   unsigned RemainingCritCount =
     Rem->RemainingCounts[CriticalZone.CritResIdx];
-  if ((int)(Rem->MaxRemainingCount - RemainingCritCount)
+  if ((int)(Rem->getMaxRemainingCount(SchedModel) - RemainingCritCount)
       > (int)SchedModel->getLatencyFactor()) {
     CriticalCand.Policy.ReduceResIdx = CriticalZone.CritResIdx;
     DEBUG(dbgs() << "Balance " << CriticalZone.Available.getName() << " reduce "
@@ -1533,12 +1540,9 @@ void ConvergingScheduler::checkResourceLimits(
   ConvergingScheduler::SchedCandidate &TopCand,
   ConvergingScheduler::SchedCandidate &BotCand) {
 
-  Bot.checkILPPolicy();
-  Top.checkILPPolicy();
-  if (Bot.ShouldIncreaseILP)
-    BotCand.Policy.ReduceLatency = true;
-  if (Top.ShouldIncreaseILP)
-    TopCand.Policy.ReduceLatency = true;
+  // Set ReduceLatency to true if needed.
+  Bot.setLatencyPolicy(TopCand.Policy);
+  Top.setLatencyPolicy(BotCand.Policy);
 
   // Handle resource-limited regions.
   if (Top.IsResourceLimited && Bot.IsResourceLimited
@@ -1573,9 +1577,6 @@ void ConvergingScheduler::checkResourceLimits(
   // The critical resource is different in each zone, so request balancing.
 
   // Compute the cost of each zone.
-  Rem.MaxRemainingCount = std::max(
-    Rem.RemainingMicroOps * SchedModel->getMicroOpFactor(),
-    Rem.RemainingCounts[Rem.CritResIdx]);
   Top.ExpectedCount = std::max(Top.ExpectedLatency, Top.CurrCycle);
   Top.ExpectedCount = std::max(
     Top.getCriticalCount(),
@@ -1897,7 +1898,6 @@ void ConvergingScheduler::pickNodeFromQueue(SchedBoundary &Zone,
       Cand.setBest(TryCand);
       DEBUG(traceCandidate(Cand, Zone));
     }
-    TryCand.SU = *I;
   }
 }
 

@@ -40,9 +40,9 @@
 #ifndef LLVM_ANALYSIS_DEPENDENCEANALYSIS_H
 #define LLVM_ANALYSIS_DEPENDENCEANALYSIS_H
 
-#include "llvm/Instructions.h"
-#include "llvm/Pass.h"
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/Pass.h"
 
 namespace llvm {
   class AliasAnalysis;
@@ -188,7 +188,7 @@ namespace llvm {
                    bool LoopIndependent,
                    unsigned Levels);
     ~FullDependence() {
-      delete DV;
+      delete[] DV;
     }
 
     /// isLoopIndependent - Returns true if this is a loop-independent

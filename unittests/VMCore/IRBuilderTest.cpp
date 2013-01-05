@@ -7,16 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/BasicBlock.h"
-#include "llvm/DataLayout.h"
-#include "llvm/Function.h"
-#include "llvm/IRBuilder.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/MDBuilder.h"
-#include "llvm/Module.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/ADT/OwningPtr.h"
-
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Module.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -100,6 +99,13 @@ TEST_F(IRBuilderTest, CreateCondBr) {
   EXPECT_EQ(Weights, TI->getMetadata(LLVMContext::MD_prof));
 }
 
+TEST_F(IRBuilderTest, LandingPadName) {
+  IRBuilder<> Builder(BB);
+  LandingPadInst *LP = Builder.CreateLandingPad(Builder.getInt32Ty(),
+                                                Builder.getInt32(0), 0, "LP");
+  EXPECT_EQ(LP->getName(), "LP");
+}
+
 TEST_F(IRBuilderTest, GetIntTy) {
   IRBuilder<> Builder(BB);
   IntegerType *Ty1 = Builder.getInt1Ty();
@@ -130,7 +136,7 @@ TEST_F(IRBuilderTest, FastMathFlags) {
   F = Builder.CreateFAdd(F, F);
   EXPECT_FALSE(Builder.getFastMathFlags().any());
 
-  FMF.UnsafeAlgebra = true;
+  FMF.setUnsafeAlgebra();
   Builder.SetFastMathFlags(FMF);
 
   F = Builder.CreateFAdd(F, F);
@@ -154,7 +160,7 @@ TEST_F(IRBuilderTest, FastMathFlags) {
   EXPECT_FALSE(FDiv->hasAllowReciprocal());
 
   FMF.clear();
-  FMF.AllowReciprocal = true;
+  FMF.setAllowReciprocal();
   Builder.SetFastMathFlags(FMF);
 
   F = Builder.CreateFDiv(F, F);

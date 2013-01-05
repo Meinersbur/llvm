@@ -15,34 +15,38 @@
 
 #define DEBUG_TYPE "asan"
 
+#include "llvm/Transforms/Instrumentation.h"
 #include "BlackList.h"
-#include "llvm/Function.h"
-#include "llvm/IRBuilder.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/Type.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/DIBuilder.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/InstVisitor.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
-#include "llvm/DataLayout.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
-
-#include <string>
 #include <algorithm>
+#include <string>
 
 using namespace llvm;
 
@@ -70,6 +74,9 @@ static const char *kAsanMappingScaleName = "__asan_mapping_scale";
 static const char *kAsanStackMallocName = "__asan_stack_malloc";
 static const char *kAsanStackFreeName = "__asan_stack_free";
 static const char *kAsanGenPrefix = "__asan_gen_";
+static const char *kAsanPoisonStackMemoryName = "__asan_poison_stack_memory";
+static const char *kAsanUnpoisonStackMemoryName =
+    "__asan_unpoison_stack_memory";
 
 static const int kAsanStackLeftRedzoneMagic = 0xf1;
 static const int kAsanStackMidRedzoneMagic = 0xf2;
@@ -113,9 +120,10 @@ static cl::opt<bool> ClInitializers("asan-initialization-order",
        cl::desc("Handle C++ initializer order"), cl::Hidden, cl::init(false));
 static cl::opt<bool> ClMemIntrin("asan-memintrin",
        cl::desc("Handle memset/memcpy/memmove"), cl::Hidden, cl::init(true));
-// This flag may need to be replaced with -fasan-blacklist.
-static cl::opt<std::string>  ClBlackListFile("asan-blacklist",
-       cl::desc("File containing the list of functions to ignore "
+static cl::opt<bool> ClRealignStack("asan-realign-stack",
+       cl::desc("Realign stack to 32"), cl::Hidden, cl::init(true));
+static cl::opt<std::string> ClBlacklistFile("asan-blacklist",
+       cl::desc("File containing the list of objects to ignore "
                 "during instrumentation"), cl::Hidden);
 
 // These flags allow to change the shadow mapping.
@@ -192,11 +200,14 @@ static size_t RedzoneSize() {
 struct AddressSanitizer : public FunctionPass {
   AddressSanitizer(bool CheckInitOrder = false,
                    bool CheckUseAfterReturn = false,
-                   bool CheckLifetime = false)
+                   bool CheckLifetime = false,
+                   StringRef BlacklistFile = StringRef())
       : FunctionPass(ID),
         CheckInitOrder(CheckInitOrder || ClInitializers),
         CheckUseAfterReturn(CheckUseAfterReturn || ClUseAfterReturn),
-        CheckLifetime(CheckLifetime || ClCheckLifetime) {}
+        CheckLifetime(CheckLifetime || ClCheckLifetime),
+        BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
+                                            : BlacklistFile) {}
   virtual const char *getPassName() const {
     return "AddressSanitizerFunctionPass";
   }
@@ -216,29 +227,13 @@ struct AddressSanitizer : public FunctionPass {
   void createInitializerPoisonCalls(Module &M,
                                     Value *FirstAddr, Value *LastAddr);
   bool maybeInsertAsanInitAtFunctionEntry(Function &F);
-  bool poisonStackInFunction(Function &F);
   virtual bool doInitialization(Module &M);
   static char ID;  // Pass identification, replacement for typeid
 
  private:
   void initializeCallbacks(Module &M);
-  uint64_t getAllocaSizeInBytes(AllocaInst *AI) {
-    Type *Ty = AI->getAllocatedType();
-    uint64_t SizeInBytes = TD->getTypeAllocSize(Ty);
-    return SizeInBytes;
-  }
-  uint64_t getAlignedSize(uint64_t SizeInBytes) {
-    size_t RZ = RedzoneSize();
-    return ((SizeInBytes + RZ - 1) / RZ) * RZ;
-  }
-  uint64_t getAlignedAllocaSize(AllocaInst *AI) {
-    uint64_t SizeInBytes = getAllocaSizeInBytes(AI);
-    return getAlignedSize(SizeInBytes);
-  }
 
   bool ShouldInstrumentGlobal(GlobalVariable *G);
-  void PoisonStack(const ArrayRef<AllocaInst*> &AllocaVec, IRBuilder<> IRB,
-                   Value *ShadowBase, bool DoPoison);
   bool LooksLikeCodeInBug11395(Instruction *I);
   void FindDynamicInitializers(Module &M);
 
@@ -250,39 +245,190 @@ struct AddressSanitizer : public FunctionPass {
   uint64_t MappingOffset;
   int LongSize;
   Type *IntptrTy;
-  Type *IntptrPtrTy;
   Function *AsanCtorFunction;
   Function *AsanInitFunction;
-  Function *AsanStackMallocFunc, *AsanStackFreeFunc;
   Function *AsanHandleNoReturnFunc;
+  SmallString<64> BlacklistFile;
   OwningPtr<BlackList> BL;
   // This array is indexed by AccessIsWrite and log2(AccessSize).
   Function *AsanErrorCallback[2][kNumberOfAccessSizes];
   InlineAsm *EmptyAsm;
   SetOfDynamicallyInitializedGlobals DynamicallyInitializedGlobals;
+
+  friend struct FunctionStackPoisoner;
 };
 
 class AddressSanitizerModule : public ModulePass {
  public:
-  AddressSanitizerModule(bool CheckInitOrder = false)
+  AddressSanitizerModule(bool CheckInitOrder = false,
+                         StringRef BlacklistFile = StringRef())
       : ModulePass(ID),
-        CheckInitOrder(CheckInitOrder || ClInitializers) {}
+        CheckInitOrder(CheckInitOrder || ClInitializers),
+        BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
+                                            : BlacklistFile) {}
   bool runOnModule(Module &M);
   static char ID;  // Pass identification, replacement for typeid
   virtual const char *getPassName() const {
     return "AddressSanitizerModule";
   }
+
  private:
+  void initializeCallbacks(Module &M);
+
   bool ShouldInstrumentGlobal(GlobalVariable *G);
   void createInitializerPoisonCalls(Module &M, Value *FirstAddr,
                                     Value *LastAddr);
 
   bool CheckInitOrder;
+  SmallString<64> BlacklistFile;
   OwningPtr<BlackList> BL;
   SetOfDynamicallyInitializedGlobals DynamicallyInitializedGlobals;
   Type *IntptrTy;
   LLVMContext *C;
   DataLayout *TD;
+  Function *AsanPoisonGlobals;
+  Function *AsanUnpoisonGlobals;
+  Function *AsanRegisterGlobals;
+  Function *AsanUnregisterGlobals;
+};
+
+// Stack poisoning does not play well with exception handling.
+// When an exception is thrown, we essentially bypass the code
+// that unpoisones the stack. This is why the run-time library has
+// to intercept __cxa_throw (as well as longjmp, etc) and unpoison the entire
+// stack in the interceptor. This however does not work inside the
+// actual function which catches the exception. Most likely because the
+// compiler hoists the load of the shadow value somewhere too high.
+// This causes asan to report a non-existing bug on 453.povray.
+// It sounds like an LLVM bug.
+struct FunctionStackPoisoner : public InstVisitor<FunctionStackPoisoner> {
+  Function &F;
+  AddressSanitizer &ASan;
+  DIBuilder DIB;
+  LLVMContext *C;
+  Type *IntptrTy;
+  Type *IntptrPtrTy;
+
+  SmallVector<AllocaInst*, 16> AllocaVec;
+  SmallVector<Instruction*, 8> RetVec;
+  uint64_t TotalStackSize;
+  unsigned StackAlignment;
+
+  Function *AsanStackMallocFunc, *AsanStackFreeFunc;
+  Function *AsanPoisonStackMemoryFunc, *AsanUnpoisonStackMemoryFunc;
+
+  // Stores a place and arguments of poisoning/unpoisoning call for alloca.
+  struct AllocaPoisonCall {
+    IntrinsicInst *InsBefore;
+    uint64_t Size;
+    bool DoPoison;
+  };
+  SmallVector<AllocaPoisonCall, 8> AllocaPoisonCallVec;
+
+  // Maps Value to an AllocaInst from which the Value is originated.
+  typedef DenseMap<Value*, AllocaInst*> AllocaForValueMapTy;
+  AllocaForValueMapTy AllocaForValue;
+
+  FunctionStackPoisoner(Function &F, AddressSanitizer &ASan)
+      : F(F), ASan(ASan), DIB(*F.getParent()), C(ASan.C),
+        IntptrTy(ASan.IntptrTy), IntptrPtrTy(PointerType::get(IntptrTy, 0)),
+        TotalStackSize(0), StackAlignment(1 << MappingScale()) {}
+
+  bool runOnFunction() {
+    if (!ClStack) return false;
+    // Collect alloca, ret, lifetime instructions etc.
+    for (df_iterator<BasicBlock*> DI = df_begin(&F.getEntryBlock()),
+         DE = df_end(&F.getEntryBlock()); DI != DE; ++DI) {
+      BasicBlock *BB = *DI;
+      visit(*BB);
+    }
+    if (AllocaVec.empty()) return false;
+
+    initializeCallbacks(*F.getParent());
+
+    poisonStack();
+
+    if (ClDebugStack) {
+      DEBUG(dbgs() << F);
+    }
+    return true;
+  }
+
+  // Finds all static Alloca instructions and puts
+  // poisoned red zones around all of them.
+  // Then unpoison everything back before the function returns.
+  void poisonStack();
+
+  // ----------------------- Visitors.
+  /// \brief Collect all Ret instructions.
+  void visitReturnInst(ReturnInst &RI) {
+    RetVec.push_back(&RI);
+  }
+
+  /// \brief Collect Alloca instructions we want (and can) handle.
+  void visitAllocaInst(AllocaInst &AI) {
+    if (!isInterestingAlloca(AI)) return;
+
+    StackAlignment = std::max(StackAlignment, AI.getAlignment());
+    AllocaVec.push_back(&AI);
+    uint64_t AlignedSize =  getAlignedAllocaSize(&AI);
+    TotalStackSize += AlignedSize;
+  }
+
+  /// \brief Collect lifetime intrinsic calls to check for use-after-scope
+  /// errors.
+  void visitIntrinsicInst(IntrinsicInst &II) {
+    if (!ASan.CheckLifetime) return;
+    Intrinsic::ID ID = II.getIntrinsicID();
+    if (ID != Intrinsic::lifetime_start &&
+        ID != Intrinsic::lifetime_end)
+      return;
+    // Found lifetime intrinsic, add ASan instrumentation if necessary.
+    ConstantInt *Size = dyn_cast<ConstantInt>(II.getArgOperand(0));
+    // If size argument is undefined, don't do anything.
+    if (Size->isMinusOne()) return;
+    // Check that size doesn't saturate uint64_t and can
+    // be stored in IntptrTy.
+    const uint64_t SizeValue = Size->getValue().getLimitedValue();
+    if (SizeValue == ~0ULL ||
+        !ConstantInt::isValueValidForType(IntptrTy, SizeValue))
+      return;
+    // Find alloca instruction that corresponds to llvm.lifetime argument.
+    AllocaInst *AI = findAllocaForValue(II.getArgOperand(1));
+    if (!AI) return;
+    bool DoPoison = (ID == Intrinsic::lifetime_end);
+    AllocaPoisonCall APC = {&II, SizeValue, DoPoison};
+    AllocaPoisonCallVec.push_back(APC);
+  }
+
+  // ---------------------- Helpers.
+  void initializeCallbacks(Module &M);
+
+  // Check if we want (and can) handle this alloca.
+  bool isInterestingAlloca(AllocaInst &AI) {
+    return (!AI.isArrayAllocation() &&
+            AI.isStaticAlloca() &&
+            AI.getAllocatedType()->isSized());
+  }
+
+  uint64_t getAllocaSizeInBytes(AllocaInst *AI) {
+    Type *Ty = AI->getAllocatedType();
+    uint64_t SizeInBytes = ASan.TD->getTypeAllocSize(Ty);
+    return SizeInBytes;
+  }
+  uint64_t getAlignedSize(uint64_t SizeInBytes) {
+    size_t RZ = RedzoneSize();
+    return ((SizeInBytes + RZ - 1) / RZ) * RZ;
+  }
+  uint64_t getAlignedAllocaSize(AllocaInst *AI) {
+    uint64_t SizeInBytes = getAllocaSizeInBytes(AI);
+    return getAlignedSize(SizeInBytes);
+  }
+  /// Finds alloca where the value comes from.
+  AllocaInst *findAllocaForValue(Value *V);
+  void poisonRedZones(const ArrayRef<AllocaInst*> &AllocaVec, IRBuilder<> IRB,
+                      Value *ShadowBase, bool DoPoison);
+  void poisonAlloca(Value *V, uint64_t Size, IRBuilder<> IRB, bool DoPoison);
 };
 
 }  // namespace
@@ -292,17 +438,19 @@ INITIALIZE_PASS(AddressSanitizer, "asan",
     "AddressSanitizer: detects use-after-free and out-of-bounds bugs.",
     false, false)
 FunctionPass *llvm::createAddressSanitizerFunctionPass(
-    bool CheckInitOrder, bool CheckUseAfterReturn, bool CheckLifetime) {
+    bool CheckInitOrder, bool CheckUseAfterReturn, bool CheckLifetime,
+    StringRef BlacklistFile) {
   return new AddressSanitizer(CheckInitOrder, CheckUseAfterReturn,
-                              CheckLifetime);
+                              CheckLifetime, BlacklistFile);
 }
 
 char AddressSanitizerModule::ID = 0;
 INITIALIZE_PASS(AddressSanitizerModule, "asan-module",
     "AddressSanitizer: detects use-after-free and out-of-bounds bugs."
     "ModulePass", false, false)
-ModulePass *llvm::createAddressSanitizerModulePass(bool CheckInitOrder) {
-  return new AddressSanitizerModule(CheckInitOrder);
+ModulePass *llvm::createAddressSanitizerModulePass(
+    bool CheckInitOrder, StringRef BlacklistFile) {
+  return new AddressSanitizerModule(CheckInitOrder, BlacklistFile);
 }
 
 static size_t TypeSizeToSizeIndex(uint32_t TypeSize) {
@@ -532,14 +680,6 @@ void AddressSanitizerModule::createInitializerPoisonCalls(
   // Set up the arguments to our poison/unpoison functions.
   IRBuilder<> IRB(GlobalInit->begin()->getFirstInsertionPt());
 
-  // Declare our poisoning and unpoisoning functions.
-  Function *AsanPoisonGlobals = checkInterfaceFunction(M.getOrInsertFunction(
-      kAsanPoisonGlobalsName, IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
-  AsanPoisonGlobals->setLinkage(Function::ExternalLinkage);
-  Function *AsanUnpoisonGlobals = checkInterfaceFunction(M.getOrInsertFunction(
-      kAsanUnpoisonGlobalsName, IRB.getVoidTy(), NULL));
-  AsanUnpoisonGlobals->setLinkage(Function::ExternalLinkage);
-
   // Add a call to poison all external globals before the given function starts.
   IRB.CreateCall2(AsanPoisonGlobals, FirstAddr, LastAddr);
 
@@ -611,6 +751,26 @@ bool AddressSanitizerModule::ShouldInstrumentGlobal(GlobalVariable *G) {
   return true;
 }
 
+void AddressSanitizerModule::initializeCallbacks(Module &M) {
+  IRBuilder<> IRB(*C);
+  // Declare our poisoning and unpoisoning functions.
+  AsanPoisonGlobals = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanPoisonGlobalsName, IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
+  AsanPoisonGlobals->setLinkage(Function::ExternalLinkage);
+  AsanUnpoisonGlobals = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanUnpoisonGlobalsName, IRB.getVoidTy(), NULL));
+  AsanUnpoisonGlobals->setLinkage(Function::ExternalLinkage);
+  // Declare functions that register/unregister globals.
+  AsanRegisterGlobals = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanRegisterGlobalsName, IRB.getVoidTy(),
+      IntptrTy, IntptrTy, NULL));
+  AsanRegisterGlobals->setLinkage(Function::ExternalLinkage);
+  AsanUnregisterGlobals = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanUnregisterGlobalsName,
+      IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
+  AsanUnregisterGlobals->setLinkage(Function::ExternalLinkage);
+}
+
 // This function replaces all global variables with new variables that have
 // trailing redzones. It also creates a function that poisons
 // redzones and inserts this function into llvm.global_ctors.
@@ -619,11 +779,12 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
   TD = getAnalysisIfAvailable<DataLayout>();
   if (!TD)
     return false;
-  BL.reset(new BlackList(ClBlackListFile));
+  BL.reset(new BlackList(BlacklistFile));
   if (BL->isIn(M)) return false;
-  DynamicallyInitializedGlobals.Init(M);
   C = &(M.getContext());
   IntptrTy = Type::getIntNTy(*C, TD->getPointerSizeInBits());
+  initializeCallbacks(M);
+  DynamicallyInitializedGlobals.Init(M);
 
   SmallVector<GlobalVariable *, 16> GlobalsToChange;
 
@@ -725,12 +886,6 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
   // Create calls for poisoning before initializers run and unpoisoning after.
   if (CheckInitOrder && FirstDynamic && LastDynamic)
     createInitializerPoisonCalls(M, FirstDynamic, LastDynamic);
-
-  Function *AsanRegisterGlobals = checkInterfaceFunction(M.getOrInsertFunction(
-      kAsanRegisterGlobalsName, IRB.getVoidTy(),
-      IntptrTy, IntptrTy, NULL));
-  AsanRegisterGlobals->setLinkage(Function::ExternalLinkage);
-
   IRB.CreateCall2(AsanRegisterGlobals,
                   IRB.CreatePointerCast(AllGlobals, IntptrTy),
                   ConstantInt::get(IntptrTy, n));
@@ -742,12 +897,6 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
       GlobalValue::InternalLinkage, kAsanModuleDtorName, &M);
   BasicBlock *AsanDtorBB = BasicBlock::Create(*C, "", AsanDtorFunction);
   IRBuilder<> IRB_Dtor(ReturnInst::Create(*C, AsanDtorBB));
-  Function *AsanUnregisterGlobals =
-      checkInterfaceFunction(M.getOrInsertFunction(
-          kAsanUnregisterGlobalsName,
-          IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
-  AsanUnregisterGlobals->setLinkage(Function::ExternalLinkage);
-
   IRB_Dtor.CreateCall2(AsanUnregisterGlobals,
                        IRB.CreatePointerCast(AllGlobals, IntptrTy),
                        ConstantInt::get(IntptrTy, n));
@@ -773,14 +922,8 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
     }
   }
 
-  AsanStackMallocFunc = checkInterfaceFunction(M.getOrInsertFunction(
-      kAsanStackMallocName, IntptrTy, IntptrTy, IntptrTy, NULL));
-  AsanStackFreeFunc = checkInterfaceFunction(M.getOrInsertFunction(
-      kAsanStackFreeName, IRB.getVoidTy(),
-      IntptrTy, IntptrTy, IntptrTy, NULL));
   AsanHandleNoReturnFunc = checkInterfaceFunction(M.getOrInsertFunction(
       kAsanHandleNoReturnName, IRB.getVoidTy(), NULL));
-
   // We insert an empty inline asm after __asan_report* to avoid callback merge.
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
@@ -794,13 +937,12 @@ bool AddressSanitizer::doInitialization(Module &M) {
 
   if (!TD)
     return false;
-  BL.reset(new BlackList(ClBlackListFile));
+  BL.reset(new BlackList(BlacklistFile));
   DynamicallyInitializedGlobals.Init(M);
 
   C = &(M.getContext());
   LongSize = TD->getPointerSizeInBits();
   IntptrTy = Type::getIntNTy(*C, LongSize);
-  IntptrPtrTy = PointerType::get(IntptrTy, 0);
 
   AsanCtorFunction = Function::Create(
       FunctionType::get(Type::getVoidTy(*C), false),
@@ -876,7 +1018,8 @@ bool AddressSanitizer::runOnFunction(Function &F) {
   // If needed, insert __asan_init before checking for AddressSafety attr.
   maybeInsertAsanInitAtFunctionEntry(F);
 
-  if (!F.getFnAttributes().hasAttribute(Attributes::AddressSafety))
+  if (!F.getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                      Attribute::AddressSafety))
     return false;
 
   if (!ClDebugFunc.empty() && ClDebugFunc != F.getName())
@@ -935,7 +1078,8 @@ bool AddressSanitizer::runOnFunction(Function &F) {
     NumInstrumented++;
   }
 
-  bool ChangedStack = poisonStackInFunction(F);
+  FunctionStackPoisoner FSP(F, *this);
+  bool ChangedStack = FSP.runOnFunction();
 
   // We must unpoison the stack before every NoReturn call (throw, _exit, etc).
   // See e.g. http://code.google.com/p/address-sanitizer/issues/detail?id=37
@@ -975,9 +1119,34 @@ static void PoisonShadowPartialRightRedzone(uint8_t *Shadow,
   }
 }
 
-void AddressSanitizer::PoisonStack(const ArrayRef<AllocaInst*> &AllocaVec,
-                                   IRBuilder<> IRB,
-                                   Value *ShadowBase, bool DoPoison) {
+// Workaround for bug 11395: we don't want to instrument stack in functions
+// with large assembly blobs (32-bit only), otherwise reg alloc may crash.
+// FIXME: remove once the bug 11395 is fixed.
+bool AddressSanitizer::LooksLikeCodeInBug11395(Instruction *I) {
+  if (LongSize != 32) return false;
+  CallInst *CI = dyn_cast<CallInst>(I);
+  if (!CI || !CI->isInlineAsm()) return false;
+  if (CI->getNumArgOperands() <= 5) return false;
+  // We have inline assembly with quite a few arguments.
+  return true;
+}
+
+void FunctionStackPoisoner::initializeCallbacks(Module &M) {
+  IRBuilder<> IRB(*C);
+  AsanStackMallocFunc = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanStackMallocName, IntptrTy, IntptrTy, IntptrTy, NULL));
+  AsanStackFreeFunc = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanStackFreeName, IRB.getVoidTy(),
+      IntptrTy, IntptrTy, IntptrTy, NULL));
+  AsanPoisonStackMemoryFunc = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanPoisonStackMemoryName, IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
+  AsanUnpoisonStackMemoryFunc = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanUnpoisonStackMemoryName, IRB.getVoidTy(), IntptrTy, IntptrTy, NULL));
+}
+
+void FunctionStackPoisoner::poisonRedZones(
+  const ArrayRef<AllocaInst*> &AllocaVec, IRBuilder<> IRB, Value *ShadowBase,
+  bool DoPoison) {
   size_t ShadowRZSize = RedzoneSize() >> MappingScale();
   assert(ShadowRZSize >= 1 && ShadowRZSize <= 4);
   Type *RZTy = Type::getIntNTy(*C, ShadowRZSize * 8);
@@ -1025,75 +1194,22 @@ void AddressSanitizer::PoisonStack(const ArrayRef<AllocaInst*> &AllocaVec,
     // Poison the full redzone at right.
     Ptr = IRB.CreateAdd(ShadowBase,
                         ConstantInt::get(IntptrTy, Pos >> MappingScale()));
-    Value *Poison = i == AllocaVec.size() - 1 ? PoisonRight : PoisonMid;
+    bool LastAlloca = (i == AllocaVec.size() - 1);
+    Value *Poison = LastAlloca ? PoisonRight : PoisonMid;
     IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, RZPtrTy));
 
     Pos += RedzoneSize();
   }
 }
 
-// Workaround for bug 11395: we don't want to instrument stack in functions
-// with large assembly blobs (32-bit only), otherwise reg alloc may crash.
-// FIXME: remove once the bug 11395 is fixed.
-bool AddressSanitizer::LooksLikeCodeInBug11395(Instruction *I) {
-  if (LongSize != 32) return false;
-  CallInst *CI = dyn_cast<CallInst>(I);
-  if (!CI || !CI->isInlineAsm()) return false;
-  if (CI->getNumArgOperands() <= 5) return false;
-  // We have inline assembly with quite a few arguments.
-  return true;
-}
+void FunctionStackPoisoner::poisonStack() {
+  uint64_t LocalStackSize = TotalStackSize +
+                            (AllocaVec.size() + 1) * RedzoneSize();
 
-// Find all static Alloca instructions and put
-// poisoned red zones around all of them.
-// Then unpoison everything back before the function returns.
-//
-// Stack poisoning does not play well with exception handling.
-// When an exception is thrown, we essentially bypass the code
-// that unpoisones the stack. This is why the run-time library has
-// to intercept __cxa_throw (as well as longjmp, etc) and unpoison the entire
-// stack in the interceptor. This however does not work inside the
-// actual function which catches the exception. Most likely because the
-// compiler hoists the load of the shadow value somewhere too high.
-// This causes asan to report a non-existing bug on 453.povray.
-// It sounds like an LLVM bug.
-bool AddressSanitizer::poisonStackInFunction(Function &F) {
-  if (!ClStack) return false;
-  SmallVector<AllocaInst*, 16> AllocaVec;
-  SmallVector<Instruction*, 8> RetVec;
-  uint64_t TotalSize = 0;
-
-  // Filter out Alloca instructions we want (and can) handle.
-  // Collect Ret instructions.
-  for (Function::iterator FI = F.begin(), FE = F.end();
-       FI != FE; ++FI) {
-    BasicBlock &BB = *FI;
-    for (BasicBlock::iterator BI = BB.begin(), BE = BB.end();
-         BI != BE; ++BI) {
-      if (isa<ReturnInst>(BI)) {
-          RetVec.push_back(BI);
-          continue;
-      }
-
-      AllocaInst *AI = dyn_cast<AllocaInst>(BI);
-      if (!AI) continue;
-      if (AI->isArrayAllocation()) continue;
-      if (!AI->isStaticAlloca()) continue;
-      if (!AI->getAllocatedType()->isSized()) continue;
-      if (AI->getAlignment() > RedzoneSize()) continue;
-      AllocaVec.push_back(AI);
-      uint64_t AlignedSize =  getAlignedAllocaSize(AI);
-      TotalSize += AlignedSize;
-    }
-  }
-
-  if (AllocaVec.empty()) return false;
-
-  uint64_t LocalStackSize = TotalSize + (AllocaVec.size() + 1) * RedzoneSize();
-
-  bool DoStackMalloc = CheckUseAfterReturn
+  bool DoStackMalloc = ASan.CheckUseAfterReturn
       && LocalStackSize <= kMaxStackMallocSize;
 
+  assert(AllocaVec.size() > 0);
   Instruction *InsBefore = AllocaVec[0];
   IRBuilder<> IRB(InsBefore);
 
@@ -1101,7 +1217,9 @@ bool AddressSanitizer::poisonStackInFunction(Function &F) {
   Type *ByteArrayTy = ArrayType::get(IRB.getInt8Ty(), LocalStackSize);
   AllocaInst *MyAlloca =
       new AllocaInst(ByteArrayTy, "MyAlloca", InsBefore);
-  MyAlloca->setAlignment(RedzoneSize());
+  if (ClRealignStack && StackAlignment < RedzoneSize())
+    StackAlignment = RedzoneSize();
+  MyAlloca->setAlignment(StackAlignment);
   assert(MyAlloca->isStaticAlloca());
   Value *OrigStackBase = IRB.CreatePointerCast(MyAlloca, IntptrTy);
   Value *LocalStackBase = OrigStackBase;
@@ -1116,6 +1234,18 @@ bool AddressSanitizer::poisonStackInFunction(Function &F) {
   raw_svector_ostream StackDescription(StackDescriptionStorage);
   StackDescription << F.getName() << " " << AllocaVec.size() << " ";
 
+  // Insert poison calls for lifetime intrinsics for alloca.
+  bool HavePoisonedAllocas = false;
+  for (size_t i = 0, n = AllocaPoisonCallVec.size(); i < n; i++) {
+    const AllocaPoisonCall &APC = AllocaPoisonCallVec[i];
+    IntrinsicInst *II = APC.InsBefore;
+    AllocaInst *AI = findAllocaForValue(II->getArgOperand(1));
+    assert(AI);
+    IRBuilder<> IRB(II);
+    poisonAlloca(AI, APC.Size, IRB, APC.DoPoison);
+    HavePoisonedAllocas |= APC.DoPoison;
+  }
+
   uint64_t Pos = RedzoneSize();
   // Replace Alloca instructions with base+offset.
   for (size_t i = 0, n = AllocaVec.size(); i < n; i++) {
@@ -1126,10 +1256,11 @@ bool AddressSanitizer::poisonStackInFunction(Function &F) {
                      << Name.size() << " " << Name << " ";
     uint64_t AlignedSize = getAlignedAllocaSize(AI);
     assert((AlignedSize % RedzoneSize()) == 0);
-    AI->replaceAllUsesWith(
-        IRB.CreateIntToPtr(
+    Value *NewAllocaPtr = IRB.CreateIntToPtr(
             IRB.CreateAdd(LocalStackBase, ConstantInt::get(IntptrTy, Pos)),
-            AI->getType()));
+            AI->getType());
+    replaceDbgDeclareForAlloca(AI, NewAllocaPtr, DIB);
+    AI->replaceAllUsesWith(NewAllocaPtr);
     Pos += AlignedSize + RedzoneSize();
   }
   assert(Pos == LocalStackSize);
@@ -1139,42 +1270,93 @@ bool AddressSanitizer::poisonStackInFunction(Function &F) {
   IRB.CreateStore(ConstantInt::get(IntptrTy, kCurrentStackFrameMagic),
                   BasePlus0);
   Value *BasePlus1 = IRB.CreateAdd(LocalStackBase,
-                                   ConstantInt::get(IntptrTy, LongSize/8));
+                                   ConstantInt::get(IntptrTy,
+                                                    ASan.LongSize/8));
   BasePlus1 = IRB.CreateIntToPtr(BasePlus1, IntptrPtrTy);
   GlobalVariable *StackDescriptionGlobal =
       createPrivateGlobalForString(*F.getParent(), StackDescription.str());
-  Value *Description = IRB.CreatePointerCast(StackDescriptionGlobal, IntptrTy);
+  Value *Description = IRB.CreatePointerCast(StackDescriptionGlobal,
+                                             IntptrTy);
   IRB.CreateStore(Description, BasePlus1);
 
   // Poison the stack redzones at the entry.
-  Value *ShadowBase = memToShadow(LocalStackBase, IRB);
-  PoisonStack(ArrayRef<AllocaInst*>(AllocaVec), IRB, ShadowBase, true);
+  Value *ShadowBase = ASan.memToShadow(LocalStackBase, IRB);
+  poisonRedZones(AllocaVec, IRB, ShadowBase, true);
 
   // Unpoison the stack before all ret instructions.
   for (size_t i = 0, n = RetVec.size(); i < n; i++) {
     Instruction *Ret = RetVec[i];
     IRBuilder<> IRBRet(Ret);
-
     // Mark the current frame as retired.
     IRBRet.CreateStore(ConstantInt::get(IntptrTy, kRetiredStackFrameMagic),
                        BasePlus0);
     // Unpoison the stack.
-    PoisonStack(ArrayRef<AllocaInst*>(AllocaVec), IRBRet, ShadowBase, false);
-
+    poisonRedZones(AllocaVec, IRBRet, ShadowBase, false);
     if (DoStackMalloc) {
+      // In use-after-return mode, mark the whole stack frame unaddressable.
       IRBRet.CreateCall3(AsanStackFreeFunc, LocalStackBase,
                          ConstantInt::get(IntptrTy, LocalStackSize),
                          OrigStackBase);
+    } else if (HavePoisonedAllocas) {
+      // If we poisoned some allocas in llvm.lifetime analysis,
+      // unpoison whole stack frame now.
+      assert(LocalStackBase == OrigStackBase);
+      poisonAlloca(LocalStackBase, LocalStackSize, IRBRet, false);
     }
   }
 
   // We are done. Remove the old unused alloca instructions.
   for (size_t i = 0, n = AllocaVec.size(); i < n; i++)
     AllocaVec[i]->eraseFromParent();
+}
 
-  if (ClDebugStack) {
-    DEBUG(dbgs() << F);
+void FunctionStackPoisoner::poisonAlloca(Value *V, uint64_t Size,
+                                         IRBuilder<> IRB, bool DoPoison) {
+  // For now just insert the call to ASan runtime.
+  Value *AddrArg = IRB.CreatePointerCast(V, IntptrTy);
+  Value *SizeArg = ConstantInt::get(IntptrTy, Size);
+  IRB.CreateCall2(DoPoison ? AsanPoisonStackMemoryFunc
+                           : AsanUnpoisonStackMemoryFunc,
+                  AddrArg, SizeArg);
+}
+
+// Handling llvm.lifetime intrinsics for a given %alloca:
+// (1) collect all llvm.lifetime.xxx(%size, %value) describing the alloca.
+// (2) if %size is constant, poison memory for llvm.lifetime.end (to detect
+//     invalid accesses) and unpoison it for llvm.lifetime.start (the memory
+//     could be poisoned by previous llvm.lifetime.end instruction, as the
+//     variable may go in and out of scope several times, e.g. in loops).
+// (3) if we poisoned at least one %alloca in a function,
+//     unpoison the whole stack frame at function exit.
+
+AllocaInst *FunctionStackPoisoner::findAllocaForValue(Value *V) {
+  if (AllocaInst *AI = dyn_cast<AllocaInst>(V))
+    // We're intested only in allocas we can handle.
+    return isInterestingAlloca(*AI) ? AI : 0;
+  // See if we've already calculated (or started to calculate) alloca for a
+  // given value.
+  AllocaForValueMapTy::iterator I = AllocaForValue.find(V);
+  if (I != AllocaForValue.end())
+    return I->second;
+  // Store 0 while we're calculating alloca for value V to avoid
+  // infinite recursion if the value references itself.
+  AllocaForValue[V] = 0;
+  AllocaInst *Res = 0;
+  if (CastInst *CI = dyn_cast<CastInst>(V))
+    Res = findAllocaForValue(CI->getOperand(0));
+  else if (PHINode *PN = dyn_cast<PHINode>(V)) {
+    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
+      Value *IncValue = PN->getIncomingValue(i);
+      // Allow self-referencing phi-nodes.
+      if (IncValue == PN) continue;
+      AllocaInst *IncValueAI = findAllocaForValue(IncValue);
+      // AI for incoming values should exist and should all be equal.
+      if (IncValueAI == 0 || (Res != 0 && IncValueAI != Res))
+        return 0;
+      Res = IncValueAI;
+    }
   }
-
-  return true;
+  if (Res != 0)
+    AllocaForValue[V] = Res;
+  return Res;
 }

@@ -1,9 +1,9 @@
-#include "llvm/Instructions.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/PassManager.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Assembly/Parser.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/PassManager.h"
 #include "llvm/Support/SourceMgr.h"
 #include "gtest/gtest.h"
 

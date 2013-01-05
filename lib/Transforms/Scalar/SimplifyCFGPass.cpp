@@ -23,19 +23,19 @@
 
 #define DEBUG_TYPE "simplifycfg"
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Constants.h"
-#include "llvm/Instructions.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
-#include "llvm/Attributes.h"
-#include "llvm/Support/CFG.h"
-#include "llvm/Pass.h"
-#include "llvm/DataLayout.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/CFG.h"
 #include "llvm/TargetTransformInfo.h"
+#include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
 
 STATISTIC(NumSimpl, "Number of blocks simplified");
@@ -111,12 +111,10 @@ static bool markAliveBlocks(BasicBlock *BB,
 
   SmallVector<BasicBlock*, 128> Worklist;
   Worklist.push_back(BB);
+  Reachable.insert(BB);
   bool Changed = false;
   do {
     BB = Worklist.pop_back_val();
-
-    if (!Reachable.insert(BB))
-      continue;
 
     // Do a quick scan of the basic block, turning any obviously unreachable
     // instructions into LLVM unreachable insts.  The instruction combining pass
@@ -176,7 +174,8 @@ static bool markAliveBlocks(BasicBlock *BB,
 
     Changed |= ConstantFoldTerminator(BB, true);
     for (succ_iterator SI = succ_begin(BB), SE = succ_end(BB); SI != SE; ++SI)
-      Worklist.push_back(*SI);
+      if (Reachable.insert(*SI))
+        Worklist.push_back(*SI);
   } while (!Worklist.empty());
   return Changed;
 }

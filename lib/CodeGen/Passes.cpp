@@ -12,22 +12,22 @@
 //
 //===---------------------------------------------------------------------===//
 
+#include "llvm/CodeGen/Passes.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/PassManager.h"
+#include "llvm/Assembly/PrintModulePass.h"
 #include "llvm/CodeGen/GCStrategy.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
-#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/Assembly/PrintModulePass.h"
+#include "llvm/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
+#include "llvm/Transforms/Scalar.h"
 
 using namespace llvm;
 
@@ -513,9 +513,10 @@ void TargetPassConfig::addMachinePasses() {
   }
 
   // GC
-  addPass(&GCMachineCodeAnalysisID);
-  if (PrintGCInfo)
-    addPass(createGCInfoPrinter(dbgs()));
+  if (addGCPasses()) {
+    if (PrintGCInfo)
+      addPass(createGCInfoPrinter(dbgs()));
+  }
 
   // Basic block placement.
   if (getOptLevel() != CodeGenOpt::None)
@@ -730,6 +731,12 @@ void TargetPassConfig::addMachineLateOptimization() {
   // Copy propagation.
   if (addPass(&MachineCopyPropagationID))
     printAndVerify("After copy propagation pass");
+}
+
+/// Add standard GC passes.
+bool TargetPassConfig::addGCPasses() {
+  addPass(&GCMachineCodeAnalysisID);
+  return true;
 }
 
 /// Add standard basic block placement passes.

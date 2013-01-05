@@ -15,13 +15,13 @@
 #ifndef LLVM_TARGET_MSP430_TARGETMACHINE_H
 #define LLVM_TARGET_MSP430_TARGETMACHINE_H
 
-#include "MSP430InstrInfo.h"
-#include "MSP430ISelLowering.h"
 #include "MSP430FrameLowering.h"
-#include "MSP430SelectionDAGInfo.h"
+#include "MSP430ISelLowering.h"
+#include "MSP430InstrInfo.h"
 #include "MSP430RegisterInfo.h"
+#include "MSP430SelectionDAGInfo.h"
 #include "MSP430Subtarget.h"
-#include "llvm/DataLayout.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetTransformImpl.h"

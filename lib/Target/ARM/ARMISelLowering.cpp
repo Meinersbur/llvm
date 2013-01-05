@@ -23,14 +23,8 @@
 #include "ARMTargetMachine.h"
 #include "ARMTargetObjectFile.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
-#include "llvm/CallingConv.h"
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalValue.h"
-#include "llvm/Instruction.h"
-#include "llvm/Instructions.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/Type.h"
+#include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/IntrinsicLowering.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -40,14 +34,20 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Type.h"
 #include "llvm/MC/MCSectionMachO.h"
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetOptions.h"
 using namespace llvm;
 
 STATISTIC(NumTailCalls, "Number of tail calls");
@@ -546,6 +546,14 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     setOperationAction(ISD::FP_ROUND,   MVT::v2f32, Expand);
     setOperationAction(ISD::FP_EXTEND,  MVT::v2f64, Expand);
 
+    // NEON does not have single instruction CTPOP for vectors with element
+    // types wider than 8-bits.  However, custom lowering can leverage the
+    // v8i8/v16i8 vcnt instruction.
+    setOperationAction(ISD::CTPOP,      MVT::v2i32, Custom);
+    setOperationAction(ISD::CTPOP,      MVT::v4i32, Custom);
+    setOperationAction(ISD::CTPOP,      MVT::v4i16, Custom);
+    setOperationAction(ISD::CTPOP,      MVT::v8i16, Custom);
+
     setTargetDAGCombine(ISD::INTRINSIC_VOID);
     setTargetDAGCombine(ISD::INTRINSIC_W_CHAIN);
     setTargetDAGCombine(ISD::INTRINSIC_WO_CHAIN);
@@ -825,9 +833,12 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     setSchedulingPreference(Sched::Hybrid);
 
   //// temporary - rewrite interface to use type
-  maxStoresPerMemcpy = maxStoresPerMemcpyOptSize = 1;
-  maxStoresPerMemset = 16;
+  maxStoresPerMemset = 8;
   maxStoresPerMemsetOptSize = Subtarget->isTargetDarwin() ? 8 : 4;
+  maxStoresPerMemcpy = 4; // For @llvm.memcpy -> sequence of stores
+  maxStoresPerMemcpyOptSize = Subtarget->isTargetDarwin() ? 4 : 2;
+  maxStoresPerMemmove = 4; // For @llvm.memmove -> sequence of stores
+  maxStoresPerMemmoveOptSize = Subtarget->isTargetDarwin() ? 4 : 2;
 
   // On ARM arguments smaller than 4 bytes are extended, so all arguments
   // are at least 4 bytes aligned.
@@ -852,10 +863,10 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
 // due to the common occurrence of cross class copies and subregister insertions
 // and extractions.
 std::pair<const TargetRegisterClass*, uint8_t>
-ARMTargetLowering::findRepresentativeClass(EVT VT) const{
+ARMTargetLowering::findRepresentativeClass(MVT VT) const{
   const TargetRegisterClass *RRC = 0;
   uint8_t Cost = 1;
-  switch (VT.getSimpleVT().SimpleTy) {
+  switch (VT.SimpleTy) {
   default:
     return TargetLowering::findRepresentativeClass(VT);
   // Use DPR as representative register class for all floating point
@@ -1035,7 +1046,7 @@ EVT ARMTargetLowering::getSetCCResultType(EVT VT) const {
 
 /// getRegClassFor - Return the register class that should be used for the
 /// specified value type.
-const TargetRegisterClass *ARMTargetLowering::getRegClassFor(EVT VT) const {
+const TargetRegisterClass *ARMTargetLowering::getRegClassFor(MVT VT) const {
   // Map v4i64 to QQ registers but do not make the type legal. Similarly map
   // v8i64 to QQQQ registers. v4i64 and v8i64 are only used for REG_SEQUENCE to
   // load / store 4 to 8 consecutive D registers.
@@ -1605,8 +1616,8 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   // FIXME: handle tail calls differently.
   unsigned CallOpc;
-  bool HasMinSizeAttr = MF.getFunction()->getFnAttributes().
-    hasAttribute(Attributes::MinSize);
+  bool HasMinSizeAttr = MF.getFunction()->getAttributes().
+    hasAttribute(AttributeSet::FunctionIndex, Attribute::MinSize);
   if (Subtarget->isThumb()) {
     if ((!isDirect || isARMFunc) && !Subtarget->hasV5TOps())
       CallOpc = ARMISD::CALL_NOLINK;
@@ -3554,6 +3565,114 @@ static SDValue LowerCTTZ(SDNode *N, SelectionDAG &DAG,
   return DAG.getNode(ISD::CTLZ, dl, VT, rbit);
 }
 
+/// getCTPOP16BitCounts - Returns a v8i8/v16i8 vector containing the bit-count
+/// for each 16-bit element from operand, repeated.  The basic idea is to
+/// leverage vcnt to get the 8-bit counts, gather and add the results.
+///
+/// Trace for v4i16:
+/// input    = [v0    v1    v2    v3   ] (vi 16-bit element)
+/// cast: N0 = [w0 w1 w2 w3 w4 w5 w6 w7] (v0 = [w0 w1], wi 8-bit element)
+/// vcnt: N1 = [b0 b1 b2 b3 b4 b5 b6 b7] (bi = bit-count of 8-bit element wi)
+/// vrev: N2 = [b1 b0 b3 b2 b5 b4 b7 b6] 
+///            [b0 b1 b2 b3 b4 b5 b6 b7]
+///           +[b1 b0 b3 b2 b5 b4 b7 b6]
+/// N3=N1+N2 = [k0 k0 k1 k1 k2 k2 k3 k3] (k0 = b0+b1 = bit-count of 16-bit v0,
+/// vuzp:    = [k0 k1 k2 k3 k0 k1 k2 k3]  each ki is 8-bits)
+static SDValue getCTPOP16BitCounts(SDNode *N, SelectionDAG &DAG) {
+  EVT VT = N->getValueType(0);
+  DebugLoc DL = N->getDebugLoc();
+
+  EVT VT8Bit = VT.is64BitVector() ? MVT::v8i8 : MVT::v16i8;
+  SDValue N0 = DAG.getNode(ISD::BITCAST, DL, VT8Bit, N->getOperand(0));
+  SDValue N1 = DAG.getNode(ISD::CTPOP, DL, VT8Bit, N0);
+  SDValue N2 = DAG.getNode(ARMISD::VREV16, DL, VT8Bit, N1);
+  SDValue N3 = DAG.getNode(ISD::ADD, DL, VT8Bit, N1, N2);
+  return DAG.getNode(ARMISD::VUZP, DL, VT8Bit, N3, N3);
+}
+
+/// lowerCTPOP16BitElements - Returns a v4i16/v8i16 vector containing the
+/// bit-count for each 16-bit element from the operand.  We need slightly
+/// different sequencing for v4i16 and v8i16 to stay within NEON's available
+/// 64/128-bit registers.
+/// 
+/// Trace for v4i16:
+/// input           = [v0    v1    v2    v3    ] (vi 16-bit element)
+/// v8i8: BitCounts = [k0 k1 k2 k3 k0 k1 k2 k3 ] (ki is the bit-count of vi)
+/// v8i16:Extended  = [k0    k1    k2    k3    k0    k1    k2    k3    ]
+/// v4i16:Extracted = [k0    k1    k2    k3    ]
+static SDValue lowerCTPOP16BitElements(SDNode *N, SelectionDAG &DAG) {
+  EVT VT = N->getValueType(0);
+  DebugLoc DL = N->getDebugLoc();
+
+  SDValue BitCounts = getCTPOP16BitCounts(N, DAG);
+  if (VT.is64BitVector()) {
+    SDValue Extended = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::v8i16, BitCounts);
+    return DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v4i16, Extended,
+                       DAG.getIntPtrConstant(0));
+  } else {
+    SDValue Extracted = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v8i8,
+                                    BitCounts, DAG.getIntPtrConstant(0));
+    return DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::v8i16, Extracted);
+  }
+}
+
+/// lowerCTPOP32BitElements - Returns a v2i32/v4i32 vector containing the
+/// bit-count for each 32-bit element from the operand.  The idea here is
+/// to split the vector into 16-bit elements, leverage the 16-bit count
+/// routine, and then combine the results.
+///
+/// Trace for v2i32 (v4i32 similar with Extracted/Extended exchanged):
+/// input    = [v0    v1    ] (vi: 32-bit elements)
+/// Bitcast  = [w0 w1 w2 w3 ] (wi: 16-bit elements, v0 = [w0 w1])
+/// Counts16 = [k0 k1 k2 k3 ] (ki: 16-bit elements, bit-count of wi)
+/// vrev: N0 = [k1 k0 k3 k2 ] 
+///            [k0 k1 k2 k3 ]
+///       N1 =+[k1 k0 k3 k2 ]
+///            [k0 k2 k1 k3 ]
+///       N2 =+[k1 k3 k0 k2 ]
+///            [k0    k2    k1    k3    ]
+/// Extended =+[k1    k3    k0    k2    ]
+///            [k0    k2    ]
+/// Extracted=+[k1    k3    ]
+///
+static SDValue lowerCTPOP32BitElements(SDNode *N, SelectionDAG &DAG) {
+  EVT VT = N->getValueType(0);
+  DebugLoc DL = N->getDebugLoc();
+
+  EVT VT16Bit = VT.is64BitVector() ? MVT::v4i16 : MVT::v8i16;
+
+  SDValue Bitcast = DAG.getNode(ISD::BITCAST, DL, VT16Bit, N->getOperand(0));
+  SDValue Counts16 = lowerCTPOP16BitElements(Bitcast.getNode(), DAG);
+  SDValue N0 = DAG.getNode(ARMISD::VREV32, DL, VT16Bit, Counts16);
+  SDValue N1 = DAG.getNode(ISD::ADD, DL, VT16Bit, Counts16, N0);
+  SDValue N2 = DAG.getNode(ARMISD::VUZP, DL, VT16Bit, N1, N1);
+
+  if (VT.is64BitVector()) {
+    SDValue Extended = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::v4i32, N2);
+    return DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v2i32, Extended,
+                       DAG.getIntPtrConstant(0));
+  } else {
+    SDValue Extracted = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v4i16, N2,
+                                    DAG.getIntPtrConstant(0));
+    return DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::v4i32, Extracted);
+  }
+}
+
+static SDValue LowerCTPOP(SDNode *N, SelectionDAG &DAG,
+                          const ARMSubtarget *ST) {
+  EVT VT = N->getValueType(0);
+
+  assert(ST->hasNEON() && "Custom ctpop lowering requires NEON.");
+  assert((VT == MVT::v2i32 || VT == MVT::v4i32 ||
+          VT == MVT::v4i16 || VT == MVT::v8i16) &&
+         "Unexpected type for custom ctpop lowering");
+
+  if (VT.getVectorElementType() == MVT::i32)
+    return lowerCTPOP32BitElements(N, DAG);
+  else
+    return lowerCTPOP16BitElements(N, DAG);
+}
+
 static SDValue LowerShift(SDNode *N, SelectionDAG &DAG,
                           const ARMSubtarget *ST) {
   EVT VT = N->getValueType(0);
@@ -5411,6 +5530,7 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::SRL_PARTS:
   case ISD::SRA_PARTS:     return LowerShiftRightParts(Op, DAG);
   case ISD::CTTZ:          return LowerCTTZ(Op.getNode(), DAG, Subtarget);
+  case ISD::CTPOP:         return LowerCTPOP(Op.getNode(), DAG, Subtarget);
   case ISD::SETCC:         return LowerVSETCC(Op, DAG);
   case ISD::ConstantFP:    return LowerConstantFP(Op, DAG, Subtarget);
   case ISD::BUILD_VECTOR:  return LowerBUILD_VECTOR(Op, DAG, Subtarget);
@@ -6492,7 +6612,7 @@ EmitSjLjDispatchBlock(MachineInstr *MI, MachineBasicBlock *MBB) const {
         DefRegs[OI->getReg()] = true;
       }
 
-      MachineInstrBuilder MIB(&*II);
+      MachineInstrBuilder MIB(*MF, &*II);
 
       for (unsigned i = 0; SavedRegs[i] != 0; ++i) {
         unsigned Reg = SavedRegs[i];
@@ -6569,8 +6689,9 @@ EmitStructByval(MachineInstr *MI, MachineBasicBlock *BB) const {
     UnitSize = 2;
   } else {
     // Check whether we can use NEON instructions.
-    if (!MF->getFunction()->getFnAttributes().
-          hasAttribute(Attributes::NoImplicitFloat) &&
+    if (!MF->getFunction()->getAttributes().
+          hasAttribute(AttributeSet::FunctionIndex,
+                       Attribute::NoImplicitFloat) &&
         Subtarget->hasNEON()) {
       if ((Align % 16 == 0) && SizeVal >= 16) {
         ldrOpc = ARM::VLD1q32wb_fixed;
@@ -9289,7 +9410,7 @@ bool ARMTargetLowering::isDesirableToTransformToIntegerOp(unsigned Opc,
   return (VT == MVT::f32) && (Opc == ISD::LOAD || Opc == ISD::STORE);
 }
 
-bool ARMTargetLowering::allowsUnalignedMemoryAccesses(EVT VT) const {
+bool ARMTargetLowering::allowsUnalignedMemoryAccesses(EVT VT, bool *Fast) const {
   // The AllowsUnaliged flag models the SCTLR.A setting in ARM cpus
   bool AllowsUnaligned = Subtarget->allowsUnalignedMem();
 
@@ -9298,15 +9419,27 @@ bool ARMTargetLowering::allowsUnalignedMemoryAccesses(EVT VT) const {
     return false;
   case MVT::i8:
   case MVT::i16:
-  case MVT::i32:
+  case MVT::i32: {
     // Unaligned access can use (for example) LRDB, LRDH, LDR
-    return AllowsUnaligned;
+    if (AllowsUnaligned) {
+      if (Fast)
+        *Fast = Subtarget->hasV7Ops();
+      return true;
+    }
+    return false;
+  }
   case MVT::f64:
-  case MVT::v2f64:
+  case MVT::v2f64: {
     // For any little-endian targets with neon, we can support unaligned ld/st
     // of D and Q (e.g. {D0,D1}) registers by using vld1.i8/vst1.i8.
     // A big-endian target may also explictly support unaligned accesses
-    return Subtarget->hasNEON() && (AllowsUnaligned || isLittleEndian());
+    if (Subtarget->hasNEON() && (AllowsUnaligned || isLittleEndian())) {
+      if (Fast)
+        *Fast = true;
+      return true;
+    }
+    return false;
+  }
   }
 }
 
@@ -9318,31 +9451,57 @@ static bool memOpAlign(unsigned DstAlign, unsigned SrcAlign,
 
 EVT ARMTargetLowering::getOptimalMemOpType(uint64_t Size,
                                            unsigned DstAlign, unsigned SrcAlign,
-                                           bool IsZeroVal,
+                                           bool IsMemset, bool ZeroMemset,
                                            bool MemcpyStrSrc,
                                            MachineFunction &MF) const {
   const Function *F = MF.getFunction();
 
   // See if we can use NEON instructions for this...
-  if (IsZeroVal &&
-      !F->getFnAttributes().hasAttribute(Attributes::NoImplicitFloat) &&
-      Subtarget->hasNEON()) {
-    if (memOpAlign(SrcAlign, DstAlign, 16) && Size >= 16) {
-      return MVT::v4i32;
-    } else if (memOpAlign(SrcAlign, DstAlign, 8) && Size >= 8) {
-      return MVT::v2i32;
+  if ((!IsMemset || ZeroMemset) &&
+      Subtarget->hasNEON() &&
+      !F->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                       Attribute::NoImplicitFloat)) {
+    bool Fast;
+    if (Size >= 16 &&
+        (memOpAlign(SrcAlign, DstAlign, 16) ||
+         (allowsUnalignedMemoryAccesses(MVT::v2f64, &Fast) && Fast))) {
+      return MVT::v2f64;
+    } else if (Size >= 8 &&
+               (memOpAlign(SrcAlign, DstAlign, 8) ||
+                (allowsUnalignedMemoryAccesses(MVT::f64, &Fast) && Fast))) {
+      return MVT::f64;
     }
   }
 
   // Lowering to i32/i16 if the size permits.
-  if (Size >= 4) {
+  if (Size >= 4)
     return MVT::i32;
-  } else if (Size >= 2) {
+  else if (Size >= 2)
     return MVT::i16;
-  }
 
   // Let the target-independent logic figure it out.
   return MVT::Other;
+}
+
+bool ARMTargetLowering::isZExtFree(SDValue Val, EVT VT2) const {
+  if (Val.getOpcode() != ISD::LOAD)
+    return false;
+
+  EVT VT1 = Val.getValueType();
+  if (!VT1.isSimple() || !VT1.isInteger() ||
+      !VT2.isSimple() || !VT2.isInteger())
+    return false;
+
+  switch (VT1.getSimpleVT().SimpleTy) {
+  default: break;
+  case MVT::i1:
+  case MVT::i8:
+  case MVT::i16:
+    // 8-bit and 16-bit loads implicitly zero-extend to 32-bits.
+    return true;
+  }
+
+  return false;
 }
 
 static bool isLegalT1AddressImmediate(int64_t V, EVT VT) {
@@ -10183,4 +10342,37 @@ bool ARMTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
   }
 
   return false;
+}
+
+unsigned
+ARMScalarTargetTransformImpl::getIntImmCost(const APInt &Imm, Type *Ty) const {
+  assert(Ty->isIntegerTy());
+
+  unsigned Bits = Ty->getPrimitiveSizeInBits();
+  if (Bits == 0 || Bits > 32)
+    return 4;
+
+  int32_t SImmVal = Imm.getSExtValue();
+  uint32_t ZImmVal = Imm.getZExtValue();
+  if (!Subtarget->isThumb()) {
+    if ((SImmVal >= 0 && SImmVal < 65536) ||
+        (ARM_AM::getSOImmVal(ZImmVal) != -1) ||
+        (ARM_AM::getSOImmVal(~ZImmVal) != -1))
+      return 1;
+    return Subtarget->hasV6T2Ops() ? 2 : 3;
+  } else if (Subtarget->isThumb2()) {
+    if ((SImmVal >= 0 && SImmVal < 65536) ||
+        (ARM_AM::getT2SOImmVal(ZImmVal) != -1) ||
+        (ARM_AM::getT2SOImmVal(~ZImmVal) != -1))
+      return 1;
+    return Subtarget->hasV6T2Ops() ? 2 : 3;
+  } else /*Thumb1*/ {
+    if (SImmVal >= 0 && SImmVal < 256)
+      return 1;
+    if ((~ZImmVal < 256) || ARM_AM::isThumbImmShiftedVal(ZImmVal))
+      return 2;
+    // Load from constantpool.
+    return 3;
+  }
+  return 2;
 }

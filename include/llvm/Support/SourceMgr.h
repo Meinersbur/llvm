@@ -16,8 +16,8 @@
 #ifndef SUPPORT_SOURCEMGR_H
 #define SUPPORT_SOURCEMGR_H
 
-#include "llvm/Support/SMLoc.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/SMLoc.h"
 #include <string>
 
 namespace llvm {
@@ -93,6 +93,10 @@ public:
   const MemoryBuffer *getMemoryBuffer(unsigned i) const {
     assert(i < Buffers.size() && "Invalid Buffer ID!");
     return Buffers[i].Buffer;
+  }
+
+  unsigned getNumBuffers() const {
+    return Buffers.size();
   }
 
   SMLoc getParentIncludeLoc(unsigned i) const {

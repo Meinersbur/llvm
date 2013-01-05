@@ -8,18 +8,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "MCTargetDesc/MBlazeBaseInfo.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Twine.h"
 using namespace llvm;
 
 namespace {
@@ -548,12 +548,9 @@ bool MBlazeAsmParser::ParseDirectiveWord(unsigned Size, SMLoc L) {
   return false;
 }
 
-extern "C" void LLVMInitializeMBlazeAsmLexer();
-
 /// Force static initialization.
 extern "C" void LLVMInitializeMBlazeAsmParser() {
   RegisterMCAsmParser<MBlazeAsmParser> X(TheMBlazeTarget);
-  LLVMInitializeMBlazeAsmLexer();
 }
 
 #define GET_REGISTER_MATCHER

@@ -15,14 +15,15 @@
 #define MIPSTARGETMACHINE_H
 
 #include "MipsFrameLowering.h"
-#include "MipsInstrInfo.h"
 #include "MipsISelLowering.h"
+#include "MipsInstrInfo.h"
 #include "MipsJITInfo.h"
 #include "MipsSelectionDAGInfo.h"
 #include "MipsSubtarget.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/DataLayout.h"
+#include "llvm/ADT/OwningPtr.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetTransformImpl.h"
 
 namespace llvm {
@@ -32,8 +33,8 @@ class MipsRegisterInfo;
 class MipsTargetMachine : public LLVMTargetMachine {
   MipsSubtarget       Subtarget;
   const DataLayout    DL; // Calculates type size & alignment
-  const MipsInstrInfo *InstrInfo;
-  const MipsFrameLowering *FrameLowering;
+  OwningPtr<const MipsInstrInfo> InstrInfo;
+  OwningPtr<const MipsFrameLowering> FrameLowering;
   MipsTargetLowering  TLInfo;
   MipsSelectionDAGInfo TSInfo;
   MipsJITInfo JITInfo;
@@ -47,12 +48,12 @@ public:
                     CodeGenOpt::Level OL,
                     bool isLittle);
 
-  virtual ~MipsTargetMachine() { delete InstrInfo; }
+  virtual ~MipsTargetMachine() {}
 
   virtual const MipsInstrInfo *getInstrInfo() const
-  { return InstrInfo; }
+  { return InstrInfo.get(); }
   virtual const TargetFrameLowering *getFrameLowering() const
-  { return FrameLowering; }
+  { return FrameLowering.get(); }
   virtual const MipsSubtarget *getSubtargetImpl() const
   { return &Subtarget; }
   virtual const DataLayout *getDataLayout()    const

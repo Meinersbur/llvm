@@ -13,11 +13,9 @@
 
 #include "llvm-objdump.h"
 #include "MCFunction.h"
-#include "llvm/Support/MachO.h"
-#include "llvm/Object/MachO.h"
 #include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/DebugInfo/DIContext.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCDisassembler.h"
@@ -28,10 +26,12 @@
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/GraphWriter.h"
+#include "llvm/Support/MachO.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
@@ -334,8 +334,14 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
   for (unsigned SectIdx = 0; SectIdx != Sections.size(); SectIdx++) {
     StringRef SectName;
     if (Sections[SectIdx].getName(SectName) ||
-        SectName.compare("__TEXT,__text"))
+        SectName != "__text")
       continue; // Skip non-text sections
+
+    StringRef SegmentName;
+    DataRefImpl DR = Sections[SectIdx].getRawDataRefImpl();
+    if (MachOOF->getSectionFinalSegmentName(DR, SegmentName) ||
+        SegmentName != "__TEXT")
+      continue;
 
     // Insert the functions from the function starts segment into our map.
     uint64_t VMAddr;

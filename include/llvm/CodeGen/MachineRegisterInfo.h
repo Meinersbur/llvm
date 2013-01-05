@@ -14,10 +14,10 @@
 #ifndef LLVM_CODEGEN_MACHINEREGISTERINFO_H
 #define LLVM_CODEGEN_MACHINEREGISTERINFO_H
 
-#include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/IndexedMap.h"
+#include "llvm/CodeGen/MachineInstrBundle.h"
+#include "llvm/Target/TargetRegisterInfo.h"
 #include <vector>
 
 namespace llvm {
@@ -155,6 +155,9 @@ public:
 
   // Strictly for use by MachineInstr.cpp.
   void removeRegOperandFromUseList(MachineOperand *MO);
+
+  // Strictly for use by MachineInstr.cpp.
+  void moveOperands(MachineOperand *Dst, MachineOperand *Src, unsigned NumOps);
 
   /// reg_begin/reg_end - Provide iteration support to walk over all definitions
   /// and uses of a register within the MachineFunction that corresponds to this

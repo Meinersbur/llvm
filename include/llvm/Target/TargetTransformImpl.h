@@ -15,8 +15,8 @@
 #ifndef LLVM_TARGET_TARGET_TRANSFORMATION_IMPL_H
 #define LLVM_TARGET_TARGET_TRANSFORMATION_IMPL_H
 
-#include "llvm/TargetTransformInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/TargetTransformInfo.h"
 
 namespace llvm {
 
@@ -37,7 +37,9 @@ public:
 
   virtual bool isLegalICmpImmediate(int64_t imm) const;
 
-  virtual bool isLegalAddressingMode(const AddrMode &AM, Type *Ty) const;
+  virtual bool isLegalAddressingMode(Type *Ty, GlobalValue *BaseGV,
+                                     int64_t BaseOffset, bool HasBaseReg,
+                                     int64_t Scale) const;
 
   virtual bool isTruncateFree(Type *Ty1, Type *Ty2) const;
 
@@ -69,11 +71,12 @@ public:
 
   virtual ~VectorTargetTransformImpl() {}
 
-  virtual unsigned getInstrCost(unsigned Opcode, Type *Ty1, Type *Ty2) const;
+  virtual unsigned getNumberOfRegisters(bool Vector) const;
 
   virtual unsigned getArithmeticInstrCost(unsigned Opcode, Type *Ty) const;
 
-  virtual unsigned getBroadcastCost(Type *Tp) const;
+  virtual unsigned getShuffleCost(ShuffleKind Kind, Type *Tp,
+                                  int Index, Type *SubTp) const;
 
   virtual unsigned getCastInstrCost(unsigned Opcode, Type *Dst,
                                     Type *Src) const;
@@ -89,6 +92,9 @@ public:
   virtual unsigned getMemoryOpCost(unsigned Opcode, Type *Src,
                                    unsigned Alignment,
                                    unsigned AddressSpace) const;
+
+  virtual unsigned getIntrinsicInstrCost(Intrinsic::ID, Type *RetTy,
+                                         ArrayRef<Type*> Tys) const;
 
   virtual unsigned getNumberOfParts(Type *Tp) const;
 };
