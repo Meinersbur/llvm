@@ -23,13 +23,12 @@
 #define LLVM_TARGET_TARGETLOWERING_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/AddressingMode.h"
-#include "llvm/Attributes.h"
-#include "llvm/CallingConv.h"
 #include "llvm/CodeGen/DAGCombine.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
-#include "llvm/InlineAsm.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/DebugLoc.h"
 #include "llvm/Target/TargetCallingConv.h"
@@ -895,6 +894,18 @@ public:
   }
 
   //===--------------------------------------------------------------------===//
+  /// \name Helpers for TargetTransformInfo implementations
+  /// @{
+
+  /// Get the ISD node that corresponds to the Instruction class opcode.
+  int InstructionOpcodeToISD(unsigned Opcode) const;
+
+  /// Estimate the cost of type-legalization and the legalized type.
+  std::pair<unsigned, MVT> getTypeLegalizationCost(Type *Ty) const;
+
+  /// @}
+
+  //===--------------------------------------------------------------------===//
   // TargetLowering Optimization Methods
   //
 
@@ -1686,6 +1697,22 @@ public:
     return false;
   }
 
+  /// AddrMode - This represents an addressing mode of:
+  ///    BaseGV + BaseOffs + BaseReg + Scale*ScaleReg
+  /// If BaseGV is null,  there is no BaseGV.
+  /// If BaseOffs is zero, there is no base offset.
+  /// If HasBaseReg is false, there is no base register.
+  /// If Scale is zero, there is no ScaleReg.  Scale of 1 indicates a reg with
+  /// no scale.
+  ///
+  struct AddrMode {
+    GlobalValue *BaseGV;
+    int64_t      BaseOffs;
+    bool         HasBaseReg;
+    int64_t      Scale;
+    AddrMode() : BaseGV(0), BaseOffs(0), HasBaseReg(false), Scale(0) {}
+  };
+
   /// isLegalAddressingMode - Return true if the addressing mode represented by
   /// AM is legal for this target, for a load/store of the specified type.
   /// The type may be VoidTy, in which case only return true if the addressing
@@ -1820,6 +1847,17 @@ public:
   CallingConv::ID getLibcallCallingConv(RTLIB::Libcall Call) const {
     return LibcallCallingConvs[Call];
   }
+
+  bool isInTailCallPosition(SelectionDAG &DAG, SDNode *Node,
+                            SDValue &Chain) const;
+
+  void softenSetCCOperands(SelectionDAG &DAG, EVT VT,
+                           SDValue &NewLHS, SDValue &NewRHS,
+                           ISD::CondCode &CCCode, DebugLoc DL) const;
+
+  SDValue makeLibCall(SelectionDAG &DAG, RTLIB::Libcall LC, EVT RetVT,
+                      const SDValue *Ops, unsigned NumOps,
+                      bool isSigned, DebugLoc dl) const;
 
 private:
   const TargetMachine &TM;
@@ -2217,7 +2255,7 @@ private:
 /// GetReturnInfo - Given an LLVM IR type and return type attributes,
 /// compute the return value EVTs and flags, and optionally also
 /// the offsets, if the return value is being lowered to memory.
-void GetReturnInfo(Type* ReturnType, Attribute attr,
+void GetReturnInfo(Type* ReturnType, AttributeSet attr,
                    SmallVectorImpl<ISD::OutputArg> &Outs,
                    const TargetLowering &TLI);
 

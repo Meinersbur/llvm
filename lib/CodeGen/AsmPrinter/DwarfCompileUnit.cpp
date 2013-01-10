@@ -17,11 +17,11 @@
 #include "DwarfAccelTable.h"
 #include "DwarfDebug.h"
 #include "llvm/ADT/APFloat.h"
-#include "llvm/Constants.h"
 #include "llvm/DIBuilder.h"
-#include "llvm/DataLayout.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/Mangler.h"
@@ -126,8 +126,31 @@ void CompileUnit::addSInt(DIE *Die, unsigned Attribute,
 
 /// addString - Add a string attribute data and value. We always emit a
 /// reference to the string pool instead of immediate strings so that DIEs have
-/// more predictable sizes.
+/// more predictable sizes. In the case of split dwarf we emit an index
+/// into another table which gets us the static offset into the string
+/// table.
 void CompileUnit::addString(DIE *Die, unsigned Attribute, StringRef String) {
+  if (!DD->useSplitDwarf()) {
+    MCSymbol *Symb = DU->getStringPoolEntry(String);
+    DIEValue *Value;
+    if (Asm->needsRelocationsForDwarfStringPool())
+      Value = new (DIEValueAllocator) DIELabel(Symb);
+    else {
+      MCSymbol *StringPool = DU->getStringPoolSym();
+      Value = new (DIEValueAllocator) DIEDelta(Symb, StringPool);
+    }
+    Die->addValue(Attribute, dwarf::DW_FORM_strp, Value);
+  } else {
+    unsigned idx = DU->getStringPoolIndex(String);
+    DIEValue *Value = new (DIEValueAllocator) DIEInteger(idx);
+    Die->addValue(Attribute, dwarf::DW_FORM_GNU_str_index, Value);
+  }
+}
+
+/// addLocalString - Add a string attribute data and value. This is guaranteed
+/// to be in the local string pool instead of indirected.
+void CompileUnit::addLocalString(DIE *Die, unsigned Attribute,
+                                 StringRef String) {
   MCSymbol *Symb = DU->getStringPoolEntry(String);
   DIEValue *Value;
   if (Asm->needsRelocationsForDwarfStringPool())
@@ -784,6 +807,9 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DIDerivedType DTy) {
   if (Size && Tag != dwarf::DW_TAG_pointer_type)
     addUInt(&Buffer, dwarf::DW_AT_byte_size, 0, Size);
 
+  if (Tag == dwarf::DW_TAG_ptr_to_member_type)
+      addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
+                  getOrCreateTypeDIE(DTy.getClassType()));
   // Add source line info if available and TyDesc is not a forward declaration.
   if (!DTy.isForwardDecl())
     addSourceLine(&Buffer, DTy);
@@ -799,7 +825,6 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
   Buffer.setTag(Tag);
 
   switch (Tag) {
-  case dwarf::DW_TAG_vector_type:
   case dwarf::DW_TAG_array_type:
     constructArrayTypeDIE(Buffer, &CTy);
     break;
@@ -1321,7 +1346,7 @@ void CompileUnit::constructSubrangeDIE(DIE &Buffer, DISubrange SR,
 void CompileUnit::constructArrayTypeDIE(DIE &Buffer,
                                         DICompositeType *CTy) {
   Buffer.setTag(dwarf::DW_TAG_array_type);
-  if (CTy->getTag() == dwarf::DW_TAG_vector_type)
+  if (CTy->isVector())
     addFlag(&Buffer, dwarf::DW_AT_GNU_vector);
 
   // Emit derived type.
@@ -1329,10 +1354,13 @@ void CompileUnit::constructArrayTypeDIE(DIE &Buffer,
   DIArray Elements = CTy->getTypeArray();
 
   // Get an anonymous type for index type.
+  // FIXME: This type should be passed down from the front end
+  // as different languages may have different sizes for indexes.
   DIE *IdxTy = getIndexTyDie();
   if (!IdxTy) {
     // Construct an anonymous type for index type.
     IdxTy = new DIE(dwarf::DW_TAG_base_type);
+    addString(IdxTy, dwarf::DW_AT_name, "int");
     addUInt(IdxTy, dwarf::DW_AT_byte_size, 0, sizeof(int32_t));
     addUInt(IdxTy, dwarf::DW_AT_encoding, dwarf::DW_FORM_data1,
             dwarf::DW_ATE_signed);
@@ -1375,8 +1403,6 @@ void CompileUnit::constructContainingTypeDIEs() {
 /// constructVariableDIE - Construct a DIE for the given DbgVariable.
 DIE *CompileUnit::constructVariableDIE(DbgVariable *DV, bool isScopeAbstract) {
   StringRef Name = DV->getName();
-  if (Name.empty())
-    return NULL;
 
   // Translate tag to proper Dwarf tag.
   unsigned Tag = DV->getTag();

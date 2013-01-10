@@ -14,7 +14,7 @@
 #include "InstCombine.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
-#include "llvm/DataLayout.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/PatternMatch.h"
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
@@ -1248,9 +1248,8 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
 
   // If the call already has the 'nest' attribute somewhere then give up -
   // otherwise 'nest' would occur twice after splicing in the chain.
-  for (unsigned I = 0, E = Attrs.getNumAttrs(); I != E; ++I)
-    if (Attrs.getAttributesAtIndex(I).hasAttribute(Attribute::Nest))
-      return 0;
+  if (Attrs.hasAttrSomewhere(Attribute::Nest))
+    return 0;
 
   assert(Tramp &&
          "transformCallThroughTrampoline called with incorrect CallSite.");

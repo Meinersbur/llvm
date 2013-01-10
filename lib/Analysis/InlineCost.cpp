@@ -20,12 +20,12 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
-#include "llvm/CallingConv.h"
-#include "llvm/DataLayout.h"
-#include "llvm/GlobalAlias.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/InstVisitor.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Operator.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
@@ -694,7 +694,8 @@ bool CallAnalyzer::simplifyCallSite(Function *F, CallSite CS) {
 
 bool CallAnalyzer::visitCallSite(CallSite CS) {
   if (CS.isCall() && cast<CallInst>(CS.getInstruction())->canReturnTwice() &&
-      !F.getFnAttributes().hasAttribute(Attribute::ReturnsTwice)) {
+      !F.getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                      Attribute::ReturnsTwice)) {
     // This aborts the entire analysis.
     ExposesReturnsTwice = true;
     return false;
@@ -1143,7 +1144,8 @@ InlineCost InlineCostAnalyzer::getInlineCost(CallSite CS, Function *Callee,
 
   // Calls to functions with always-inline attributes should be inlined
   // whenever possible.
-  if (Callee->getFnAttributes().hasAttribute(Attribute::AlwaysInline)) {
+  if (Callee->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                           Attribute::AlwaysInline)) {
     if (isInlineViable(*Callee))
       return llvm::InlineCost::getAlways();
     return llvm::InlineCost::getNever();
@@ -1153,7 +1155,8 @@ InlineCost InlineCostAnalyzer::getInlineCost(CallSite CS, Function *Callee,
   // something else.  Don't inline functions marked noinline or call sites
   // marked noinline.
   if (Callee->mayBeOverridden() ||
-      Callee->getFnAttributes().hasAttribute(Attribute::NoInline) ||
+      Callee->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                           Attribute::NoInline) ||
       CS.isNoInline())
     return llvm::InlineCost::getNever();
 
@@ -1175,7 +1178,8 @@ InlineCost InlineCostAnalyzer::getInlineCost(CallSite CS, Function *Callee,
 }
 
 bool InlineCostAnalyzer::isInlineViable(Function &F) {
-  bool ReturnsTwice =F.getFnAttributes().hasAttribute(Attribute::ReturnsTwice);
+  bool ReturnsTwice =F.getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                                    Attribute::ReturnsTwice);
   for (Function::iterator BI = F.begin(), BE = F.end(); BI != BE; ++BI) {
     // Disallow inlining of functions which contain an indirect branch.
     if (isa<IndirectBrInst>(BI->getTerminator()))

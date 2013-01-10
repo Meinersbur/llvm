@@ -120,6 +120,10 @@ public:
   /// alignment value.
   unsigned getStackAlignment() const;
 
+  bool operator==(AttrKind K) const;
+  bool operator!=(AttrKind K) const;
+
+  // FIXME: Remove these 'operator' methods.
   bool operator==(const Attribute &A) const {
     return pImpl == A.pImpl;
   }
@@ -127,7 +131,7 @@ public:
     return pImpl != A.pImpl;
   }
 
-  uint64_t Raw() const;
+  uint64_t getBitMask() const;
 
   /// \brief Which attributes cannot be applied to a type.
   static Attribute typeIncompatible(Type *Ty);
@@ -141,11 +145,10 @@ public:
   /// that have been decoded from the given integer.  This function must stay in
   /// sync with 'encodeLLVMAttributesForBitcode'.
   static Attribute decodeLLVMAttributesForBitcode(LLVMContext &C,
-                                                   uint64_t EncodedAttrs);
+                                                  uint64_t EncodedAttrs);
 
-  /// \brief The set of attributes set in Attribute is converted to a string of
-  /// equivalent mnemonics. This is, presumably, for writing out the mnemonics
-  /// for the assembly writer.
+  /// \brief The Attribute is converted to a string of equivalent mnemonic. This
+  /// is, presumably, for writing out the mnemonics for the assembly writer.
   std::string getAsString() const;
 };
 
@@ -160,7 +163,7 @@ class AttrBuilder {
 public:
   AttrBuilder() : Bits(0) {}
   explicit AttrBuilder(uint64_t B) : Bits(B) {}
-  AttrBuilder(const Attribute &A) : Bits(A.Raw()) {}
+  AttrBuilder(const Attribute &A) : Bits(A.getBitMask()) {}
 
   void clear() { Bits = 0; }
 
@@ -176,8 +179,8 @@ public:
   /// removeAttribute - Remove the attributes from A from the builder.
   AttrBuilder &removeAttributes(const Attribute &A);
 
-  /// contains - Return true if the builder has the specified attribute.
-  bool hasAttribute(Attribute::AttrKind A) const;
+  /// \brief Return true if the builder has the specified attribute.
+  bool contains(Attribute::AttrKind A) const;
 
   /// hasAttributes - Return true if the builder has IR-level attributes.
   bool hasAttributes() const;
@@ -231,7 +234,7 @@ public:
       .removeAttribute(Attribute::NoDuplicate);
   }
 
-  uint64_t Raw() const { return Bits; }
+  uint64_t getBitMask() const { return Bits; }
 
   bool operator==(const AttrBuilder &B) {
     return Bits == B.Bits;
@@ -312,7 +315,7 @@ public:
   AttributeSet removeAttr(LLVMContext &C, unsigned Idx, Attribute Attrs) const;
 
   //===--------------------------------------------------------------------===//
-  // Attribute List Accessors
+  // Attribute Set Accessors
   //===--------------------------------------------------------------------===//
 
   /// \brief The attributes for the specified index are returned.
@@ -330,23 +333,28 @@ public:
     return getAttributes(FunctionIndex);
   }
 
-  /// \brief Return true if the specified parameter index has the specified
-  /// attribute set.
-  bool paramHasAttr(unsigned Idx, Attribute Attr) const {
-    return getAttributes(Idx).hasAttributes(Attr);
-  }
-
   /// \brief Return the alignment for the specified function parameter.
   unsigned getParamAlignment(unsigned Idx) const {
     return getAttributes(Idx).getAlignment();
   }
 
+  /// \brief Return true if the attribute exists at the given index.
+  bool hasAttribute(unsigned Index, Attribute::AttrKind Kind) const;
+
+  /// \brief Return true if attribute exists at the given index.
+  bool hasAttributes(unsigned Index) const;
+
+  /// \brief Get the stack alignment.
+  unsigned getStackAlignment(unsigned Index) const;
+
+  /// \brief Return the attributes at the index as a string.
+  std::string getAsString(unsigned Index) const;
+
+  uint64_t getBitMask(unsigned Index) const;
+
   /// \brief Return true if the specified attribute is set for at least one
   /// parameter or for the return value.
   bool hasAttrSomewhere(Attribute::AttrKind Attr) const;
-
-  unsigned getNumAttrs() const;
-  Attribute &getAttributesAtIndex(unsigned i) const;
 
   /// operator==/!= - Provide equality predicates.
   bool operator==(const AttributeSet &RHS) const {
@@ -357,7 +365,7 @@ public:
   }
 
   //===--------------------------------------------------------------------===//
-  // Attribute List Introspection
+  // Attribute Set Introspection
   //===--------------------------------------------------------------------===//
 
   /// \brief Return a raw pointer that uniquely identifies this attribute list.

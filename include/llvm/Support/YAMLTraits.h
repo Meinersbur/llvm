@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_YAML_TRAITS_H_
-#define LLVM_YAML_TRAITS_H_
+#ifndef LLVM_SUPPORT_YAMLTRAITS_H
+#define LLVM_SUPPORT_YAMLTRAITS_H
 
 
 #include "llvm/ADT/DenseMap.h"
@@ -276,20 +276,9 @@ public:
 
 
 // Test if SequenceTraits<T> is defined on type T
-// and SequenceTraits<T>::flow is *not* defined.
 template<typename T>
 struct has_SequenceTraits : public  llvm::integral_constant<bool,
-                                         has_SequenceMethodTraits<T>::value
-                                      && !has_FlowTraits<T>::value > { };
-
-
-// Test if SequenceTraits<T> is defined on type T
-// and SequenceTraits<T>::flow is defined.
-template<typename T>
-struct has_FlowSequenceTraits : public llvm::integral_constant<bool,
-                                         has_SequenceMethodTraits<T>::value
-                                      && has_FlowTraits<T>::value > { };
-
+                                      has_SequenceMethodTraits<T>::value > { };
 
 
 // Test if DocumentListTraits<T> is defined on type T
@@ -318,7 +307,6 @@ struct missingTraits : public  llvm::integral_constant<bool,
                                       && !has_ScalarTraits<T>::value
                                       && !has_MappingTraits<T>::value
                                       && !has_SequenceTraits<T>::value
-                                      && !has_FlowSequenceTraits<T>::value
                                       && !has_DocumentListTraits<T>::value >  {};
 
 
@@ -510,33 +498,31 @@ yamlize(IO &io, T &Val, bool) {
 template<typename T>
 typename llvm::enable_if_c<has_SequenceTraits<T>::value,void>::type
 yamlize(IO &io, T &Seq, bool) {
-  unsigned incount = io.beginSequence();
-  unsigned count = io.outputting() ? SequenceTraits<T>::size(io, Seq) : incount;
-  for(unsigned i=0; i < count; ++i) {
-    void *SaveInfo;
-    if ( io.preflightElement(i, SaveInfo) ) {
-      yamlize(io, SequenceTraits<T>::element(io, Seq, i), true);
-      io.postflightElement(SaveInfo);
+  if ( has_FlowTraits< SequenceTraits<T> >::value ) {
+    unsigned incnt = io.beginFlowSequence();
+    unsigned count = io.outputting() ? SequenceTraits<T>::size(io, Seq) : incnt;
+    for(unsigned i=0; i < count; ++i) {
+      void *SaveInfo;
+      if ( io.preflightFlowElement(i, SaveInfo) ) {
+        yamlize(io, SequenceTraits<T>::element(io, Seq, i), true);
+        io.postflightFlowElement(SaveInfo);
+      }
     }
+    io.endFlowSequence();
   }
-  io.endSequence();
-}
-
-template<typename T>
-typename llvm::enable_if_c<has_FlowSequenceTraits<T>::value,void>::type
-yamlize(IO &io, T &Seq, bool) {
-  unsigned incount = io.beginFlowSequence();
-  unsigned count = io.outputting() ? SequenceTraits<T>::size(io, Seq) : incount;
-  for(unsigned i=0; i < count; ++i) {
-    void *SaveInfo;
-    if ( io.preflightFlowElement(i, SaveInfo) ) {
-      yamlize(io, SequenceTraits<T>::element(io, Seq, i), true);
-      io.postflightFlowElement(SaveInfo);
+  else {
+    unsigned incnt = io.beginSequence();
+    unsigned count = io.outputting() ? SequenceTraits<T>::size(io, Seq) : incnt;
+    for(unsigned i=0; i < count; ++i) {
+      void *SaveInfo;
+      if ( io.preflightElement(i, SaveInfo) ) {
+        yamlize(io, SequenceTraits<T>::element(io, Seq, i), true);
+        io.postflightElement(SaveInfo);
+      }
     }
+    io.endSequence();
   }
-  io.endFlowSequence();
 }
-
 
 
 template<>
@@ -699,7 +685,8 @@ class Input : public IO {
 public:
   // Construct a yaml Input object from a StringRef and optional user-data.
   Input(StringRef InputContent, void *Ctxt=NULL);
-
+  ~Input();
+  
   // Check if there was an syntax or semantic error during parsing.
   llvm::error_code error();
 
@@ -732,6 +719,7 @@ private:
   class HNode {
   public:
     HNode(Node *n) : _node(n) { }
+    virtual ~HNode() { }
     static inline bool classof(const HNode *) { return true; }
 
     Node *_node;
@@ -740,6 +728,7 @@ private:
   class EmptyHNode : public HNode {
   public:
     EmptyHNode(Node *n) : HNode(n) { }
+    virtual ~EmptyHNode() {}
     static inline bool classof(const HNode *n) {
       return NullNode::classof(n->_node);
     }
@@ -749,6 +738,7 @@ private:
   class ScalarHNode : public HNode {
   public:
     ScalarHNode(Node *n, StringRef s) : HNode(n), _value(s) { }
+    virtual ~ScalarHNode() { }
 
     StringRef value() const { return _value; }
 
@@ -763,6 +753,7 @@ private:
   class MapHNode : public HNode {
   public:
     MapHNode(Node *n) : HNode(n) { }
+    virtual ~MapHNode();
 
     static inline bool classof(const HNode *n) {
       return MappingNode::classof(n->_node);
@@ -788,6 +779,7 @@ private:
   class SequenceHNode : public HNode {
   public:
     SequenceHNode(Node *n) : HNode(n) { }
+    virtual ~SequenceHNode();
 
     static inline bool classof(const HNode *n) {
       return SequenceNode::classof(n->_node);
@@ -809,10 +801,11 @@ public:
   void nextDocument();
 
 private:
-  llvm::yaml::Stream              *Strm;
-  llvm::SourceMgr                  SrcMgr;
+  llvm::SourceMgr                  SrcMgr; // must be before Strm
+  OwningPtr<llvm::yaml::Stream>    Strm;
+  OwningPtr<HNode>                 TopNode;
   llvm::error_code                 EC;
-  llvm::BumpPtrAllocator           Allocator;
+  llvm::BumpPtrAllocator           StringAllocator;
   llvm::yaml::document_iterator    DocIterator;
   std::vector<bool>                BitValuesUsed;
   HNode                           *CurrentNode;
@@ -1108,4 +1101,4 @@ operator<<(Output &yout, T &seq) {
 
 
 
-#endif // LLVM_YAML_TRAITS_H_
+#endif // LLVM_SUPPORT_YAMLTRAITS_H

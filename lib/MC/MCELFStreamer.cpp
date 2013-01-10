@@ -343,7 +343,7 @@ void  MCELFStreamer::fixSymbolsInTLSFixups(const MCExpr *expr) {
 
 void MCELFStreamer::EmitInstToFragment(const MCInst &Inst) {
   this->MCObjectStreamer::EmitInstToFragment(Inst);
-  MCInstFragment &F = *cast<MCInstFragment>(getCurrentFragment());
+  MCRelaxableFragment &F = *cast<MCRelaxableFragment>(getCurrentFragment());
 
   for (unsigned i = 0, e = F.getFixups().size(); i != e; ++i)
     fixSymbolsInTLSFixups(F.getFixups()[i].getValue());
@@ -379,8 +379,14 @@ void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
     MCSectionData *SD = getCurrentSectionData();
     if (SD->isBundleLocked() && !SD->isBundleGroupBeforeFirstInst())
       DF = getOrCreateDataFragment();
-    else
+    else {
       DF = new MCDataFragment(SD);
+      if (SD->getBundleLockState() == MCSectionData::BundleLockedAlignToEnd) {
+        // If this is a new fragment created for a bundle-locked group, and the
+        // group was marked as "align_to_end", set a flag in the fragment.
+        DF->setAlignToBundleEnd(true);
+      }
+    }
 
     // We're now emitting an instruction in a bundle group, so this flag has
     // to be turned off.
@@ -407,7 +413,7 @@ void MCELFStreamer::EmitBundleAlignMode(unsigned AlignPow2) {
     report_fatal_error(".bundle_align_mode should be only set once per file");
 }
 
-void MCELFStreamer::EmitBundleLock() {
+void MCELFStreamer::EmitBundleLock(bool AlignToEnd) {
   MCSectionData *SD = getCurrentSectionData();
 
   // Sanity checks
@@ -417,7 +423,8 @@ void MCELFStreamer::EmitBundleLock() {
   else if (SD->isBundleLocked())
     report_fatal_error("Nesting of .bundle_lock is forbidden");
 
-  SD->setBundleLocked(true);
+  SD->setBundleLockState(AlignToEnd ? MCSectionData::BundleLockedAlignToEnd :
+                                      MCSectionData::BundleLocked);
   SD->setBundleGroupBeforeFirstInst(true);
 }
 
@@ -432,7 +439,7 @@ void MCELFStreamer::EmitBundleUnlock() {
   else if (SD->isBundleGroupBeforeFirstInst())
     report_fatal_error("Empty bundle-locked group is forbidden");
 
-  SD->setBundleLocked(false);
+  SD->setBundleLockState(MCSectionData::NotBundleLocked);
 }
 
 void MCELFStreamer::FinishImpl() {
@@ -462,7 +469,7 @@ void MCELFStreamer::FinishImpl() {
 }
 void MCELFStreamer::EmitTCEntry(const MCSymbol &S) {
   // Creates a R_PPC64_TOC relocation
-  MCObjectStreamer::EmitSymbolValue(&S, 8, 0);
+  MCObjectStreamer::EmitSymbolValue(&S, 8);
 }
 
 MCStreamer *llvm::createELFStreamer(MCContext &Context, MCAsmBackend &MAB,

@@ -23,10 +23,10 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/DataLayout.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/LLVMContext.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -6735,18 +6735,24 @@ SDValue DAGCombiner::visitBRCOND(SDNode *N) {
     if (Op0.getOpcode() == Op1.getOpcode()) {
       // Avoid missing important xor optimizations.
       SDValue Tmp = visitXOR(TheXor);
-      if (Tmp.getNode() && Tmp.getNode() != TheXor) {
-        DEBUG(dbgs() << "\nReplacing.8 ";
-              TheXor->dump(&DAG);
-              dbgs() << "\nWith: ";
-              Tmp.getNode()->dump(&DAG);
-              dbgs() << '\n');
-        WorkListRemover DeadNodes(*this);
-        DAG.ReplaceAllUsesOfValueWith(N1, Tmp);
-        removeFromWorkList(TheXor);
-        DAG.DeleteNode(TheXor);
-        return DAG.getNode(ISD::BRCOND, N->getDebugLoc(),
-                           MVT::Other, Chain, Tmp, N2);
+      if (Tmp.getNode()) {
+        if (Tmp.getNode() != TheXor) {
+          DEBUG(dbgs() << "\nReplacing.8 ";
+                TheXor->dump(&DAG);
+                dbgs() << "\nWith: ";
+                Tmp.getNode()->dump(&DAG);
+                dbgs() << '\n');
+          WorkListRemover DeadNodes(*this);
+          DAG.ReplaceAllUsesOfValueWith(N1, Tmp);
+          removeFromWorkList(TheXor);
+          DAG.DeleteNode(TheXor);
+          return DAG.getNode(ISD::BRCOND, N->getDebugLoc(),
+                             MVT::Other, Chain, Tmp, N2);
+        }
+
+        // visitXOR has changed XOR's operands.
+        Op0 = TheXor->getOperand(0);
+        Op1 = TheXor->getOperand(1);
       }
     }
 
@@ -6825,7 +6831,7 @@ static bool canFoldInAddressingMode(SDNode *N, SDNode *Use,
   } else
     return false;
 
-  AddrMode AM;
+  TargetLowering::AddrMode AM;
   if (N->getOpcode() == ISD::ADD) {
     ConstantSDNode *Offset = dyn_cast<ConstantSDNode>(N->getOperand(1));
     if (Offset)
@@ -7751,8 +7757,9 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
 
     // We only use vectors if the constant is known to be zero and the
     // function is not marked with the noimplicitfloat attribute.
-    if (NonZero || (DAG.getMachineFunction().getFunction()->getFnAttributes().
-                    hasAttribute(Attribute::NoImplicitFloat)))
+    if (NonZero || (DAG.getMachineFunction().getFunction()->getAttributes().
+                    hasAttribute(AttributeSet::FunctionIndex,
+                                 Attribute::NoImplicitFloat)))
       LastLegalVectorType = 0;
 
     // Check if we found a legal integer type to store.
@@ -8624,11 +8631,8 @@ SDValue DAGCombiner::reduceBuildVecConvertToConvertBuildVec(SDNode *N) {
     if (Opcode == ISD::DELETED_NODE &&
         (Opc == ISD::UINT_TO_FP || Opc == ISD::SINT_TO_FP)) {
       Opcode = Opc;
-      // If not supported by target, bail out.
-      if (TLI.getOperationAction(Opcode, VT) != TargetLowering::Legal &&
-          TLI.getOperationAction(Opcode, VT) != TargetLowering::Custom)
-        return SDValue();
     }
+
     if (Opc != Opcode)
       return SDValue();
 
@@ -8653,6 +8657,10 @@ SDValue DAGCombiner::reduceBuildVecConvertToConvertBuildVec(SDNode *N) {
   assert(SrcVT != MVT::Other && "Cannot determine source type!");
 
   EVT NVT = EVT::getVectorVT(*DAG.getContext(), SrcVT, NumInScalars);
+
+  if (!TLI.isOperationLegalOrCustom(Opcode, NVT))
+    return SDValue();
+
   SmallVector<SDValue, 8> Opnds;
   for (unsigned i = 0; i != NumInScalars; ++i) {
     SDValue In = N->getOperand(i);

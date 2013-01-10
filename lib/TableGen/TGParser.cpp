@@ -443,34 +443,17 @@ Record *TGParser::ParseClassID() {
 ///
 MultiClass *TGParser::ParseMultiClassID() {
   if (Lex.getCode() != tgtok::Id) {
-    TokError("expected name for ClassID");
+    TokError("expected name for MultiClassID");
     return 0;
   }
 
   MultiClass *Result = MultiClasses[Lex.getCurStrVal()];
   if (Result == 0)
-    TokError("Couldn't find class '" + Lex.getCurStrVal() + "'");
+    TokError("Couldn't find multiclass '" + Lex.getCurStrVal() + "'");
 
   Lex.Lex();
   return Result;
 }
-
-Record *TGParser::ParseDefmID() {
-  if (Lex.getCode() != tgtok::Id) {
-    TokError("expected multiclass name");
-    return 0;
-  }
-
-  MultiClass *MC = MultiClasses[Lex.getCurStrVal()];
-  if (MC == 0) {
-    TokError("Couldn't find multiclass '" + Lex.getCurStrVal() + "'");
-    return 0;
-  }
-
-  Lex.Lex();
-  return &MC->Rec;
-}
-
 
 /// ParseSubClassReference - Parse a reference to a subclass or to a templated
 /// subclass.  This returns a SubClassRefTy with a null Record* on error.
@@ -483,10 +466,12 @@ ParseSubClassReference(Record *CurRec, bool isDefm) {
   SubClassReference Result;
   Result.RefLoc = Lex.getLoc();
 
-  if (isDefm)
-    Result.Rec = ParseDefmID();
-  else
+  if (isDefm) {
+    if (MultiClass *MC = ParseMultiClassID())
+      Result.Rec = &MC->Rec;
+  } else {
     Result.Rec = ParseClassID();
+  }
   if (Result.Rec == 0) return Result;
 
   // If there is no template arg list, we're done.
@@ -1876,6 +1861,17 @@ bool TGParser::ParseBody(Record *CurRec) {
   return false;
 }
 
+/// \brief Apply the current let bindings to \a CurRec.
+/// \returns true on error, false otherwise.
+bool TGParser::ApplyLetStack(Record *CurRec) {
+  for (unsigned i = 0, e = LetStack.size(); i != e; ++i)
+    for (unsigned j = 0, e = LetStack[i].size(); j != e; ++j)
+      if (SetValue(CurRec, LetStack[i][j].Loc, LetStack[i][j].Name,
+                   LetStack[i][j].Bits, LetStack[i][j].Value))
+        return true;
+  return false;
+}
+
 /// ParseObjectBody - Parse the body of a def or class.  This consists of an
 /// optional ClassList followed by a Body.  CurRec is the current def or class
 /// that is being parsed.
@@ -1906,12 +1902,8 @@ bool TGParser::ParseObjectBody(Record *CurRec) {
     }
   }
 
-  // Process any variables on the let stack.
-  for (unsigned i = 0, e = LetStack.size(); i != e; ++i)
-    for (unsigned j = 0, e = LetStack[i].size(); j != e; ++j)
-      if (SetValue(CurRec, LetStack[i][j].Loc, LetStack[i][j].Name,
-                   LetStack[i][j].Bits, LetStack[i][j].Value))
-        return true;
+  if (ApplyLetStack(CurRec))
+    return true;
 
   return ParseBody(CurRec);
 }
@@ -2160,7 +2152,12 @@ bool TGParser::ParseTopLevelLet(MultiClass *CurMultiClass) {
 /// ParseMultiClass - Parse a multiclass definition.
 ///
 ///  MultiClassInst ::= MULTICLASS ID TemplateArgList?
-///                     ':' BaseMultiClassList '{' MultiClassDef+ '}'
+///                     ':' BaseMultiClassList '{' MultiClassObject+ '}'
+///  MultiClassObject ::= DefInst
+///  MultiClassObject ::= MultiClassInst
+///  MultiClassObject ::= DefMInst
+///  MultiClassObject ::= LETCommand '{' ObjectList '}'
+///  MultiClassObject ::= LETCommand Object
 ///
 bool TGParser::ParseMultiClass() {
   assert(Lex.getCode() == tgtok::MultiClass && "Unexpected token");
@@ -2365,33 +2362,30 @@ bool TGParser::ResolveMulticlassDef(MultiClass &MC,
                                     Record *DefProto,
                                     SMLoc DefmPrefixLoc) {
   // If the mdef is inside a 'let' expression, add to each def.
-  for (unsigned i = 0, e = LetStack.size(); i != e; ++i)
-    for (unsigned j = 0, e = LetStack[i].size(); j != e; ++j)
-      if (SetValue(CurRec, LetStack[i][j].Loc, LetStack[i][j].Name,
-                   LetStack[i][j].Bits, LetStack[i][j].Value))
-        return Error(DefmPrefixLoc, "when instantiating this defm");
+  if (ApplyLetStack(CurRec))
+    return Error(DefmPrefixLoc, "when instantiating this defm");
 
   // Don't create a top level definition for defm inside multiclasses,
   // instead, only update the prototypes and bind the template args
   // with the new created definition.
-  if (CurMultiClass) {
-    for (unsigned i = 0, e = CurMultiClass->DefPrototypes.size();
-         i != e; ++i)
-      if (CurMultiClass->DefPrototypes[i]->getNameInit()
-          == CurRec->getNameInit())
-        return Error(DefmPrefixLoc, "defm '" + CurRec->getNameInitAsString() +
-                     "' already defined in this multiclass!");
-    CurMultiClass->DefPrototypes.push_back(CurRec);
+  if (!CurMultiClass)
+    return false;
+  for (unsigned i = 0, e = CurMultiClass->DefPrototypes.size();
+       i != e; ++i)
+    if (CurMultiClass->DefPrototypes[i]->getNameInit()
+        == CurRec->getNameInit())
+      return Error(DefmPrefixLoc, "defm '" + CurRec->getNameInitAsString() +
+                   "' already defined in this multiclass!");
+  CurMultiClass->DefPrototypes.push_back(CurRec);
 
-    // Copy the template arguments for the multiclass into the new def.
-    const std::vector<Init *> &TA =
-      CurMultiClass->Rec.getTemplateArgs();
+  // Copy the template arguments for the multiclass into the new def.
+  const std::vector<Init *> &TA =
+    CurMultiClass->Rec.getTemplateArgs();
 
-    for (unsigned i = 0, e = TA.size(); i != e; ++i) {
-      const RecordVal *RV = CurMultiClass->Rec.getValue(TA[i]);
-      assert(RV && "Template arg doesn't exist?");
-      CurRec->addValue(*RV);
-    }
+  for (unsigned i = 0, e = TA.size(); i != e; ++i) {
+    const RecordVal *RV = CurMultiClass->Rec.getValue(TA[i]);
+    assert(RV && "Template arg doesn't exist?");
+    CurRec->addValue(*RV);
   }
 
   return false;
@@ -2406,11 +2400,7 @@ bool TGParser::ParseDefm(MultiClass *CurMultiClass) {
 
   Init *DefmPrefix = 0;
 
-  Lex.Lex(); // eat the defm.
-
-  // Note that tgtok::paste is here to allow starting with #NAME.
-  if (Lex.getCode() == tgtok::Id ||
-      Lex.getCode() == tgtok::paste) {
+  if (Lex.Lex() == tgtok::Id) {  // eat the defm.
     DefmPrefix = ParseObjectName(CurMultiClass);
   }
 
@@ -2497,12 +2487,8 @@ bool TGParser::ParseDefm(MultiClass *CurMultiClass) {
         if (AddSubClass(CurRec, SubClass))
           return true;
 
-        // Process any variables on the let stack.
-        for (unsigned i = 0, e = LetStack.size(); i != e; ++i)
-          for (unsigned j = 0, e = LetStack[i].size(); j != e; ++j)
-            if (SetValue(CurRec, LetStack[i][j].Loc, LetStack[i][j].Name,
-                         LetStack[i][j].Bits, LetStack[i][j].Value))
-              return true;
+        if (ApplyLetStack(CurRec))
+          return true;
       }
 
       if (Lex.getCode() != tgtok::comma) break;

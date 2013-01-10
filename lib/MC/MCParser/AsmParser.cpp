@@ -732,7 +732,7 @@ bool AsmParser::ParseParenExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   if (ParseExpression(Res)) return true;
   if (Lexer.isNot(AsmToken::RParen))
     return TokError("expected ')' in parentheses expression");
-  EndLoc = Lexer.getLoc();
+  EndLoc = Lexer.getTok().getEndLoc();
   Lex();
   return false;
 }
@@ -746,7 +746,7 @@ bool AsmParser::ParseBracketExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   if (ParseExpression(Res)) return true;
   if (Lexer.isNot(AsmToken::RBrac))
     return TokError("expected ']' in brackets expression");
-  EndLoc = Lexer.getLoc();
+  EndLoc = Lexer.getTok().getEndLoc();
   Lex();
   return false;
 }
@@ -773,11 +773,11 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
   case AsmToken::Dollar:
   case AsmToken::String:
   case AsmToken::Identifier: {
-    EndLoc = Lexer.getLoc();
-
     StringRef Identifier;
     if (ParseIdentifier(Identifier))
       return true;
+
+    EndLoc = SMLoc::getFromPointer(Identifier.end());
 
     // This is a symbol reference.
     std::pair<StringRef, StringRef> Split = Identifier.split('@');
@@ -811,7 +811,7 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     SMLoc Loc = getTok().getLoc();
     int64_t IntVal = getTok().getIntVal();
     Res = MCConstantExpr::Create(IntVal, getContext());
-    EndLoc = Lexer.getLoc();
+    EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat token.
     // Look for 'b' or 'f' following an Integer as a directional label
     if (Lexer.getKind() == AsmToken::Identifier) {
@@ -823,7 +823,7 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
                                       getContext());
         if (IDVal == "b" && Sym->isUndefined())
           return Error(Loc, "invalid reference to undefined symbol");
-        EndLoc = Lexer.getLoc();
+        EndLoc = Lexer.getTok().getEndLoc();
         Lex(); // Eat identifier.
       }
     }
@@ -833,6 +833,7 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     APFloat RealVal(APFloat::IEEEdouble, getTok().getString());
     uint64_t IntVal = RealVal.bitcastToAPInt().getZExtValue();
     Res = MCConstantExpr::Create(IntVal, getContext());
+    EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat token.
     return false;
   }
@@ -842,7 +843,7 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     MCSymbol *Sym = Ctx.CreateTempSymbol();
     Out.EmitLabel(Sym);
     Res = MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None, getContext());
-    EndLoc = Lexer.getLoc();
+    EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat identifier.
     return false;
   }
@@ -1213,7 +1214,8 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
       return Error(IDLoc, "invalid symbol redefinition");
 
     // Emit the label.
-    Out.EmitLabel(Sym);
+    if (!ParsingInlineAsm)
+      Out.EmitLabel(Sym);
 
     // If we are generating dwarf for assembly source files then gather the
     // info to make a dwarf label entry for this label if needed.
@@ -1753,7 +1755,7 @@ bool AsmParser::ParseMacroArgument(MacroArgument &MA,
         if (IsOperator(Lexer.getKind())) {
           // Check to see whether the token is used as an operator,
           // or part of an identifier
-          const char *NextChar = getTok().getEndLoc().getPointer() + 1;
+          const char *NextChar = getTok().getEndLoc().getPointer();
           if (*NextChar == ' ')
             AddTokens = 2;
         }
@@ -2471,15 +2473,31 @@ bool AsmParser::ParseDirectiveBundleAlignMode() {
 }
 
 /// ParseDirectiveBundleLock
-/// ::= {.bundle_lock}
+/// ::= {.bundle_lock} [align_to_end]
 bool AsmParser::ParseDirectiveBundleLock() {
   CheckForValidSection();
+  bool AlignToEnd = false;
 
-  if (getLexer().isNot(AsmToken::EndOfStatement))
-    return TokError("unexpected token in '.bundle_lock' directive");
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    StringRef Option;
+    SMLoc Loc = getTok().getLoc();
+    const char *kInvalidOptionError =
+      "invalid option for '.bundle_lock' directive";
+
+    if (ParseIdentifier(Option))
+      return Error(Loc, kInvalidOptionError);
+
+    if (Option != "align_to_end")
+      return Error(Loc, kInvalidOptionError);
+    else if (getLexer().isNot(AsmToken::EndOfStatement))
+      return Error(Loc,
+                   "unexpected token after '.bundle_lock' directive option");
+    AlignToEnd = true;
+  }
+
   Lex();
 
-  getStreamer().EmitBundleLock();
+  getStreamer().EmitBundleLock(AlignToEnd);
   return false;
 }
 
@@ -2982,7 +3000,7 @@ bool GenericAsmParser::ParseDirectiveLoc(StringRef, SMLoc DirectiveLoc) {
       else if (Name == "epilogue_begin")
         Flags |= DWARF2_FLAG_EPILOGUE_BEGIN;
       else if (Name == "is_stmt") {
-        SMLoc Loc = getTok().getLoc();
+        Loc = getTok().getLoc();
         const MCExpr *Value;
         if (getParser().ParseExpression(Value))
           return true;
@@ -3001,7 +3019,7 @@ bool GenericAsmParser::ParseDirectiveLoc(StringRef, SMLoc DirectiveLoc) {
         }
       }
       else if (Name == "isa") {
-        SMLoc Loc = getTok().getLoc();
+        Loc = getTok().getLoc();
         const MCExpr *Value;
         if (getParser().ParseExpression(Value))
           return true;

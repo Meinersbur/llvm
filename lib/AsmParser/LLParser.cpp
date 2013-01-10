@@ -14,16 +14,16 @@
 #include "LLParser.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/AutoUpgrade.h"
-#include "llvm/CallingConv.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
-#include "llvm/Operator.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ValueSymbolTable.h"
 using namespace llvm;
 
 static std::string getTypeString(Type *T) {
@@ -2834,8 +2834,7 @@ bool LLParser::ParseFunctionHeader(Function *&Fn, bool isDefine) {
 
   AttributeSet PAL = AttributeSet::get(Context, Attrs);
 
-  if (PAL.getParamAttributes(1).hasAttribute(Attribute::StructRet) &&
-      !RetType->isVoidTy())
+  if (PAL.hasAttribute(1, Attribute::StructRet) && !RetType->isVoidTy())
     return Error(RetTypeLoc, "functions with 'sret' argument must return void");
 
   FunctionType *FT =
@@ -3121,7 +3120,7 @@ int LLParser::ParseInstruction(Instruction *&Inst, BasicBlock *BB,
 bool LLParser::ParseCmpPredicate(unsigned &P, unsigned Opc) {
   if (Opc == Instruction::FCmp) {
     switch (Lex.getKind()) {
-    default: TokError("expected fcmp predicate (e.g. 'oeq')");
+    default: return TokError("expected fcmp predicate (e.g. 'oeq')");
     case lltok::kw_oeq: P = CmpInst::FCMP_OEQ; break;
     case lltok::kw_one: P = CmpInst::FCMP_ONE; break;
     case lltok::kw_olt: P = CmpInst::FCMP_OLT; break;
@@ -3141,7 +3140,7 @@ bool LLParser::ParseCmpPredicate(unsigned &P, unsigned Opc) {
     }
   } else {
     switch (Lex.getKind()) {
-    default: TokError("expected icmp predicate (e.g. 'eq')");
+    default: return TokError("expected icmp predicate (e.g. 'eq')");
     case lltok::kw_eq:  P = CmpInst::ICMP_EQ; break;
     case lltok::kw_ne:  P = CmpInst::ICMP_NE; break;
     case lltok::kw_slt: P = CmpInst::ICMP_SLT; break;
