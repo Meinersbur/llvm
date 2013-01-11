@@ -1682,13 +1682,13 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
       for (unsigned Part = 0; Part < UF; ++Part) {
         Value *V = Builder.CreateBinOp(BinOp->getOpcode(), A[Part], B[Part]);
 
-        // Update the NSW, NUW and Exact flags.
-        BinaryOperator *VecOp = cast<BinaryOperator>(V);
-        if (isa<OverflowingBinaryOperator>(BinOp)) {
+        // Update the NSW, NUW and Exact flags. Notice: V can be an Undef.
+        BinaryOperator *VecOp = dyn_cast<BinaryOperator>(V);
+        if (VecOp && isa<OverflowingBinaryOperator>(BinOp)) {
           VecOp->setHasNoSignedWrap(BinOp->hasNoSignedWrap());
           VecOp->setHasNoUnsignedWrap(BinOp->hasNoUnsignedWrap());
         }
-        if (isa<PossiblyExactOperator>(VecOp))
+        if (VecOp && isa<PossiblyExactOperator>(VecOp))
           VecOp->setIsExact(BinOp->isExact());
 
         Entry[Part] = V;
@@ -2635,7 +2635,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
 
   assert(MaxVectorSize <= 32 && "Did not expect to pack so many elements"
          " into one vector.");
-  
+
   unsigned VF = MaxVectorSize;
 
   // If we optimize the program for size, avoid creating the tail loop.
@@ -2697,17 +2697,23 @@ unsigned LoopVectorizationCostModel::getWidestType() {
 
     // For each instruction in the loop.
     for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
-      if (Legal->isUniformAfterVectorization(it))
-        continue;
-
       Type *T = it->getType();
 
+      // Only examine Loads, Stores and PHINodes.
+      if (!isa<LoadInst>(it) && !isa<StoreInst>(it) && !isa<PHINode>(it))
+        continue;
+
+      // Examine PHI nodes that are reduction variables.
+      if (PHINode *PN = dyn_cast<PHINode>(it))
+        if (!Legal->getReductionVars()->count(PN))
+          continue;
+
+      // Examine the stored values.
       if (StoreInst *ST = dyn_cast<StoreInst>(it))
         T = ST->getValueOperand()->getType();
 
-      // PHINodes and pointers are difficult to analyze, but we catch all other
-      // uses of the types in other instructions.
-      if (isa<PHINode>(it) || T->isPointerTy() || T->isVoidTy())
+      // Ignore stored/loaded pointer types.
+      if (T->isPointerTy())
         continue;
 
       MaxWidth = std::max(MaxWidth, T->getScalarSizeInBits());

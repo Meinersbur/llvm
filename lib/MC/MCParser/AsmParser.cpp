@@ -292,7 +292,26 @@ private:
 
   // Directive Parsing.
 
-  // ".ascii", ".asciiz", ".string"
+  enum DirectiveKind {
+    DK_NO_DIRECTIVE, // Placeholder
+    DK_SET, DK_EQU, DK_EQUIV, DK_ASCII, DK_ASCIZ, DK_STRING, DK_BYTE, DK_SHORT,
+    DK_VALUE, DK_2BYTE, DK_LONG, DK_INT, DK_4BYTE, DK_QUAD, DK_8BYTE, DK_SINGLE,
+    DK_FLOAT, DK_DOUBLE, DK_ALIGN, DK_ALIGN32, DK_BALIGN, DK_BALIGNW,
+    DK_BALIGNL, DK_P2ALIGN, DK_P2ALIGNW, DK_P2ALIGNL, DK_ORG, DK_FILL,
+    DK_SPACE, DK_SKIP, DK_ENDR,
+    DK_BUNDLE_ALIGN_MODE, DK_BUNDLE_LOCK, DK_BUNDLE_UNLOCK,
+    DK_ZERO, DK_EXTERN, DK_GLOBL, DK_GLOBAL, DK_INDIRECT_SYMBOL,
+    DK_LAZY_REFERENCE, DK_NO_DEAD_STRIP, DK_SYMBOL_RESOLVER, DK_PRIVATE_EXTERN,
+    DK_REFERENCE, DK_WEAK_DEFINITION, DK_WEAK_REFERENCE,
+    DK_WEAK_DEF_CAN_BE_HIDDEN, DK_COMM, DK_COMMON, DK_LCOMM, DK_ABORT,
+    DK_INCLUDE, DK_INCBIN, DK_CODE16, DK_CODE16GCC, DK_REPT, DK_IRP, DK_IRPC,
+    DK_IF, DK_IFB, DK_IFNB, DK_IFC, DK_IFNC, DK_IFDEF, DK_IFNDEF, DK_IFNOTDEF,
+    DK_ELSEIF, DK_ELSE, DK_ENDIF
+  };
+
+  StringMap<DirectiveKind> DirectiveKindMapping;
+
+  // ".ascii", ".asciz", ".string"
   bool ParseDirectiveAscii(StringRef IDVal, bool ZeroTerminated);
   bool ParseDirectiveValue(unsigned Size); // ".byte", ".long", ...
   bool ParseDirectiveRealValue(const fltSemantics &); // ".single", ...
@@ -351,10 +370,12 @@ private:
 
   // "_emit"
   bool ParseDirectiveEmit(SMLoc DirectiveLoc, ParseStatementInfo &Info);
+
+  void initializeDirectiveKindMapping();
 };
 
-/// \brief Generic implementations of directive handling, etc. which is shared
-/// (or the default, at least) for all assembler parser.
+/// \brief Generic implementation of directive handling, etc. which is shared
+/// (or the default, at least) for all assembler parsers.
 class GenericAsmParser : public MCAsmParserExtension {
   template<bool (GenericAsmParser::*Handler)(StringRef, SMLoc)>
   void AddDirectiveHandler(StringRef Directive) {
@@ -508,6 +529,8 @@ AsmParser::AsmParser(SourceMgr &_SM, MCContext &_Ctx,
     PlatformParser = createELFAsmParser();
     PlatformParser->Initialize(*this);
   }
+
+  initializeDirectiveKindMapping();
 }
 
 AsmParser::~AsmParser() {
@@ -1155,30 +1178,39 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
     IDVal = "";
   }
 
-
   // Handle conditional assembly here before checking for skipping.  We
   // have to do this so that .endif isn't skipped in a ".if 0" block for
   // example.
-  if (IDVal == ".if")
-    return ParseDirectiveIf(IDLoc);
-  if (IDVal == ".ifb")
-    return ParseDirectiveIfb(IDLoc, true);
-  if (IDVal == ".ifnb")
-    return ParseDirectiveIfb(IDLoc, false);
-  if (IDVal == ".ifc")
-    return ParseDirectiveIfc(IDLoc, true);
-  if (IDVal == ".ifnc")
-    return ParseDirectiveIfc(IDLoc, false);
-  if (IDVal == ".ifdef")
-    return ParseDirectiveIfdef(IDLoc, true);
-  if (IDVal == ".ifndef" || IDVal == ".ifnotdef")
-    return ParseDirectiveIfdef(IDLoc, false);
-  if (IDVal == ".elseif")
-    return ParseDirectiveElseIf(IDLoc);
-  if (IDVal == ".else")
-    return ParseDirectiveElse(IDLoc);
-  if (IDVal == ".endif")
-    return ParseDirectiveEndIf(IDLoc);
+  StringMap<DirectiveKind>::const_iterator DirKindIt =
+    DirectiveKindMapping.find(IDVal);
+  DirectiveKind DirKind =
+    (DirKindIt == DirectiveKindMapping.end()) ? DK_NO_DIRECTIVE :
+                                                DirKindIt->getValue();
+  switch (DirKind) {
+    default:
+      break;
+    case DK_IF:
+      return ParseDirectiveIf(IDLoc);
+    case DK_IFB:
+      return ParseDirectiveIfb(IDLoc, true);
+    case DK_IFNB:
+      return ParseDirectiveIfb(IDLoc, false);
+    case DK_IFC:
+      return ParseDirectiveIfc(IDLoc, true);
+    case DK_IFNC:
+      return ParseDirectiveIfc(IDLoc, false);
+    case DK_IFDEF:
+      return ParseDirectiveIfdef(IDLoc, true);
+    case DK_IFNDEF:
+    case DK_IFNOTDEF:
+      return ParseDirectiveIfdef(IDLoc, false);
+    case DK_ELSEIF:
+      return ParseDirectiveElseIf(IDLoc);
+    case DK_ELSE:
+      return ParseDirectiveElse(IDLoc);
+    case DK_ENDIF:
+      return ParseDirectiveEndIf(IDLoc);
+  }
 
   // If we are in a ".if 0" block, ignore this statement.
   if (TheCondState.Ignore) {
@@ -1256,138 +1288,125 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
     if (!getTargetParser().ParseDirective(ID))
       return false;
 
-    // Assembler features
-    if (IDVal == ".set" || IDVal == ".equ")
-      return ParseDirectiveSet(IDVal, true);
-    if (IDVal == ".equiv")
-      return ParseDirectiveSet(IDVal, false);
-
-    // Data directives
-
-    if (IDVal == ".ascii")
-      return ParseDirectiveAscii(IDVal, false);
-    if (IDVal == ".asciz" || IDVal == ".string")
-      return ParseDirectiveAscii(IDVal, true);
-
-    if (IDVal == ".byte")
-      return ParseDirectiveValue(1);
-    if (IDVal == ".short")
-      return ParseDirectiveValue(2);
-    if (IDVal == ".value")
-      return ParseDirectiveValue(2);
-    if (IDVal == ".2byte")
-      return ParseDirectiveValue(2);
-    if (IDVal == ".long")
-      return ParseDirectiveValue(4);
-    if (IDVal == ".int")
-      return ParseDirectiveValue(4);
-    if (IDVal == ".4byte")
-      return ParseDirectiveValue(4);
-    if (IDVal == ".quad")
-      return ParseDirectiveValue(8);
-    if (IDVal == ".8byte")
-      return ParseDirectiveValue(8);
-    if (IDVal == ".single" || IDVal == ".float")
-      return ParseDirectiveRealValue(APFloat::IEEEsingle);
-    if (IDVal == ".double")
-      return ParseDirectiveRealValue(APFloat::IEEEdouble);
-
-    if (IDVal == ".align") {
-      bool IsPow2 = !getContext().getAsmInfo().getAlignmentIsInBytes();
-      return ParseDirectiveAlign(IsPow2, /*ExprSize=*/1);
+    switch (DirKind) {
+      default:
+        break;
+      case DK_SET:
+      case DK_EQU:
+        return ParseDirectiveSet(IDVal, true);
+      case DK_EQUIV:
+        return ParseDirectiveSet(IDVal, false);
+      case DK_ASCII:
+        return ParseDirectiveAscii(IDVal, false);
+      case DK_ASCIZ:
+      case DK_STRING:
+        return ParseDirectiveAscii(IDVal, true);
+      case DK_BYTE:
+        return ParseDirectiveValue(1);
+      case DK_SHORT:
+      case DK_VALUE:
+      case DK_2BYTE:
+        return ParseDirectiveValue(2);
+      case DK_LONG:
+      case DK_INT:
+      case DK_4BYTE:
+        return ParseDirectiveValue(4);
+      case DK_QUAD:
+      case DK_8BYTE:
+        return ParseDirectiveValue(8);
+      case DK_SINGLE:
+      case DK_FLOAT:
+        return ParseDirectiveRealValue(APFloat::IEEEsingle);
+      case DK_DOUBLE:
+        return ParseDirectiveRealValue(APFloat::IEEEdouble);
+      case DK_ALIGN: {
+        bool IsPow2 = !getContext().getAsmInfo().getAlignmentIsInBytes();
+        return ParseDirectiveAlign(IsPow2, /*ExprSize=*/1);
+      }
+      case DK_ALIGN32: {
+        bool IsPow2 = !getContext().getAsmInfo().getAlignmentIsInBytes();
+        return ParseDirectiveAlign(IsPow2, /*ExprSize=*/4);
+      }
+      case DK_BALIGN:
+        return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/1);
+      case DK_BALIGNW:
+        return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/2);
+      case DK_BALIGNL:
+        return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/4);
+      case DK_P2ALIGN:
+        return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/1);
+      case DK_P2ALIGNW:
+        return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/2);
+      case DK_P2ALIGNL:
+        return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/4);
+      case DK_ORG:
+        return ParseDirectiveOrg();
+      case DK_FILL:
+        return ParseDirectiveFill();
+      case DK_SPACE:
+      case DK_SKIP:
+        return ParseDirectiveSpace();
+      case DK_ZERO:
+        return ParseDirectiveZero();
+      case DK_EXTERN:
+        EatToEndOfStatement(); // .extern is the default, ignore it.
+        return false;
+      case DK_GLOBL:
+      case DK_GLOBAL:
+        return ParseDirectiveSymbolAttribute(MCSA_Global);
+      case DK_INDIRECT_SYMBOL:
+        return ParseDirectiveSymbolAttribute(MCSA_IndirectSymbol);
+      case DK_LAZY_REFERENCE:
+        return ParseDirectiveSymbolAttribute(MCSA_LazyReference);
+      case DK_NO_DEAD_STRIP:
+        return ParseDirectiveSymbolAttribute(MCSA_NoDeadStrip);
+      case DK_SYMBOL_RESOLVER:
+        return ParseDirectiveSymbolAttribute(MCSA_SymbolResolver);
+      case DK_PRIVATE_EXTERN:
+        return ParseDirectiveSymbolAttribute(MCSA_PrivateExtern);
+      case DK_REFERENCE:
+        return ParseDirectiveSymbolAttribute(MCSA_Reference);
+      case DK_WEAK_DEFINITION:
+        return ParseDirectiveSymbolAttribute(MCSA_WeakDefinition);
+      case DK_WEAK_REFERENCE:
+        return ParseDirectiveSymbolAttribute(MCSA_WeakReference);
+      case DK_WEAK_DEF_CAN_BE_HIDDEN:
+        return ParseDirectiveSymbolAttribute(MCSA_WeakDefAutoPrivate);
+      case DK_COMM:
+      case DK_COMMON:
+        return ParseDirectiveComm(/*IsLocal=*/false);
+      case DK_LCOMM:
+        return ParseDirectiveComm(/*IsLocal=*/true);
+      case DK_ABORT:
+        return ParseDirectiveAbort();
+      case DK_INCLUDE:
+        return ParseDirectiveInclude();
+      case DK_INCBIN:
+        return ParseDirectiveIncbin();
+      case DK_CODE16:
+      case DK_CODE16GCC:
+        return TokError(Twine(IDVal) + " not supported yet");
+      case DK_REPT:
+        return ParseDirectiveRept(IDLoc);
+      case DK_IRP:
+        return ParseDirectiveIrp(IDLoc);
+      case DK_IRPC:
+        return ParseDirectiveIrpc(IDLoc);
+      case DK_ENDR:
+        return ParseDirectiveEndr(IDLoc);
+      case DK_BUNDLE_ALIGN_MODE:
+        return ParseDirectiveBundleAlignMode();
+      case DK_BUNDLE_LOCK:
+        return ParseDirectiveBundleLock();
+      case DK_BUNDLE_UNLOCK:
+        return ParseDirectiveBundleUnlock();
     }
-    if (IDVal == ".align32") {
-      bool IsPow2 = !getContext().getAsmInfo().getAlignmentIsInBytes();
-      return ParseDirectiveAlign(IsPow2, /*ExprSize=*/4);
-    }
-    if (IDVal == ".balign")
-      return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/1);
-    if (IDVal == ".balignw")
-      return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/2);
-    if (IDVal == ".balignl")
-      return ParseDirectiveAlign(/*IsPow2=*/false, /*ExprSize=*/4);
-    if (IDVal == ".p2align")
-      return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/1);
-    if (IDVal == ".p2alignw")
-      return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/2);
-    if (IDVal == ".p2alignl")
-      return ParseDirectiveAlign(/*IsPow2=*/true, /*ExprSize=*/4);
 
-    if (IDVal == ".bundle_align_mode")
-      return ParseDirectiveBundleAlignMode();
-    if (IDVal == ".bundle_lock")
-      return ParseDirectiveBundleLock();
-    if (IDVal == ".bundle_unlock")
-      return ParseDirectiveBundleUnlock();
-
-    if (IDVal == ".org")
-      return ParseDirectiveOrg();
-
-    if (IDVal == ".fill")
-      return ParseDirectiveFill();
-    if (IDVal == ".space" || IDVal == ".skip")
-      return ParseDirectiveSpace();
-    if (IDVal == ".zero")
-      return ParseDirectiveZero();
-
-    // Symbol attribute directives
-
-    if (IDVal == ".extern") {
-      EatToEndOfStatement(); // .extern is the default, ignore it.
-      return false;
-    }
-    if (IDVal == ".globl" || IDVal == ".global")
-      return ParseDirectiveSymbolAttribute(MCSA_Global);
-    if (IDVal == ".indirect_symbol")
-      return ParseDirectiveSymbolAttribute(MCSA_IndirectSymbol);
-    if (IDVal == ".lazy_reference")
-      return ParseDirectiveSymbolAttribute(MCSA_LazyReference);
-    if (IDVal == ".no_dead_strip")
-      return ParseDirectiveSymbolAttribute(MCSA_NoDeadStrip);
-    if (IDVal == ".symbol_resolver")
-      return ParseDirectiveSymbolAttribute(MCSA_SymbolResolver);
-    if (IDVal == ".private_extern")
-      return ParseDirectiveSymbolAttribute(MCSA_PrivateExtern);
-    if (IDVal == ".reference")
-      return ParseDirectiveSymbolAttribute(MCSA_Reference);
-    if (IDVal == ".weak_definition")
-      return ParseDirectiveSymbolAttribute(MCSA_WeakDefinition);
-    if (IDVal == ".weak_reference")
-      return ParseDirectiveSymbolAttribute(MCSA_WeakReference);
-    if (IDVal == ".weak_def_can_be_hidden")
-      return ParseDirectiveSymbolAttribute(MCSA_WeakDefAutoPrivate);
-
-    if (IDVal == ".comm" || IDVal == ".common")
-      return ParseDirectiveComm(/*IsLocal=*/false);
-    if (IDVal == ".lcomm")
-      return ParseDirectiveComm(/*IsLocal=*/true);
-
-    if (IDVal == ".abort")
-      return ParseDirectiveAbort();
-    if (IDVal == ".include")
-      return ParseDirectiveInclude();
-    if (IDVal == ".incbin")
-      return ParseDirectiveIncbin();
-
-    if (IDVal == ".code16" || IDVal == ".code16gcc")
-      return TokError(Twine(IDVal) + " not supported yet");
-
-    // Macro-like directives
-    if (IDVal == ".rept")
-      return ParseDirectiveRept(IDLoc);
-    if (IDVal == ".irp")
-      return ParseDirectiveIrp(IDLoc);
-    if (IDVal == ".irpc")
-      return ParseDirectiveIrpc(IDLoc);
-    if (IDVal == ".endr")
-      return ParseDirectiveEndr(IDLoc);
-
-    // Look up the handler in the handler table.
+    // Look up the handler in the extension handler table.
     std::pair<MCAsmParserExtension*, DirectiveHandler> Handler =
       DirectiveMap.lookup(IDVal);
     if (Handler.first)
       return (*Handler.second)(Handler.first, IDVal, IDLoc);
-
 
     return Error(IDLoc, "unknown directive");
   }
@@ -2872,6 +2891,78 @@ bool AsmParser::ParseDirectiveEndIf(SMLoc DirectiveLoc) {
   return false;
 }
 
+void AsmParser::initializeDirectiveKindMapping() {
+  DirectiveKindMapping[".set"] = DK_SET;
+  DirectiveKindMapping[".equ"] = DK_EQU;
+  DirectiveKindMapping[".equiv"] = DK_EQUIV;
+  DirectiveKindMapping[".ascii"] = DK_ASCII;
+  DirectiveKindMapping[".asciz"] = DK_ASCIZ;
+  DirectiveKindMapping[".string"] = DK_STRING;
+  DirectiveKindMapping[".byte"] = DK_BYTE;
+  DirectiveKindMapping[".short"] = DK_SHORT;
+  DirectiveKindMapping[".value"] = DK_VALUE;
+  DirectiveKindMapping[".2byte"] = DK_2BYTE;
+  DirectiveKindMapping[".long"] = DK_LONG;
+  DirectiveKindMapping[".int"] = DK_INT;
+  DirectiveKindMapping[".4byte"] = DK_4BYTE;
+  DirectiveKindMapping[".quad"] = DK_QUAD;
+  DirectiveKindMapping[".8byte"] = DK_8BYTE;
+  DirectiveKindMapping[".single"] = DK_SINGLE;
+  DirectiveKindMapping[".float"] = DK_FLOAT;
+  DirectiveKindMapping[".double"] = DK_DOUBLE;
+  DirectiveKindMapping[".align"] = DK_ALIGN;
+  DirectiveKindMapping[".align32"] = DK_ALIGN32;
+  DirectiveKindMapping[".balign"] = DK_BALIGN;
+  DirectiveKindMapping[".balignw"] = DK_BALIGNW;
+  DirectiveKindMapping[".balignl"] = DK_BALIGNL;
+  DirectiveKindMapping[".p2align"] = DK_P2ALIGN;
+  DirectiveKindMapping[".p2alignw"] = DK_P2ALIGNW;
+  DirectiveKindMapping[".p2alignl"] = DK_P2ALIGNL;
+  DirectiveKindMapping[".org"] = DK_ORG;
+  DirectiveKindMapping[".fill"] = DK_FILL;
+  DirectiveKindMapping[".space"] = DK_SPACE;
+  DirectiveKindMapping[".skip"] = DK_SKIP;
+  DirectiveKindMapping[".zero"] = DK_ZERO;
+  DirectiveKindMapping[".extern"] = DK_EXTERN;
+  DirectiveKindMapping[".globl"] = DK_GLOBL;
+  DirectiveKindMapping[".global"] = DK_GLOBAL;
+  DirectiveKindMapping[".indirect_symbol"] = DK_INDIRECT_SYMBOL;
+  DirectiveKindMapping[".lazy_reference"] = DK_LAZY_REFERENCE;
+  DirectiveKindMapping[".no_dead_strip"] = DK_NO_DEAD_STRIP;
+  DirectiveKindMapping[".symbol_resolver"] = DK_SYMBOL_RESOLVER;
+  DirectiveKindMapping[".private_extern"] = DK_PRIVATE_EXTERN;
+  DirectiveKindMapping[".reference"] = DK_REFERENCE;
+  DirectiveKindMapping[".weak_definition"] = DK_WEAK_DEFINITION;
+  DirectiveKindMapping[".weak_reference"] = DK_WEAK_REFERENCE;
+  DirectiveKindMapping[".weak_def_can_be_hidden"] = DK_WEAK_DEF_CAN_BE_HIDDEN;
+  DirectiveKindMapping[".comm"] = DK_COMM;
+  DirectiveKindMapping[".common"] = DK_COMMON;
+  DirectiveKindMapping[".lcomm"] = DK_LCOMM;
+  DirectiveKindMapping[".abort"] = DK_ABORT;
+  DirectiveKindMapping[".include"] = DK_INCLUDE;
+  DirectiveKindMapping[".incbin"] = DK_INCBIN;
+  DirectiveKindMapping[".code16"] = DK_CODE16;
+  DirectiveKindMapping[".code16gcc"] = DK_CODE16GCC;
+  DirectiveKindMapping[".rept"] = DK_REPT;
+  DirectiveKindMapping[".irp"] = DK_IRP;
+  DirectiveKindMapping[".irpc"] = DK_IRPC;
+  DirectiveKindMapping[".endr"] = DK_ENDR;
+  DirectiveKindMapping[".bundle_align_mode"] = DK_BUNDLE_ALIGN_MODE;
+  DirectiveKindMapping[".bundle_lock"] = DK_BUNDLE_LOCK;
+  DirectiveKindMapping[".bundle_unlock"] = DK_BUNDLE_UNLOCK;
+  DirectiveKindMapping[".if"] = DK_IF;
+  DirectiveKindMapping[".ifb"] = DK_IFB;
+  DirectiveKindMapping[".ifnb"] = DK_IFNB;
+  DirectiveKindMapping[".ifc"] = DK_IFC;
+  DirectiveKindMapping[".ifnc"] = DK_IFNC;
+  DirectiveKindMapping[".ifdef"] = DK_IFDEF;
+  DirectiveKindMapping[".ifndef"] = DK_IFNDEF;
+  DirectiveKindMapping[".ifnotdef"] = DK_IFNOTDEF;
+  DirectiveKindMapping[".elseif"] = DK_ELSEIF;
+  DirectiveKindMapping[".else"] = DK_ELSE;
+  DirectiveKindMapping[".endif"] = DK_ENDIF;
+}
+
 /// ParseDirectiveFile
 /// ::= .file [number] filename
 /// ::= .file number directory filename
@@ -3777,8 +3868,8 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
                                  MCAsmParserSemaCallback &SI) {
   SmallVector<void *, 4> InputDecls;
   SmallVector<void *, 4> OutputDecls;
-  SmallVector<bool, 4> InputDeclsOffsetOf;
-  SmallVector<bool, 4> OutputDeclsOffsetOf;
+  SmallVector<bool, 4> InputDeclsAddressOf;
+  SmallVector<bool, 4> OutputDeclsAddressOf;
   SmallVector<std::string, 4> InputConstraints;
   SmallVector<std::string, 4> OutputConstraints;
   std::set<std::string> ClobberRegs;
@@ -3815,7 +3906,7 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
         }
 
         // Register operand.
-        if (Operand->isReg() && !Operand->isOffsetOf()) {
+        if (Operand->isReg() && !Operand->needAddressOf()) {
           unsigned NumDefs = Desc.getNumDefs();
           // Clobber.
           if (NumDefs && Operand->getMCOperandNum() < NumDefs) {
@@ -3829,11 +3920,12 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
 
         // Expr/Input or Output.
         unsigned Size;
+        bool IsVarDecl;
         void *OpDecl = SI.LookupInlineAsmIdentifier(Operand->getName(), AsmLoc,
-                                                    Size);
+                                                    Size, IsVarDecl);
         if (OpDecl) {
           bool isOutput = (i == 1) && Desc.mayStore();
-          if (!Operand->isOffsetOf() && Operand->needSizeDirective())
+          if (Operand->isMem() && Operand->needSizeDirective())
             AsmStrRewrites.push_back(AsmRewrite(AOK_SizeDirective,
                                                 Operand->getStartLoc(),
                                                 /*Len*/0,
@@ -3842,7 +3934,7 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
             std::string Constraint = "=";
             ++InputIdx;
             OutputDecls.push_back(OpDecl);
-            OutputDeclsOffsetOf.push_back(Operand->isOffsetOf());
+            OutputDeclsAddressOf.push_back(Operand->needAddressOf());
             Constraint += Operand->getConstraint().str();
             OutputConstraints.push_back(Constraint);
             AsmStrRewrites.push_back(AsmRewrite(AOK_Output,
@@ -3850,7 +3942,7 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
                                                 Operand->getNameLen()));
           } else {
             InputDecls.push_back(OpDecl);
-            InputDeclsOffsetOf.push_back(Operand->isOffsetOf());
+            InputDeclsAddressOf.push_back(Operand->needAddressOf());
             InputConstraints.push_back(Operand->getConstraint().str());
             AsmStrRewrites.push_back(AsmRewrite(AOK_Input,
                                                 Operand->getStartLoc(),
@@ -3876,14 +3968,14 @@ bool AsmParser::ParseMSInlineAsm(void *AsmLoc, std::string &AsmString,
     OpDecls.resize(NumExprs);
     Constraints.resize(NumExprs);
     // FIXME: Constraints are hard coded to 'm', but we need an 'r'
-    // constraint for offsetof.  This needs to be cleaned up!
+    // constraint for addressof.  This needs to be cleaned up!
     for (unsigned i = 0; i < NumOutputs; ++i) {
-      OpDecls[i] = std::make_pair(OutputDecls[i], OutputDeclsOffsetOf[i]);
-      Constraints[i] = OutputDeclsOffsetOf[i] ? "=r" : OutputConstraints[i];
+      OpDecls[i] = std::make_pair(OutputDecls[i], OutputDeclsAddressOf[i]);
+      Constraints[i] = OutputDeclsAddressOf[i] ? "=r" : OutputConstraints[i];
     }
     for (unsigned i = 0, j = NumOutputs; i < NumInputs; ++i, ++j) {
-      OpDecls[j] = std::make_pair(InputDecls[i], InputDeclsOffsetOf[i]);
-      Constraints[j] = InputDeclsOffsetOf[i] ? "r" : InputConstraints[i];
+      OpDecls[j] = std::make_pair(InputDecls[i], InputDeclsAddressOf[i]);
+      Constraints[j] = InputDeclsAddressOf[i] ? "r" : InputConstraints[i];
     }
   }
 
