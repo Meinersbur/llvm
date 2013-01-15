@@ -1033,11 +1033,14 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
 
   // We may need to extend the index in case there is a type mismatch.
   // We know that the count starts at zero and does not overflow.
+  unsigned IdxTyBW = IdxTy->getScalarSizeInBits();
   if (Count->getType() != IdxTy) {
     // The exit count can be of pointer type. Convert it to the correct
     // integer type.
     if (ExitCount->getType()->isPointerTy())
       Count = CastInst::CreatePointerCast(Count, IdxTy, "ptrcnt.to.int", Loc);
+    else if (IdxTyBW < Count->getType()->getScalarSizeInBits())
+      Count = CastInst::CreateTruncOrBitCast(Count, IdxTy, "tr.cnt", Loc);
     else
       Count = CastInst::CreateZExtOrBitCast(Count, IdxTy, "zext.cnt", Loc);
   }
@@ -2630,7 +2633,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
 
   if (MaxVectorSize == 0) {
     DEBUG(dbgs() << "LV: The target has no vector registers.\n");
-    return 1;
+    MaxVectorSize = 1;
   }
 
   assert(MaxVectorSize <= 32 && "Did not expect to pack so many elements"
