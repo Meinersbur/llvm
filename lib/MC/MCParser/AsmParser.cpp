@@ -50,6 +50,25 @@ MCAsmParserSemaCallback::~MCAsmParserSemaCallback() {}
 
 namespace {
 
+/// \brief Helper types for tracking macro definitions.
+typedef std::vector<AsmToken> MCAsmMacroArgument;
+typedef std::vector<MCAsmMacroArgument> MCAsmMacroArguments;
+typedef std::pair<StringRef, MCAsmMacroArgument> MCAsmMacroParameter;
+typedef std::vector<MCAsmMacroParameter> MCAsmMacroParameters;
+
+struct MCAsmMacro {
+  StringRef Name;
+  StringRef Body;
+  MCAsmMacroParameters Parameters;
+
+public:
+  MCAsmMacro(StringRef N, StringRef B, const MCAsmMacroParameters &P) :
+    Name(N), Body(B), Parameters(P) {}
+
+  MCAsmMacro(const MCAsmMacro& Other)
+    : Name(Other.Name), Body(Other.Body), Parameters(Other.Parameters) {}
+};
+
 /// \brief Helper class for storing information about an active macro
 /// instantiation.
 struct MacroInstantiation {
@@ -73,7 +92,6 @@ public:
                      MemoryBuffer *I);
 };
 
-//struct AsmRewrite;
 struct ParseStatementInfo {
   /// ParsedOperands - The parsed operands from the last parsed statement.
   SmallVector<MCParsedAsmOperand*, 8> ParsedOperands;
@@ -122,8 +140,6 @@ private:
   /// ExtensionDirectiveMap - maps directive names to handler methods in parser
   /// extensions. Extensions register themselves in this map by calling
   /// AddDirectiveHandler.
-  typedef std::pair<MCAsmParserExtension*, DirectiveHandler>
-    ExtensionDirectiveHandler;
   StringMap<ExtensionDirectiveHandler> ExtensionDirectiveMap;
 
   /// MacroMap - Map of currently defined macros.
@@ -160,10 +176,9 @@ public:
 
   virtual bool Run(bool NoInitialTextSection, bool NoFinalize = false);
 
-  virtual void AddDirectiveHandler(MCAsmParserExtension *Object,
-                                   StringRef Directive,
-                                   DirectiveHandler Handler) {
-    ExtensionDirectiveMap[Directive] = std::make_pair(Object, Handler);
+  virtual void AddDirectiveHandler(StringRef Directive,
+                                   ExtensionDirectiveHandler Handler) {
+    ExtensionDirectiveMap[Directive] = Handler;
   }
 
 public:
@@ -208,24 +223,10 @@ public:
   virtual bool ParseParenExpression(const MCExpr *&Res, SMLoc &EndLoc);
   virtual bool ParseAbsoluteExpression(int64_t &Res);
 
-  bool ParseMacroArgument(MCAsmMacroArgument &MA,
-                          AsmToken::TokenKind &ArgumentDelimiter);
-
   /// ParseIdentifier - Parse an identifier or string (as a quoted identifier)
   /// and set \p Res to the identifier contents.
   virtual bool ParseIdentifier(StringRef &Res);
   virtual void EatToEndOfStatement();
-
-  virtual bool MacrosEnabled() {return MacrosEnabledFlag;}
-  virtual void SetMacrosEnabled(bool flag) {MacrosEnabledFlag = flag;}
-
-  virtual const MCAsmMacro* LookupMacro(StringRef Name);
-  virtual void DefineMacro(StringRef Name, const MCAsmMacro& Macro);
-  virtual void UndefineMacro(StringRef Name);
-
-  virtual bool InsideMacroInstantiation() {return !ActiveMacros.empty();}
-  virtual bool HandleMacroEntry(const MCAsmMacro *M, SMLoc NameLoc);
-  void HandleMacroExit();
 
   virtual void CheckForValidSection();
   /// }
@@ -240,6 +241,44 @@ private:
                    const MCAsmMacroParameters &Parameters,
                    const MCAsmMacroArguments &A,
                    const SMLoc &L);
+
+  /// \brief Are macros enabled in the parser?
+  bool MacrosEnabled() {return MacrosEnabledFlag;}
+
+  /// \brief Control a flag in the parser that enables or disables macros.
+  void SetMacrosEnabled(bool Flag) {MacrosEnabledFlag = Flag;}
+
+  /// \brief Lookup a previously defined macro.
+  /// \param Name Macro name.
+  /// \returns Pointer to macro. NULL if no such macro was defined.
+  const MCAsmMacro* LookupMacro(StringRef Name);
+
+  /// \brief Define a new macro with the given name and information.
+  void DefineMacro(StringRef Name, const MCAsmMacro& Macro);
+
+  /// \brief Undefine a macro. If no such macro was defined, it's a no-op.
+  void UndefineMacro(StringRef Name);
+
+  /// \brief Are we inside a macro instantiation?
+  bool InsideMacroInstantiation() {return !ActiveMacros.empty();}
+
+  /// \brief Handle entry to macro instantiation. 
+  ///
+  /// \param M The macro.
+  /// \param NameLoc Instantiation location.
+  bool HandleMacroEntry(const MCAsmMacro *M, SMLoc NameLoc);
+
+  /// \brief Handle exit from macro instantiation.
+  void HandleMacroExit();
+
+  /// \brief Extract AsmTokens for a macro argument. If the argument delimiter
+  /// is initially unknown, set it to AsmToken::Eof. It will be set to the
+  /// correct delimiter by the method.
+  bool ParseMacroArgument(MCAsmMacroArgument &MA,
+                          AsmToken::TokenKind &ArgumentDelimiter);
+
+  /// \brief Parse all macro arguments for a given macro.
+  bool ParseMacroArguments(const MCAsmMacro *M, MCAsmMacroArguments &A);
 
   void PrintMacroInstantiations();
   void PrintMessage(SMLoc Loc, SourceMgr::DiagKind Kind, const Twine &Msg,
@@ -261,8 +300,6 @@ private:
   /// \param InBuffer If not -1, should be the known buffer id that contains the
   /// location.
   void JumpToLoc(SMLoc Loc, int InBuffer=-1);
-
-  bool ParseMacroArguments(const MCAsmMacro *M, MCAsmMacroArguments &A);
 
   /// \brief Parse up to the end of statement and a return the contents from the
   /// current token until the end of the statement; the current token on exit
@@ -1076,8 +1113,7 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
       if (!TheCondState.Ignore)
         return TokError("unexpected token at start of statement");
       IDVal = "";
-    }
-    else {
+    } else {
       IDVal = getTok().getString();
       Lex(); // Consume the integer token to be used as an identifier token.
       if (Lexer.getKind() != AsmToken::Colon) {
@@ -1085,12 +1121,10 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
           return TokError("unexpected token at start of statement");
       }
     }
-
   } else if (Lexer.is(AsmToken::Dot)) {
     // Treat '.' as a valid identifier in this context.
     Lex();
     IDVal = ".";
-
   } else if (ParseIdentifier(IDVal)) {
     if (!TheCondState.Ignore)
       return TokError("unexpected token at start of statement");
@@ -1131,7 +1165,8 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
       return ParseDirectiveEndIf(IDLoc);
   }
 
-  // If we are in a ".if 0" block, ignore this statement.
+  // Ignore the statement if in the middle of inactive conditional
+  // (e.g. ".if 0").
   if (TheCondState.Ignore) {
     EatToEndOfStatement();
     return false;
@@ -1414,13 +1449,10 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
   CheckForValidSection();
 
   // Canonicalize the opcode to lower case.
-  SmallString<128> OpcodeStr;
-  for (unsigned i = 0, e = IDVal.size(); i != e; ++i)
-    OpcodeStr.push_back(tolower(IDVal[i]));
-
+  std::string OpcodeStr = IDVal.lower();
   ParseInstructionInfo IInfo(Info.AsmRewrites);
-  bool HadError = getTargetParser().ParseInstruction(IInfo, OpcodeStr.str(),
-                                                     IDLoc,Info.ParsedOperands);
+  bool HadError = getTargetParser().ParseInstruction(IInfo, OpcodeStr,
+                                                     IDLoc, Info.ParsedOperands);
   Info.ParseError = HadError;
 
   // Dump the parsed representation, if requested.
@@ -1444,22 +1476,22 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
   if (!HadError && getContext().getGenDwarfForAssembly() &&
       getContext().getGenDwarfSection() == getStreamer().getCurrentSection()) {
 
-     unsigned Line = SrcMgr.FindLineNumber(IDLoc, CurBuffer);
+    unsigned Line = SrcMgr.FindLineNumber(IDLoc, CurBuffer);
 
-     // If we previously parsed a cpp hash file line comment then make sure the
-     // current Dwarf File is for the CppHashFilename if not then emit the
-     // Dwarf File table for it and adjust the line number for the .loc.
-     const std::vector<MCDwarfFile *> &MCDwarfFiles =
-       getContext().getMCDwarfFiles();
-     if (CppHashFilename.size() != 0) {
-       if(MCDwarfFiles[getContext().getGenDwarfFileNumber()]->getName() !=
+    // If we previously parsed a cpp hash file line comment then make sure the
+    // current Dwarf File is for the CppHashFilename if not then emit the
+    // Dwarf File table for it and adjust the line number for the .loc.
+    const std::vector<MCDwarfFile *> &MCDwarfFiles = 
+      getContext().getMCDwarfFiles();
+    if (CppHashFilename.size() != 0) {
+      if (MCDwarfFiles[getContext().getGenDwarfFileNumber()]->getName() !=
           CppHashFilename)
-         getStreamer().EmitDwarfFileDirective(
-           getContext().nextGenDwarfFileNumber(), StringRef(), CppHashFilename);
+        getStreamer().EmitDwarfFileDirective(
+          getContext().nextGenDwarfFileNumber(), StringRef(), CppHashFilename);
 
        unsigned CppHashLocLineNo = SrcMgr.FindLineNumber(CppHashLoc,CppHashBuf);
        Line = CppHashLineNumber - 1 + (Line - CppHashLocLineNo);
-     }
+    }
 
     getStreamer().EmitDwarfLocDirective(getContext().getGenDwarfFileNumber(),
                                         Line, 0, DWARF2_LINE_DEFAULT_IS_STMT ?

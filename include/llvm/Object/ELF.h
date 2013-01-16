@@ -37,11 +37,9 @@ using support::endianness;
 
 template<endianness target_endianness, std::size_t max_alignment, bool is64Bits>
 struct ELFType {
-  enum {
-    TargetEndianness = target_endianness,
-    MaxAlignment = max_alignment,
-    Is64Bits = is64Bits
-  };
+  static const endianness TargetEndianness = target_endianness;
+  static const std::size_t MaxAlignment = max_alignment;
+  static const bool Is64Bits = is64Bits;
 };
 
 template<typename T, int max_align>
