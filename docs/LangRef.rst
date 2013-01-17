@@ -1754,7 +1754,7 @@ and disassembly do not cause any bits to change in the constants.
 When using the hexadecimal form, constants of types half, float, and
 double are represented using the 16-digit form shown above (which
 matches the IEEE754 representation for double); half and float values
-must, however, be exactly representable as IEE754 half and single
+must, however, be exactly representable as IEEE 754 half and single
 precision, respectively. Hexadecimal format is always used for long
 double, and there are three forms of long double. The 80-bit format used
 by x86 is represented as ``0xK`` followed by 20 hexadecimal digits. The
@@ -7689,8 +7689,10 @@ Overview:
 """""""""
 
 The '``llvm.fmuladd.*``' intrinsic functions represent multiply-add
-expressions that can be fused if the code generator determines that the
-fused expression would be legal and efficient.
+expressions that can be fused if the code generator determines that (a) the
+target instruction set has support for a fused operation, and (b) that the
+fused operation is more efficient than the equivalent, separate pair of mul
+and add instructions.
 
 Arguments:
 """"""""""
