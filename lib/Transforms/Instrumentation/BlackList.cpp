@@ -14,7 +14,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Utils/BlackList.h"
-
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -114,7 +113,8 @@ bool BlackList::isInInit(const GlobalVariable &G) const {
           inSection("global-init-type", GetGVTypeString(G)));
 }
 
-bool BlackList::inSection(const StringRef Section, const StringRef Query) const {
+bool BlackList::inSection(const StringRef Section,
+                          const StringRef Query) const {
   StringMap<Regex*>::const_iterator I = Entries.find(Section);
   if (I == Entries.end()) return false;
 

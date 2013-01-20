@@ -43,14 +43,6 @@ class Linker {
   /// @name Types
   /// @{
   public:
-    /// This type is used to pass the linkage items (libraries and files) to
-    /// the LinkItems function. It is composed of string/bool pairs. The string
-    /// provides the name of the file or library (as with the -l option). The
-    /// bool should be true for libraries and false for files, signifying
-    /// "isLibrary".
-    /// @brief A list of linkage items
-    typedef std::vector<std::pair<std::string,bool> > ItemList;
-
     /// This enumeration is used to control various optional features of the
     /// linker.
     enum ControlFlags {
@@ -185,10 +177,6 @@ class Linker {
   /// @name Implementation
   /// @{
   private:
-    /// Read in and parse the bitcode file named by FN and return the
-    /// Module it contains (wrapped in an auto_ptr), or 0 if an error occurs.
-    std::auto_ptr<Module> LoadObject(const sys::Path& FN);
-
     bool warning(StringRef message);
     bool error(StringRef message);
     void verbose(StringRef message);
