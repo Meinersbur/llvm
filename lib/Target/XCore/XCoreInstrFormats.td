@@ -39,8 +39,20 @@ class _F3R<bits<5> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
   let DecoderMethod = "Decode3RInstruction";
 }
 
-class _FL3R<dag outs, dag ins, string asmstr, list<dag> pattern>
+class _FL3R<bits<9> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<4, outs, ins, asmstr, pattern> {
+  let Inst{31-27} = opc{8-4};
+  let Inst{26-20} = 0b1111110;
+  let Inst{19-16} = opc{3-0};
+
+  let Inst{15-11} = 0b11111;
+  let DecoderMethod = "DecodeL3RInstruction";
+}
+
+// L3R with first operand as both a source and a destination.
+class _FL3RSrcDst<bits<9> opc, dag outs, dag ins, string asmstr,
+                  list<dag> pattern> : _FL3R<opc, outs, ins, asmstr, pattern> {
+  let DecoderMethod = "DecodeL3RSrcDstInstruction";
 }
 
 class _F2RUS<bits<5> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
@@ -56,8 +68,21 @@ class _F2RUSBitp<bits<5> opc, dag outs, dag ins, string asmstr,
   let DecoderMethod = "Decode2RUSBitpInstruction";
 }
 
-class _FL2RUS<dag outs, dag ins, string asmstr, list<dag> pattern>
+class _FL2RUS<bits<9> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<4, outs, ins, asmstr, pattern> {
+  let Inst{31-27} = opc{8-4};
+  let Inst{26-20} = 0b1111110;
+  let Inst{19-16} = opc{3-0};
+
+  let Inst{15-11} = 0b11111;
+  let DecoderMethod = "DecodeL2RUSInstruction";
+}
+
+// L2RUS with bitp operand
+class _FL2RUSBitp<bits<9> opc, dag outs, dag ins, string asmstr,
+                  list<dag> pattern>
+    : _FL2RUS<opc, outs, ins, asmstr, pattern> {
+  let DecoderMethod = "DecodeL2RUSBitpInstruction";
 }
 
 class _FRU6<dag outs, dag ins, string asmstr, list<dag> pattern>
