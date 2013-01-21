@@ -5668,41 +5668,40 @@ LowerVECTOR_SHUFFLEtoBlend(ShuffleVectorSDNode *SVOp,
   // Check the mask for BLEND and build the value.
   unsigned MaskValue = 0;
   // There are 2 lanes if (NumElems > 8), and 1 lane otherwise.
-  unsigned NumLanes = (NumElems-1)/8 + 1; 
+  unsigned NumLanes = (NumElems-1)/8 + 1;
   unsigned NumElemsInLane = NumElems / NumLanes;
 
   // Blend for v16i16 should be symetric for the both lanes.
   for (unsigned i = 0; i < NumElemsInLane; ++i) {
 
-    int SndLaneEltIdx = (NumLanes == 2) ? 
+    int SndLaneEltIdx = (NumLanes == 2) ?
       SVOp->getMaskElt(i + NumElemsInLane) : -1;
     int EltIdx = SVOp->getMaskElt(i);
 
-    if ((EltIdx == -1 || EltIdx == (int)i) && 
-        (SndLaneEltIdx == -1 || SndLaneEltIdx == (int)(i + NumElemsInLane)))
+    if ((EltIdx < 0 || EltIdx == (int)i) &&
+        (SndLaneEltIdx < 0 || SndLaneEltIdx == (int)(i + NumElemsInLane)))
       continue;
 
-    if (((unsigned)EltIdx == (i + NumElems)) && 
-        (SndLaneEltIdx == -1 || 
+    if (((unsigned)EltIdx == (i + NumElems)) &&
+        (SndLaneEltIdx < 0 ||
          (unsigned)SndLaneEltIdx == i + NumElems + NumElemsInLane))
       MaskValue |= (1<<i);
-    else 
+    else
       return SDValue();
   }
 
   // Convert i32 vectors to floating point if it is not AVX2.
   // AVX2 introduced VPBLENDD instruction for 128 and 256-bit vectors.
-  EVT BlendVT = VT;
+  MVT BlendVT = VT;
   if (EltVT == MVT::i64 || (EltVT == MVT::i32 && !Subtarget->hasInt256())) {
-    BlendVT = EVT::getVectorVT(*DAG.getContext(), 
-                              EVT::getFloatingPointVT(EltVT.getSizeInBits()), 
-                              NumElems);
+    BlendVT = MVT::getVectorVT(MVT::getFloatingPointVT(EltVT.getSizeInBits()),
+                               NumElems);
     V1 = DAG.getNode(ISD::BITCAST, dl, VT, V1);
     V2 = DAG.getNode(ISD::BITCAST, dl, VT, V2);
   }
-  
-  SDValue Ret =  DAG.getNode(X86ISD::BLENDI, dl, BlendVT, V1, V2,
-                             DAG.getConstant(MaskValue, MVT::i32));
+
+  SDValue Ret = DAG.getNode(X86ISD::BLENDI, dl, BlendVT, V1, V2,
+                            DAG.getConstant(MaskValue, MVT::i32));
   return DAG.getNode(ISD::BITCAST, dl, VT, Ret);
 }
 
@@ -7508,8 +7507,7 @@ X86TargetLowering::LowerBlockAddress(SDValue Op, SelectionDAG &DAG) const {
 
 SDValue
 X86TargetLowering::LowerGlobalAddress(const GlobalValue *GV, DebugLoc dl,
-                                      int64_t Offset,
-                                      SelectionDAG &DAG) const {
+                                      int64_t Offset, SelectionDAG &DAG) const {
   // Create the TargetGlobalAddress node, folding in the constant
   // offset if it is legal.
   unsigned char OpFlags =
@@ -7729,7 +7727,7 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
       case TLSModel::LocalExec:
         return LowerToTLSExecModel(GA, DAG, getPointerTy(), model,
                                    Subtarget->is64Bit(),
-                         getTargetMachine().getRelocationModel() == Reloc::PIC_);
+                        getTargetMachine().getRelocationModel() == Reloc::PIC_);
     }
     llvm_unreachable("Unknown TLS model.");
   }
@@ -8108,7 +8106,8 @@ SDValue X86TargetLowering::lowerUINT_TO_FP_vec(SDValue Op,
           SVT == MVT::v8i8 || SVT == MVT::v8i16) &&
          "Custom UINT_TO_FP is not supported!");
 
-  EVT NVT = EVT::getVectorVT(*DAG.getContext(), MVT::i32, SVT.getVectorNumElements());
+  EVT NVT = EVT::getVectorVT(*DAG.getContext(), MVT::i32,
+                             SVT.getVectorNumElements());
   return DAG.getNode(ISD::SINT_TO_FP, dl, Op.getValueType(),
                      DAG.getNode(ISD::ZERO_EXTEND, dl, NVT, N0));
 }
@@ -8201,8 +8200,9 @@ SDValue X86TargetLowering::LowerUINT_TO_FP(SDValue Op,
   return DAG.getNode(ISD::FP_ROUND, dl, DstVT, Add, DAG.getIntPtrConstant(0));
 }
 
-std::pair<SDValue,SDValue> X86TargetLowering::
-FP_TO_INTHelper(SDValue Op, SelectionDAG &DAG, bool IsSigned, bool IsReplace) const {
+std::pair<SDValue,SDValue>
+X86TargetLowering:: FP_TO_INTHelper(SDValue Op, SelectionDAG &DAG,
+                                    bool IsSigned, bool IsReplace) const {
   DebugLoc DL = Op.getDebugLoc();
 
   EVT DstTy = Op.getValueType();
@@ -8540,8 +8540,7 @@ SDValue X86TargetLowering::LowerFP_TO_UINT(SDValue Op,
   return FIST;
 }
 
-SDValue X86TargetLowering::lowerFP_EXTEND(SDValue Op,
-                                          SelectionDAG &DAG) const {
+static SDValue LowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) {
   DebugLoc DL = Op.getDebugLoc();
   MVT VT = Op.getValueType().getSimpleVT();
   SDValue In = Op.getOperand(0);
@@ -8705,7 +8704,8 @@ static SDValue LowerFGETSIGN(SDValue Op, SelectionDAG &DAG) {
 
 // LowerVectorAllZeroTest - Check whether an OR'd tree is PTEST-able.
 //
-SDValue X86TargetLowering::LowerVectorAllZeroTest(SDValue Op, SelectionDAG &DAG) const {
+SDValue X86TargetLowering::LowerVectorAllZeroTest(SDValue Op,
+                                                  SelectionDAG &DAG) const {
   assert(Op.getOpcode() == ISD::OR && "Only check OR'd tree.");
 
   if (!Subtarget->hasSSE41())
@@ -12031,7 +12031,7 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ANY_EXTEND:         return LowerANY_EXTEND(Op, DAG);
   case ISD::FP_TO_SINT:         return LowerFP_TO_SINT(Op, DAG);
   case ISD::FP_TO_UINT:         return LowerFP_TO_UINT(Op, DAG);
-  case ISD::FP_EXTEND:          return lowerFP_EXTEND(Op, DAG);
+  case ISD::FP_EXTEND:          return LowerFP_EXTEND(Op, DAG);
   case ISD::FABS:               return LowerFABS(Op, DAG);
   case ISD::FNEG:               return LowerFNEG(Op, DAG);
   case ISD::FCOPYSIGN:          return LowerFCOPYSIGN(Op, DAG);
