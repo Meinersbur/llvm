@@ -237,12 +237,6 @@ public:
         static_cast<uint64_t>(pos - 1));
   }
 
-  unsigned char getByte(size_t pos) {
-    uint8_t byte = -1;
-    BitStream->getBitcodeBytes().readByte(pos, &byte);
-    return byte;
-  }
-
   uint32_t getWord(size_t pos) {
     uint8_t buf[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
     BitStream->getBitcodeBytes().readBytes(pos, sizeof(buf), buf, NULL);
@@ -422,7 +416,7 @@ public:
     }
   }
 
-  void SkipToWord() {
+  void SkipToFourByteBoundary() {
     BitsInCurWord = 0;
     CurWord = 0;
   }
@@ -448,7 +442,7 @@ public:
     // Read and ignore the codelen value.  Since we are skipping this block, we
     // don't care what code widths are used inside of it.
     ReadVBR(bitc::CodeLenWidth);
-    SkipToWord();
+    SkipToFourByteBoundary();
     unsigned NumWords = Read(bitc::BlockSizeWidth);
 
     // Check that the block wasn't partially defined, and that the offset isn't
@@ -470,7 +464,7 @@ public:
 
     // Block tail:
     //    [END_BLOCK, <align4bytes>]
-    SkipToWord();
+    SkipToFourByteBoundary();
 
     popBlockScope();
     return false;

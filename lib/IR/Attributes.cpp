@@ -530,8 +530,37 @@ void AttributeImpl::Profile(FoldingSetNodeID &ID, Constant *Data,
 }
 
 //===----------------------------------------------------------------------===//
+// AttributeWithIndex Definition
+//===----------------------------------------------------------------------===//
+
+AttributeWithIndex AttributeWithIndex::get(LLVMContext &C, unsigned Idx,
+                                           AttributeSet AS) {
+  // FIXME: This is temporary, but necessary for the conversion.
+  AttrBuilder B(AS, Idx);
+  return get(Idx, Attribute::get(C, B));
+}
+
+//===----------------------------------------------------------------------===//
 // AttributeSetImpl Definition
 //===----------------------------------------------------------------------===//
+
+AttributeSet AttributeSet::getRetAttributes() const {
+  // FIXME: Remove.
+  return AttrList && hasAttributes(ReturnIndex) ?
+    AttributeSet::get(AttrList->getContext(),
+                      AttributeWithIndex::get(ReturnIndex,
+                                              getAttributes(ReturnIndex))) :
+    AttributeSet();
+}
+
+AttributeSet AttributeSet::getFnAttributes() const {
+  // FIXME: Remove.
+  return AttrList && hasAttributes(FunctionIndex) ?
+    AttributeSet::get(AttrList->getContext(),
+                      AttributeWithIndex::get(FunctionIndex,
+                                              getAttributes(FunctionIndex))) :
+    AttributeSet();
+}
 
 AttributeSet AttributeSet::get(LLVMContext &C,
                                ArrayRef<AttributeWithIndex> Attrs) {
@@ -568,20 +597,22 @@ AttributeSet AttributeSet::get(LLVMContext &C,
 }
 
 AttributeSet AttributeSet::get(LLVMContext &C, unsigned Idx, AttrBuilder &B) {
-  SmallVector<AttributeWithIndex, 8> Attrs;
-  for (AttrBuilder::iterator I = B.begin(), E = B.end(); I != E; ++I) {
-    Attribute::AttrKind Kind = *I;
-    Attribute A = Attribute::get(C, Kind);
+  // FIXME: This should be implemented as a loop that creates the
+  // AttributeWithIndexes that then are used to create the AttributeSet.
+  if (!B.hasAttributes())
+    return AttributeSet();
 
-    if (Kind == Attribute::Alignment)
-      A.setAlignment(B.getAlignment());
-    else if (Kind == Attribute::StackAlignment)
-      A.setStackAlignment(B.getStackAlignment());
+  uint64_t Mask = 0;
 
-    Attrs.push_back(AttributeWithIndex::get(Idx, A));
-  }
+  for (AttrBuilder::iterator I = B.begin(), E = B.end(); I != E; ++I)
+    Mask |= AttributeImpl::getAttrMask(*I);
 
-  return get(C, Attrs);
+  Attribute A = Attribute::decodeLLVMAttributesForBitcode(C, Mask);
+  if (B.getAlignment())
+    A.setAlignment(B.getAlignment());
+  if (B.getStackAlignment())
+    A.setStackAlignment(B.getStackAlignment());
+  return get(C, AttributeWithIndex::get(Idx, A));
 }
 
 //===----------------------------------------------------------------------===//
@@ -660,14 +691,9 @@ bool AttributeSet::hasAttrSomewhere(Attribute::AttrKind Attr) const {
   return false;
 }
 
-AttributeSet AttributeSet::addRetAttributes(LLVMContext &C,
-                                            AttributeSet Attrs) const {
-  return addAttr(C, ReturnIndex, getAttributes(ReturnIndex));
-}
-
-AttributeSet AttributeSet::addFnAttributes(LLVMContext &C,
-                                           AttributeSet Attrs) const {
-  return addAttr(C, FunctionIndex, getAttributes(FunctionIndex));
+AttributeSet AttributeSet::addAttributes(LLVMContext &C, unsigned Idx,
+                                         AttributeSet Attrs) const {
+  return addAttr(C, Idx, Attrs.getAttributes(Idx));
 }
 
 AttributeSet AttributeSet::addAttr(LLVMContext &C, unsigned Idx,

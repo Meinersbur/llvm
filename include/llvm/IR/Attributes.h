@@ -184,42 +184,12 @@ template<> struct DenseMapInfo<Attribute::AttrKind> {
 };
 
 //===----------------------------------------------------------------------===//
-/// \class
-/// \brief This is just a pair of values to associate a set of attributes with
-/// an index.
-struct AttributeWithIndex {
-  Attribute Attrs;  ///< The attributes that are set, or'd together.
-  Constant *Val;    ///< Value attached to attribute, e.g. alignment.
-  unsigned Index;   ///< Index of the parameter for which the attributes apply.
-                    ///< Index 0 is used for return value attributes.
-                    ///< Index ~0U is used for function attributes.
-
-  static AttributeWithIndex get(LLVMContext &C, unsigned Idx,
-                                ArrayRef<Attribute::AttrKind> Attrs) {
-    return get(Idx, Attribute::get(C, Attrs));
-  }
-  static AttributeWithIndex get(unsigned Idx, Attribute Attrs) {
-    AttributeWithIndex P;
-    P.Index = Idx;
-    P.Attrs = Attrs;
-    P.Val = 0;
-    return P;
-  }
-  static AttributeWithIndex get(unsigned Idx, Attribute Attrs, Constant *Val) {
-    AttributeWithIndex P;
-    P.Index = Idx;
-    P.Attrs = Attrs;
-    P.Val = Val;
-    return P;
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // AttributeSet Smart Pointer
 //===----------------------------------------------------------------------===//
 
 class AttrBuilder;
 class AttributeSetImpl;
+struct AttributeWithIndex;
 
 //===----------------------------------------------------------------------===//
 /// \class
@@ -261,13 +231,22 @@ public:
   /// list.
   AttributeSet addAttr(LLVMContext &C, unsigned Idx, Attribute Attrs) const;
 
+  /// \brief Add attributes to the attribute set at the given index. Since
+  /// attribute sets are immutable, this returns a new set.
+  AttributeSet addAttributes(LLVMContext &C, unsigned Idx,
+                             AttributeSet Attrs) const;
+
   /// \brief Add return attributes to this attribute set. Since attribute sets
   /// are immutable, this returns a new set.
-  AttributeSet addRetAttributes(LLVMContext &C, AttributeSet Attrs) const;
+  AttributeSet addRetAttributes(LLVMContext &C, AttributeSet Attrs) const {
+    return addAttributes(C, ReturnIndex, Attrs);
+  }
 
   /// \brief Add function attributes to this attribute set. Since attribute sets
   /// are immutable, this returns a new set.
-  AttributeSet addFnAttributes(LLVMContext &C, AttributeSet Attrs) const;
+  AttributeSet addFnAttributes(LLVMContext &C, AttributeSet Attrs) const {
+    return addAttributes(C, FunctionIndex, Attrs);
+  }
 
   /// \brief Remove the specified attribute at the specified index from this
   /// attribute list.  Since attribute lists are immutable, this returns the new
@@ -284,14 +263,10 @@ public:
   }
 
   /// \brief The attributes for the ret value are returned.
-  Attribute getRetAttributes() const {
-    return getAttributes(ReturnIndex);
-  }
+  AttributeSet getRetAttributes() const;
 
   /// \brief The function attributes are returned.
-  Attribute getFnAttributes() const {
-    return getAttributes(FunctionIndex);
-  }
+  AttributeSet getFnAttributes() const;
 
   /// \brief Return the alignment for the specified function parameter.
   unsigned getParamAlignment(unsigned Idx) const;
@@ -350,6 +325,39 @@ public:
   const AttributeWithIndex &getSlot(unsigned Slot) const;
 
   void dump() const;
+};
+
+//===----------------------------------------------------------------------===//
+/// \class
+/// \brief This is just a pair of values to associate a set of attributes with
+/// an index.
+struct AttributeWithIndex {
+  Attribute Attrs;  ///< The attributes that are set, or'd together.
+  Constant *Val;    ///< Value attached to attribute, e.g. alignment.
+  unsigned Index;   ///< Index of the parameter for which the attributes apply.
+                    ///< Index 0 is used for return value attributes.
+                    ///< Index ~0U is used for function attributes.
+
+  // FIXME: These methods all need to be revised. The first one is temporary.
+  static AttributeWithIndex get(LLVMContext &C, unsigned Idx, AttributeSet AS);
+  static AttributeWithIndex get(LLVMContext &C, unsigned Idx,
+                                ArrayRef<Attribute::AttrKind> Attrs) {
+    return get(Idx, Attribute::get(C, Attrs));
+  }
+  static AttributeWithIndex get(unsigned Idx, Attribute Attrs) {
+    AttributeWithIndex P;
+    P.Index = Idx;
+    P.Attrs = Attrs;
+    P.Val = 0;
+    return P;
+  }
+  static AttributeWithIndex get(unsigned Idx, Attribute Attrs, Constant *Val) {
+    AttributeWithIndex P;
+    P.Index = Idx;
+    P.Attrs = Attrs;
+    P.Val = Val;
+    return P;
+  }
 };
 
 //===----------------------------------------------------------------------===//

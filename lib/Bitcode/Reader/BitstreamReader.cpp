@@ -78,7 +78,7 @@ bool BitstreamCursor::EnterSubBlock(unsigned BlockID, unsigned *NumWordsP) {
   
   // Get the codesize of this block.
   CurCodeSize = ReadVBR(bitc::CodeLenWidth);
-  SkipToWord();
+  SkipToFourByteBoundary();
   unsigned NumWords = Read(bitc::BlockSizeWidth);
   if (NumWordsP) *NumWordsP = NumWords;
   
@@ -181,20 +181,20 @@ void BitstreamCursor::skipRecord(unsigned AbbrevID) {
     assert(Op.getEncoding() == BitCodeAbbrevOp::Blob);
     // Blob case.  Read the number of bytes as a vbr6.
     unsigned NumElts = ReadVBR(6);
-    SkipToWord();  // 32-bit alignment
+    SkipToFourByteBoundary();  // 32-bit alignment
     
     // Figure out where the end of this blob will be including tail padding.
-    size_t NewEnd = NextChar+((NumElts+3)&~3);
+    size_t NewEnd = GetCurrentBitNo()+((NumElts+3)&~3)*8;
     
     // If this would read off the end of the bitcode file, just set the
     // record to empty and return.
-    if (!canSkipToPos(NewEnd)) {
+    if (!canSkipToPos(NewEnd/8)) {
       NextChar = BitStream->getBitcodeBytes().getExtent();
       break;
     }
     
     // Skip over the blob.
-    NextChar = NewEnd;
+    JumpToBit(NewEnd);
   }
 }
 
@@ -241,32 +241,34 @@ unsigned BitstreamCursor::readRecord(unsigned AbbrevID,
     assert(Op.getEncoding() == BitCodeAbbrevOp::Blob);
     // Blob case.  Read the number of bytes as a vbr6.
     unsigned NumElts = ReadVBR(6);
-    SkipToWord();  // 32-bit alignment
+    SkipToFourByteBoundary();  // 32-bit alignment
     
     // Figure out where the end of this blob will be including tail padding.
-    size_t NewEnd = NextChar+((NumElts+3)&~3);
+    size_t CurBitPos = GetCurrentBitNo();
+    size_t NewEnd = CurBitPos+((NumElts+3)&~3)*8;
     
     // If this would read off the end of the bitcode file, just set the
     // record to empty and return.
-    if (!canSkipToPos(NewEnd)) {
+    if (!canSkipToPos(NewEnd/8)) {
       Vals.append(NumElts, 0);
       NextChar = BitStream->getBitcodeBytes().getExtent();
       break;
     }
     
-    // Otherwise, read the number of bytes.  If we can return a reference to
-    // the data, do so to avoid copying it.
+    // Otherwise, inform the streamer that we need these bytes in memory.
+    const char *Ptr = (const char*)
+      BitStream->getBitcodeBytes().getPointer(CurBitPos/8, NumElts);
+    
+    // If we can return a reference to the data, do so to avoid copying it.
     if (Blob) {
-      *Blob =
-        StringRef((const char*)BitStream->getBitcodeBytes().getPointer(
-                                                            NextChar, NumElts),
-                NumElts);
+      *Blob = StringRef(Ptr, NumElts);
     } else {
-      for (; NumElts; ++NextChar, --NumElts)
-        Vals.push_back(getByte(NextChar));
+      // Otherwise, unpack into Vals with zero extension.
+      for (; NumElts; --NumElts)
+        Vals.push_back((unsigned char)*Ptr++);
     }
     // Skip over tail padding.
-    NextChar = NewEnd;
+    JumpToBit(NewEnd);
   }
   
   unsigned Code = (unsigned)Vals[0];
