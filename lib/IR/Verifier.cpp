@@ -693,9 +693,9 @@ void Verifier::VerifyParameterAttrs(AttributeSet Attrs, uint64_t Idx, Type *Ty,
           "'noinline and alwaysinline' are incompatible!", V);
 
   Assert1(!AttrBuilder(Attrs, Idx).
-            hasAttributes(Attribute::typeIncompatible(Ty)),
+            hasAttributes(AttributeFuncs::typeIncompatible(Ty, Idx), Idx),
           "Wrong types for attribute: " +
-          Attribute::typeIncompatible(Ty).getAsString(), V);
+          AttributeFuncs::typeIncompatible(Ty, Idx).getAsString(Idx), V);
 
   if (PointerType *PTy = dyn_cast<PointerType>(Ty))
     Assert1(!Attrs.hasAttribute(Idx, Attribute::ByVal) ||
@@ -718,25 +718,25 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT,
   bool SawNest = false;
 
   for (unsigned i = 0, e = Attrs.getNumSlots(); i != e; ++i) {
-    const AttributeWithIndex &Attr = Attrs.getSlot(i);
+    unsigned Index = Attrs.getSlotIndex(i);
 
     Type *Ty;
-    if (Attr.Index == 0)
+    if (Index == 0)
       Ty = FT->getReturnType();
-    else if (Attr.Index-1 < FT->getNumParams())
-      Ty = FT->getParamType(Attr.Index-1);
+    else if (Index-1 < FT->getNumParams())
+      Ty = FT->getParamType(Index-1);
     else
       break;  // VarArgs attributes, verified elsewhere.
 
-    VerifyParameterAttrs(Attrs, Attr.Index, Ty, Attr.Index == 0, V);
+    VerifyParameterAttrs(Attrs, Index, Ty, Index == 0, V);
 
-    if (Attr.Attrs.hasAttribute(Attribute::Nest)) {
+    if (Attrs.hasAttribute(i, Attribute::Nest)) {
       Assert1(!SawNest, "More than one parameter has attribute nest!", V);
       SawNest = true;
     }
 
-    if (Attr.Attrs.hasAttribute(Attribute::StructRet))
-      Assert1(Attr.Index == 1, "Attribute sret is not on first parameter!", V);
+    if (Attrs.hasAttribute(Index, Attribute::StructRet))
+      Assert1(Index == 1, "Attribute sret is not on first parameter!", V);
   }
 
   if (!Attrs.hasAttributes(AttributeSet::FunctionIndex))
@@ -745,7 +745,9 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT,
   AttrBuilder NotFn(Attrs, AttributeSet::FunctionIndex);
   NotFn.removeFunctionOnlyAttrs();
   Assert1(!NotFn.hasAttributes(), "Attribute '" +
-          Attribute::get(V->getContext(), NotFn).getAsString() +
+          AttributeSet::get(V->getContext(),
+                            AttributeSet::FunctionIndex,
+                            NotFn).getAsString(AttributeSet::FunctionIndex) +
           "' do not apply to the function!", V);
 
   // Check for mutually incompatible attributes.
@@ -797,16 +799,16 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT,
 }
 
 static bool VerifyAttributeCount(const AttributeSet &Attrs, unsigned Params) {
-  if (Attrs.isEmpty())
+  if (Attrs.getNumSlots() == 0)
     return true;
 
   unsigned LastSlot = Attrs.getNumSlots() - 1;
-  unsigned LastIndex = Attrs.getSlot(LastSlot).Index;
+  unsigned LastIndex = Attrs.getSlotIndex(LastSlot);
   if (LastIndex <= Params
-      || (LastIndex == (unsigned)~0
-          && (LastSlot == 0 || Attrs.getSlot(LastSlot - 1).Index <= Params)))  
+      || (LastIndex == AttributeSet::FunctionIndex
+          && (LastSlot == 0 || Attrs.getSlotIndex(LastSlot - 1) <= Params)))
     return true;
-
+ 
   return false;
 }
 

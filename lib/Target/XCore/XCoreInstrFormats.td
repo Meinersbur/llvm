@@ -125,12 +125,22 @@ class _FLU6<bits<10> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Inst{9-0} = a{15-6};
 }
 
-class _FU10<dag outs, dag ins, string asmstr, list<dag> pattern>
+class _FU10<bits<6> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<2, outs, ins, asmstr, pattern> {
+  bits<10> a;
+
+  let Inst{15-10} = opc;
+  let Inst{9-0} = a;
 }
 
-class _FLU10<dag outs, dag ins, string asmstr, list<dag> pattern>
+class _FLU10<bits<6> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<4, outs, ins, asmstr, pattern> {
+  bits<20> a;
+
+  let Inst{31-26} = opc;
+  let Inst{25-16} = a{9-0};
+  let Inst{15-10} = 0b111100;
+  let Inst{9-0} = a{19-10};
 }
 
 class _F2R<bits<6> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
@@ -208,14 +218,44 @@ class _F0R<bits<10> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Inst{4-0} = opc{4-0};
 }
 
-class _L4R<dag outs, dag ins, string asmstr, list<dag> pattern>
+class _FL4R<bits<6> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<4, outs, ins, asmstr, pattern> {
+  bits<4> d;
+
+  let Inst{31-27} = opc{5-1};
+  let Inst{26-21} = 0b111111;
+  let Inst{20} = opc{0};
+  let Inst{19-16} = d;
+  let Inst{15-11} = 0b11111;
 }
 
-class _L5R<dag outs, dag ins, string asmstr, list<dag> pattern>
-    : InstXCore<4, outs, ins, asmstr, pattern> {
+// L4R with 4th operand as both a source and a destination.
+class _FL4RSrcDst<bits<6> opc, dag outs, dag ins, string asmstr,
+                  list<dag> pattern>
+    : _FL4R<opc, outs, ins, asmstr, pattern> {
+  let DecoderMethod = "DecodeL4RSrcDstInstruction";
 }
 
-class _L6R<dag outs, dag ins, string asmstr, list<dag> pattern>
+// L4R with 1st and 4th operand as both a source and a destination.
+class _FL4RSrcDstSrcDst<bits<6> opc, dag outs, dag ins, string asmstr,
+                        list<dag> pattern>
+    : _FL4R<opc, outs, ins, asmstr, pattern> {
+  let DecoderMethod = "DecodeL4RSrcDstSrcDstInstruction";
+}
+
+class _FL5R<bits<6> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
     : InstXCore<4, outs, ins, asmstr, pattern> {
+  let Inst{31-27} = opc{5-1};
+  let Inst{20} = opc{0};
+  let Inst{15-11} = 0b11111;
+
+  let DecoderMethod = "DecodeL5RInstruction";
+}
+
+class _FL6R<bits<5> opc, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : InstXCore<4, outs, ins, asmstr, pattern> {
+  let Inst{31-27} = opc;
+  let Inst{15-11} = 0b11111;
+
+  let DecoderMethod = "DecodeL6RInstruction";
 }
