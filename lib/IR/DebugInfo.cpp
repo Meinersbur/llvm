@@ -593,17 +593,14 @@ unsigned DISubprogram::isOptimized() const {
 MDNode *DISubprogram::getVariablesNodes() const {
   if (!DbgNode || DbgNode->getNumOperands() <= 19)
     return NULL;
-  if (MDNode *Temp = dyn_cast_or_null<MDNode>(DbgNode->getOperand(19)))
-    return dyn_cast_or_null<MDNode>(Temp->getOperand(0));
-  return NULL;
+  return dyn_cast_or_null<MDNode>(DbgNode->getOperand(19));
 }
 
 DIArray DISubprogram::getVariables() const {
   if (!DbgNode || DbgNode->getNumOperands() <= 19)
     return DIArray();
   if (MDNode *T = dyn_cast_or_null<MDNode>(DbgNode->getOperand(19)))
-    if (MDNode *A = dyn_cast_or_null<MDNode>(T->getOperand(0)))
-      return DIArray(A);
+    return DIArray(T);
   return DIArray();
 }
 
@@ -1058,8 +1055,8 @@ void DIScope::printInternal(raw_ostream &OS) const {
 
 void DICompileUnit::printInternal(raw_ostream &OS) const {
   DIScope::printInternal(OS);
-  if (unsigned Lang = getLanguage())
-    OS << " [" << dwarf::LanguageString(Lang) << ']';
+  if (const char *Lang = dwarf::LanguageString(getLanguage()))
+    OS << " [" << Lang << ']';
 }
 
 void DIEnumerator::printInternal(raw_ostream &OS) const {
