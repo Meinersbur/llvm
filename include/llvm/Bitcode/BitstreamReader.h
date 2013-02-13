@@ -364,12 +364,17 @@ public:
     uint32_t R = uint32_t(CurWord);
 
     // Read the next word from the stream.
-    uint8_t buf[sizeof(word_t)] = {0};
-    BitStream->getBitcodeBytes().readBytes(NextChar, sizeof(buf), buf, NULL);
+    uint8_t Array[sizeof(word_t)] = {0};
     
-    typedef support::detail::packed_endian_specific_integral
-       <word_t, support::little, support::unaligned> Endian_T;
-    CurWord = *reinterpret_cast<Endian_T*>(buf);
+    BitStream->getBitcodeBytes().readBytes(NextChar, sizeof(Array),
+                                           Array, NULL);
+    
+    // Handle big-endian byte-swapping if necessary.
+    support::detail::packed_endian_specific_integral
+      <word_t, support::little, support::unaligned> EndianValue;
+    memcpy(&EndianValue, Array, sizeof(Array));
+    
+    CurWord = EndianValue;
 
     NextChar += sizeof(word_t);
 
