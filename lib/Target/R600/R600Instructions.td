@@ -540,7 +540,7 @@ def INTERP_LOAD_P0 : R600_1OP <0xE0, "INTERP_LOAD_P0", []>;
 // Export Instructions
 //===----------------------------------------------------------------------===//
 
-def ExportType : SDTypeProfile<0, 5, [SDTCisFP<0>, SDTCisInt<1>]>;
+def ExportType : SDTypeProfile<0, 7, [SDTCisFP<0>, SDTCisInt<1>]>;
 
 def EXPORT: SDNode<"AMDGPUISD::EXPORT", ExportType,
   [SDNPHasChain, SDNPSideEffect]>;
@@ -612,22 +612,12 @@ multiclass ExportPattern<Instruction ExportInst, bits<8> cf_inst> {
         (v4f32 (IMPLICIT_DEF)), 1, 60, 7, 7, 7, 7, cf_inst, 0)
   >;
 
-  def : Pat<(EXPORT (v4f32 R600_Reg128:$src), (i32 0),
-    (i32 imm:$type), (i32 imm:$arraybase), (i32 imm)),
-        (ExportInst R600_Reg128:$src, imm:$type, imm:$arraybase,
-        0, 1, 2, 3, cf_inst, 0)
-  >;
-  def : Pat<(EXPORT (v4f32 R600_Reg128:$src), (i32 1),
-    (i32 imm:$type), (i32 imm:$arraybase), (i32 imm)),
-        (ExportInst R600_Reg128:$src, imm:$type, imm:$arraybase,
-        0, 1, 2, 3, cf_inst, 0)
+  def : Pat<(EXPORT (v4f32 R600_Reg128:$src), (i32 imm:$base), (i32 imm:$type),
+    (i32 imm:$swz_x), (i32 imm:$swz_y), (i32 imm:$swz_z), (i32 imm:$swz_w)),
+        (ExportInst R600_Reg128:$src, imm:$type, imm:$base,
+        imm:$swz_x, imm:$swz_y, imm:$swz_z, imm:$swz_w, cf_inst, 0)
   >;
 
-  def : Pat<(int_R600_store_swizzle (v4f32 R600_Reg128:$src), imm:$arraybase,
-      imm:$type),
-    (ExportInst R600_Reg128:$src, imm:$type, imm:$arraybase,
-        0, 1, 2, 3, cf_inst, 0)
-  >;
 }
 
 multiclass SteamOutputExportPattern<Instruction ExportInst,
@@ -654,7 +644,7 @@ multiclass SteamOutputExportPattern<Instruction ExportInst,
       4095, imm:$mask, buf3inst, 0)>;
 }
 
-let isTerminator = 1, usesCustomInserter = 1 in {
+let usesCustomInserter = 1 in {
 
 class ExportSwzInst : InstR600ISA<(
     outs),
@@ -668,7 +658,7 @@ class ExportSwzInst : InstR600ISA<(
   let Inst{63-32} = Word1;
 }
 
-} // End isTerminator = 1, usesCustomInserter = 1
+} // End usesCustomInserter = 1
 
 class ExportBufInst : InstR600ISA<(
     outs),
@@ -1489,6 +1479,10 @@ def VTX_READ_PARAM_16_eg : VTX_READ_16_eg <0,
 
 def VTX_READ_PARAM_32_eg : VTX_READ_32_eg <0,
   [(set (i32 R600_TReg32_X:$dst), (load_param ADDRVTX_READ:$ptr))]
+>;
+
+def VTX_READ_PARAM_128_eg : VTX_READ_128_eg <0,
+  [(set (v4i32 R600_Reg128:$dst), (load_param ADDRVTX_READ:$ptr))]
 >;
 
 //===----------------------------------------------------------------------===//
