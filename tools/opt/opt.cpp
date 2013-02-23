@@ -47,11 +47,6 @@
 
 #include <memory>
 #include <algorithm>
-#include "molly/LinkAllPasses.h"
-#include "molly/RegisterPasses.h"
-
-#include "polly/LinkAllPasses.h"
-#include "polly/RegisterPasses.h"
 
 using namespace llvm;
 
