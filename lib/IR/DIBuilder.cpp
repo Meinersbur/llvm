@@ -76,7 +76,7 @@ static MDNode *getNonCompileUnitScope(MDNode *N) {
 void DIBuilder::createCompileUnit(unsigned Lang, StringRef Filename,
                                   StringRef Directory, StringRef Producer,
                                   bool isOptimized, StringRef Flags,
-                                  unsigned RunTimeVer) {
+                                  unsigned RunTimeVer, StringRef SplitName) {
   assert(((Lang <= dwarf::DW_LANG_Python && Lang >= dwarf::DW_LANG_C89) ||
           (Lang <= dwarf::DW_LANG_hi_user && Lang >= dwarf::DW_LANG_lo_user)) &&
          "Invalid Language tag");
@@ -98,7 +98,7 @@ void DIBuilder::createCompileUnit(unsigned Lang, StringRef Filename,
     MDString::get(VMContext, Filename),
     MDString::get(VMContext, Directory),
     MDString::get(VMContext, Producer),
-    // Deprecate isMain field.
+    // isMain field can be removed when we remove the legacy debug info.
     ConstantInt::get(Type::getInt1Ty(VMContext), true), // isMain
     ConstantInt::get(Type::getInt1Ty(VMContext), isOptimized),
     MDString::get(VMContext, Flags),
@@ -106,7 +106,8 @@ void DIBuilder::createCompileUnit(unsigned Lang, StringRef Filename,
     TempEnumTypes,
     TempRetainTypes,
     TempSubprograms,
-    TempGVs
+    TempGVs,
+    MDString::get(VMContext, SplitName)
   };
   TheCU = DICompileUnit(MDNode::get(VMContext, Elts));
 

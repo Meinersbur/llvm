@@ -118,6 +118,25 @@ private:
   void ExpandFEXT_T8I816_ins(MachineBasicBlock &MBB,
                              MachineBasicBlock::iterator I,
                              unsigned BtOpc, unsigned CmpOpc) const;
+
+  void ExpandFEXT_T8I8I16_ins(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
+    unsigned BtOpc, unsigned CmpiOpc, unsigned CmpiXOpc) const;
+
+  void ExpandFEXT_CCRX16_ins(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
+    unsigned SltOpc) const;
+
+  void ExpandFEXT_CCRXI16_ins(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
+    unsigned SltiOpc, unsigned SltiXOpc) const;
+
+  static unsigned
+    whichOp8_or_16uimm (unsigned shortOp, unsigned longOp, int64_t Imm);
+
+  static unsigned
+    whichOp8u_or_16simm (unsigned shortOp, unsigned longOp, int64_t Imm);
+
 };
 
 }
