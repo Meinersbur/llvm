@@ -3,7 +3,6 @@
 # existence of certain subdirectories under CMAKE_CURRENT_SOURCE_DIR.
 
 function(add_version_info_from_vcs VERS)
-  return()
   string(REPLACE "svn" "" result "${${VERS}}")
   if( EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.svn" )
     set(result "${result}svn")

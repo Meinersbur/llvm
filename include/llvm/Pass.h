@@ -241,7 +241,6 @@ public:
   /// being operated on.
   virtual bool runOnModule(Module &M) = 0;
 
-  //virtual void preparePassManager(PMStack &);
   virtual void assignPassManager(PMStack &PMS,
                                  PassManagerType T);
 

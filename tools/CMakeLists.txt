@@ -8,7 +8,7 @@ if( NOT WIN32 OR MSYS OR CYGWIN )
   add_subdirectory(llvm-config)
 endif()
 
-
+add_subdirectory(opt)
 add_subdirectory(llvm-as)
 add_subdirectory(llvm-dis)
 add_subdirectory(llvm-mc)
@@ -57,10 +57,6 @@ endif()
 add_llvm_external_project(clang)
 add_llvm_external_project(lld)
 add_llvm_external_project(polly)
-#add_subdirectory(polly)
 add_llvm_external_project(molly)
-#add_subdirectory(molly)
-
-add_subdirectory(opt)
 
 set(LLVM_COMMON_DEPENDS ${LLVM_COMMON_DEPENDS} PARENT_SCOPE)

@@ -44,10 +44,8 @@
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
-
-#include <memory>
 #include <algorithm>
-
+#include <memory>
 using namespace llvm;
 
 // The OptimizationList is automatically populated with registered Passes by the
@@ -483,7 +481,6 @@ static void AddStandardLinkPasses(PassManagerBase &PM) {
   Builder.populateLTOPassManager(PM, /*Internalize=*/ !DisableInternalize,
                                  /*RunInliner=*/ !DisableInline);
 }
-
 
 //===----------------------------------------------------------------------===//
 // CodeGen-related helper functions.
