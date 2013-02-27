@@ -40,10 +40,9 @@ def IMM12bit : ImmLeaf <
   [{return isUInt<12>(Imm);}]
 >;
 
-class InlineImm <ValueType vt> : ImmLeaf <vt, [{
-  return -16 <= Imm && Imm <= 64;
+class InlineImm <ValueType vt> : PatLeaf <(vt imm), [{
+  return ((const SITargetLowering &)TLI).analyzeImmediate(N) == 0;
 }]>;
-
 
 //===----------------------------------------------------------------------===//
 // SI assembler operands
@@ -51,6 +50,7 @@ class InlineImm <ValueType vt> : ImmLeaf <vt, [{
 
 def SIOperand {
   int ZERO = 0x80;
+  int VCC = 0x6A;
 }
 
 class GPR4Align <RegisterClass rc> : Operand <vAny> {
@@ -143,13 +143,17 @@ multiclass SMRD_Helper <bits<5> op, string asm, RegisterClass dstClass> {
 // Vector ALU classes
 //===----------------------------------------------------------------------===//
 
+class VOP <string opName> {
+  string OpName = opName;
+}
+
 multiclass VOP1_Helper <bits<8> op, RegisterClass drc, RegisterClass src,
                         string opName, list<dag> pattern> {
 
-  def _e32: VOP1 <
+  def _e32 : VOP1 <
     op, (outs drc:$dst), (ins src:$src0),
     opName#"_e32 $dst, $src0", pattern
-  >;
+  >, VOP <opName>;
 
   def _e64 : VOP3 <
     {1, 1, op{6}, op{5}, op{4}, op{3}, op{2}, op{1}, op{0}},
@@ -158,7 +162,7 @@ multiclass VOP1_Helper <bits<8> op, RegisterClass drc, RegisterClass src,
          i32imm:$abs, i32imm:$clamp,
          i32imm:$omod, i32imm:$neg),
     opName#"_e64 $dst, $src0, $abs, $clamp, $omod, $neg", []
-  > {
+  >, VOP <opName> {
     let SRC1 = SIOperand.ZERO;
     let SRC2 = SIOperand.ZERO;
   }
@@ -175,16 +179,16 @@ multiclass VOP2_Helper <bits<6> op, RegisterClass vrc, RegisterClass arc,
   def _e32 : VOP2 <
     op, (outs vrc:$dst), (ins arc:$src0, vrc:$src1),
     opName#"_e32 $dst, $src0, $src1", pattern
-  >;
+  >, VOP <opName>;
 
   def _e64 : VOP3 <
     {1, 0, 0, op{5}, op{4}, op{3}, op{2}, op{1}, op{0}},
     (outs vrc:$dst),
-    (ins arc:$src0, vrc:$src1,
+    (ins arc:$src0, arc:$src1,
          i32imm:$abs, i32imm:$clamp,
          i32imm:$omod, i32imm:$neg),
     opName#"_e64 $dst, $src0, $src1, $abs, $clamp, $omod, $neg", []
-  > {
+  >, VOP <opName> {
     let SRC2 = SIOperand.ZERO;
   }
 }
@@ -195,25 +199,48 @@ multiclass VOP2_32 <bits<6> op, string opName, list<dag> pattern>
 multiclass VOP2_64 <bits<6> op, string opName, list<dag> pattern>
   : VOP2_Helper <op, VReg_64, VSrc_64, opName, pattern>;
 
+multiclass VOP2b_32 <bits<6> op, string opName, list<dag> pattern> {
+
+  def _e32 : VOP2 <
+    op, (outs VReg_32:$dst), (ins VSrc_32:$src0, VReg_32:$src1),
+    opName#"_e32 $dst, $src0, $src1", pattern
+  >, VOP <opName>;
+
+  def _e64 : VOP3b <
+    {1, 0, 0, op{5}, op{4}, op{3}, op{2}, op{1}, op{0}},
+    (outs VReg_32:$dst),
+    (ins VSrc_32:$src0, VSrc_32:$src1,
+         i32imm:$abs, i32imm:$clamp,
+         i32imm:$omod, i32imm:$neg),
+    opName#"_e64 $dst, $src0, $src1, $abs, $clamp, $omod, $neg", []
+  >, VOP <opName> {
+    let SRC2 = SIOperand.ZERO;
+    /* the VOP2 variant puts the carry out into VCC, the VOP3 variant
+       can write it into any SGPR. We currently don't use the carry out,
+       so for now hardcode it to VCC as well */
+    let SDST = SIOperand.VCC;
+  }
+}
+
 multiclass VOPC_Helper <bits<8> op, RegisterClass vrc, RegisterClass arc,
                         string opName, ValueType vt, PatLeaf cond> {
 
   def _e32 : VOPC <
     op, (ins arc:$src0, vrc:$src1),
     opName#"_e32 $dst, $src0, $src1", []
-  >;
+  >, VOP <opName>;
 
   def _e64 : VOP3 <
     {0, op{7}, op{6}, op{5}, op{4}, op{3}, op{2}, op{1}, op{0}},
     (outs SReg_64:$dst),
-    (ins arc:$src0, vrc:$src1,
+    (ins arc:$src0, arc:$src1,
          InstFlag:$abs, InstFlag:$clamp,
          InstFlag:$omod, InstFlag:$neg),
     opName#"_e64 $dst, $src0, $src1, $abs, $clamp, $omod, $neg",
     !if(!eq(!cast<string>(cond), "COND_NULL"), []<dag>,
-      [(set SReg_64:$dst, (i1 (setcc (vt arc:$src0), vrc:$src1, cond)))]
+      [(set SReg_64:$dst, (i1 (setcc (vt arc:$src0), arc:$src1, cond)))]
     )
-  > {
+  >, VOP <opName> {
     let SRC2 = SIOperand.ZERO;
   }
 }
@@ -228,17 +255,17 @@ multiclass VOPC_64 <bits<8> op, string opName,
 
 class VOP3_32 <bits<9> op, string opName, list<dag> pattern> : VOP3 <
   op, (outs VReg_32:$dst),
-  (ins VSrc_32:$src0, VReg_32:$src1, VReg_32:$src2,
+  (ins VSrc_32:$src0, VSrc_32:$src1, VSrc_32:$src2,
    i32imm:$abs, i32imm:$clamp, i32imm:$omod, i32imm:$neg),
   opName#" $dst, $src0, $src1, $src2, $abs, $clamp, $omod, $neg", pattern
->;
+>, VOP <opName>;
 
 class VOP3_64 <bits<9> op, string opName, list<dag> pattern> : VOP3 <
   op, (outs VReg_64:$dst),
-  (ins VSrc_64:$src0, VReg_64:$src1, VReg_64:$src2,
+  (ins VSrc_64:$src0, VSrc_64:$src1, VSrc_64:$src2,
    i32imm:$abs, i32imm:$clamp, i32imm:$omod, i32imm:$neg),
   opName#" $dst, $src0, $src1, $src2, $abs, $clamp, $omod, $neg", pattern
->;
+>, VOP <opName>;
 
 //===----------------------------------------------------------------------===//
 // Vector I/O classes
@@ -294,6 +321,19 @@ class MIMG_Load_Helper <bits<7> op, string asm> : MIMG <
   []> {
   let mayLoad = 1;
   let mayStore = 0;
+}
+
+//===----------------------------------------------------------------------===//
+// Vector instruction mappings
+//===----------------------------------------------------------------------===//
+
+// Maps an opcode in e32 form to its e64 equivalent
+def getVOPe64 : InstrMapping {
+  let FilterClass = "VOP";
+  let RowFields = ["OpName"];
+  let ColFields = ["Size"];
+  let KeyCol = ["4"];
+  let ValueCols = [["8"]];
 }
 
 include "SIInstructions.td"
