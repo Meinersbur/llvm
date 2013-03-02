@@ -209,6 +209,7 @@ static int CRTReportHook(int ReportType, char *Message, int *Return) {
 #endif
 
 static void RegisterHandler() {
+return;
 #if __MINGW32__ && !defined(__MINGW64_VERSION_MAJOR)
   // On MinGW.org, we need to load up the symbols explicitly, because the
   // Win32 framework they include does not have support for the 64-bit
