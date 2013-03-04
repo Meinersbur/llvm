@@ -116,6 +116,12 @@ static const unsigned TinyTripCountUnrollThreshold = 128;
 /// number of pointers. Notice that the check is quadratic!
 static const unsigned RuntimeMemoryCheckThreshold = 4;
 
+/// We use a metadata with this name  to indicate that a scalar loop was
+/// vectorized and that we don't need to re-vectorize it if we run into it
+/// again.
+static const char*
+AlreadyVectorizedMDName = "llvm.vectorizer.already_vectorized";
+
 namespace {
 
 // Forward declarations.
@@ -1158,6 +1164,11 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
   BasicBlock *BypassBlock = OrigLoop->getLoopPreheader();
   BasicBlock *ExitBlock = OrigLoop->getExitBlock();
   assert(ExitBlock && "Must have an exit block");
+
+  // Mark the old scalar loop with metadata that tells us not to vectorize this
+  // loop again if we run into it.
+  MDNode *MD = MDNode::get(OldBasicBlock->getContext(), ArrayRef<Value*>());
+  OldBasicBlock->getTerminator()->setMetadata(AlreadyVectorizedMDName, MD);
 
   // Some loops have a single integer induction variable, while other loops
   // don't. One example is c++ iterators that often have multiple pointer
@@ -2224,6 +2235,13 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
   BasicBlock *PreHeader = TheLoop->getLoopPreheader();
   BasicBlock *Header = TheLoop->getHeader();
 
+  // If we marked the scalar loop as "already vectorized" then no need
+  // to vectorize it again.
+  if (Header->getTerminator()->getMetadata(AlreadyVectorizedMDName)) {
+    DEBUG(dbgs() << "LV: This loop was vectorized before\n");
+    return false;
+  }
+
   // For each block in the loop.
   for (Loop::block_iterator bb = TheLoop->block_begin(),
        be = TheLoop->block_end(); bb != be; ++bb) {
@@ -2724,6 +2742,9 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
     // Is this a bin op ?
     FoundBinOp |= !isa<PHINode>(Iter);
 
+    // Remember the current instruction.
+    Instruction *OldIter = Iter;
+
     // For each of the *users* of iter.
     for (Value::use_iterator it = Iter->use_begin(), e = Iter->use_end();
          it != e; ++it) {
@@ -2749,7 +2770,7 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
       if (isa<PHINode>(Iter) && isa<PHINode>(U) &&
           U->getParent() != TheLoop->getHeader() &&
           TheLoop->contains(U) &&
-          Iter->getNumUses() > 1)
+          Iter->hasNUsesOrMore(2))
         continue;
 
       // We can't have multiple inside users.
@@ -2768,6 +2789,10 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
 
       Iter = U;
     }
+
+    // If all uses were skipped this can't be a reduction variable.
+    if (Iter == OldIter)
+      return false;
 
     // We found a reduction var if we have reached the original
     // phi node and we only have a single instruction with out-of-loop
