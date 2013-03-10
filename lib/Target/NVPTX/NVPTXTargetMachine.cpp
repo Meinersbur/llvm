@@ -71,8 +71,7 @@ NVPTXTargetMachine::NVPTXTargetMachine(const Target &T,
 : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
   Subtarget(TT, CPU, FS, is64bit),
   DL(Subtarget.getDataLayout()),
-  InstrInfo(*this), TLInfo(*this), TSInfo(*this), FrameLowering(*this,is64bit),
-  STTI(&TLInfo), VTTI(&TLInfo)
+  InstrInfo(*this), TLInfo(*this), TSInfo(*this), FrameLowering(*this,is64bit)
 /*FrameInfo(TargetFrameInfo::StackGrowsUp, 8, 0)*/ {
 }
 
@@ -124,7 +123,6 @@ bool NVPTXPassConfig::addInstSelector() {
   addPass(createSplitBBatBarPass());
   addPass(createAllocaHoisting());
   addPass(createNVPTXISelDag(getNVPTXTargetMachine(), getOptLevel()));
-  addPass(createVectorElementizePass(getNVPTXTargetMachine()));
   return false;
 }
 

@@ -19,6 +19,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
 #include "llvm/CodeGen/GCMetadata.h"
@@ -53,7 +54,6 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
-#include "llvm/TargetTransformInfo.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <algorithm>
 using namespace llvm;
@@ -144,7 +144,12 @@ EnableFastISelVerbose("fast-isel-verbose", cl::Hidden,
                    "instruction selector"));
 static cl::opt<bool>
 EnableFastISelAbort("fast-isel-abort", cl::Hidden,
-          cl::desc("Enable abort calls when \"fast\" instruction fails"));
+          cl::desc("Enable abort calls when \"fast\" instruction selection "
+                   "fails to lower an instruction"));
+static cl::opt<bool>
+EnableFastISelAbortArgs("fast-isel-abort-args", cl::Hidden,
+          cl::desc("Enable abort calls when \"fast\" instruction selection "
+                   "fails to lower a formal argument"));
 
 static cl::opt<bool>
 UseMBPI("use-mbpi",
@@ -354,6 +359,10 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   TTI = getAnalysisIfAvailable<TargetTransformInfo>();
   GFI = Fn.hasGC() ? &getAnalysis<GCModuleInfo>().getFunctionInfo(Fn) : 0;
 
+  TargetSubtargetInfo &ST =
+    const_cast<TargetSubtargetInfo&>(TM.getSubtarget<TargetSubtargetInfo>());
+  ST.resetSubtargetFeatures(MF);
+
   DEBUG(dbgs() << "\n\n\n=== " << Fn.getName() << "\n");
 
   SplitCriticalSideEffectEdges(const_cast<Function&>(Fn), this);
@@ -368,6 +377,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
 
   SDB->init(GFI, *AA, LibInfo);
 
+  MF->setHasMSInlineAsm(false);
   SelectAllBasicBlocks(Fn);
 
   // If the first basic block in the function has live ins that need to be
@@ -438,24 +448,26 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
 
   // Determine if there are any calls in this machine function.
   MachineFrameInfo *MFI = MF->getFrameInfo();
-  if (!MFI->hasCalls()) {
-    for (MachineFunction::const_iterator
-           I = MF->begin(), E = MF->end(); I != E; ++I) {
-      const MachineBasicBlock *MBB = I;
-      for (MachineBasicBlock::const_iterator
-             II = MBB->begin(), IE = MBB->end(); II != IE; ++II) {
-        const MCInstrDesc &MCID = TM.getInstrInfo()->get(II->getOpcode());
+  for (MachineFunction::const_iterator I = MF->begin(), E = MF->end(); I != E;
+       ++I) {
 
-        if ((MCID.isCall() && !MCID.isReturn()) ||
-            II->isStackAligningInlineAsm()) {
-          MFI->setHasCalls(true);
-          goto done;
-        }
+    if (MFI->hasCalls() && MF->hasMSInlineAsm())
+      break;
+
+    const MachineBasicBlock *MBB = I;
+    for (MachineBasicBlock::const_iterator II = MBB->begin(), IE = MBB->end();
+         II != IE; ++II) {
+      const MCInstrDesc &MCID = TM.getInstrInfo()->get(II->getOpcode());
+      if ((MCID.isCall() && !MCID.isReturn()) ||
+          II->isStackAligningInlineAsm()) {
+        MFI->setHasCalls(true);
+      }
+      if (II->isMSInlineAsm()) {
+        MF->setHasMSInlineAsm(true);
       }
     }
   }
 
-  done:
   // Determine if there is a call to setjmp in the machine function.
   MF->setExposesReturnsTwice(Fn.callsFunctionThatReturnsTwice());
 
@@ -1019,22 +1031,16 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       FuncInfo->VisitedBBs.insert(LLVMBB);
     }
 
-    FuncInfo->MBB = FuncInfo->MBBMap[LLVMBB];
-    FuncInfo->InsertPt = FuncInfo->MBB->getFirstNonPHI();
-
     BasicBlock::const_iterator const Begin = LLVMBB->getFirstNonPHI();
     BasicBlock::const_iterator const End = LLVMBB->end();
     BasicBlock::const_iterator BI = End;
 
+    FuncInfo->MBB = FuncInfo->MBBMap[LLVMBB];
     FuncInfo->InsertPt = FuncInfo->MBB->getFirstNonPHI();
 
     // Setup an EH landing-pad block.
     if (FuncInfo->MBB->isLandingPad())
       PrepareEHLandingPad();
-
-    // Lower any arguments needed in this block if this is the entry block.
-    if (LLVMBB == &Fn.getEntryBlock())
-      LowerArguments(LLVMBB);
 
     // Before doing SelectionDAG ISel, see if FastISel has been requested.
     if (FastIS) {
@@ -1043,9 +1049,18 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       // Emit code for any incoming arguments. This must happen before
       // beginning FastISel on the entry block.
       if (LLVMBB == &Fn.getEntryBlock()) {
-        CurDAG->setRoot(SDB->getControlRoot());
-        SDB->clear();
-        CodeGenAndEmitDAG();
+        // Lower any arguments needed in this block if this is the entry block.
+        if (!FastIS->LowerArguments()) {
+          // Fast isel failed to lower these arguments
+          if (EnableFastISelAbortArgs)
+            llvm_unreachable("FastISel didn't lower all arguments");
+
+          // Use SelectionDAG argument lowering
+          LowerArguments(Fn);
+          CurDAG->setRoot(SDB->getControlRoot());
+          SDB->clear();
+          CodeGenAndEmitDAG();
+        }
 
         // If we inserted any instructions at the beginning, make a note of
         // where they are, so we can be sure to emit subsequent instructions
@@ -1156,6 +1171,10 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       }
 
       FastIS->recomputeInsertPt();
+    } else {
+      // Lower any arguments needed in this block if this is the entry block.
+      if (LLVMBB == &Fn.getEntryBlock())
+        LowerArguments(Fn);
     }
 
     if (Begin != BI)
@@ -1650,9 +1669,7 @@ SDNode *SelectionDAGISel::Select_INLINEASM(SDNode *N) {
   std::vector<SDValue> Ops(N->op_begin(), N->op_end());
   SelectInlineAsmMemoryOperands(Ops);
 
-  std::vector<EVT> VTs;
-  VTs.push_back(MVT::Other);
-  VTs.push_back(MVT::Glue);
+  EVT VTs[] = { MVT::Other, MVT::Glue };
   SDValue New = CurDAG->getNode(ISD::INLINEASM, N->getDebugLoc(),
                                 VTs, &Ops[0], Ops.size());
   New->setNodeId(-1);
@@ -2586,11 +2603,11 @@ SelectCodeCommon(SDNode *NodeToMatch, const unsigned char *MatcherTable,
       SDValue Imm = RecordedNodes[RecNo].first;
 
       if (Imm->getOpcode() == ISD::Constant) {
-        int64_t Val = cast<ConstantSDNode>(Imm)->getZExtValue();
-        Imm = CurDAG->getTargetConstant(Val, Imm.getValueType());
+        const ConstantInt *Val=cast<ConstantSDNode>(Imm)->getConstantIntValue();
+        Imm = CurDAG->getConstant(*Val, Imm.getValueType(), true);
       } else if (Imm->getOpcode() == ISD::ConstantFP) {
         const ConstantFP *Val=cast<ConstantFPSDNode>(Imm)->getConstantFPValue();
-        Imm = CurDAG->getTargetConstantFP(*Val, Imm.getValueType());
+        Imm = CurDAG->getConstantFP(*Val, Imm.getValueType(), true);
       }
 
       RecordedNodes.push_back(std::make_pair(Imm, RecordedNodes[RecNo].second));

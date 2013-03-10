@@ -1,5 +1,5 @@
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128"
-; RUN: opt < %s -bb-vectorize -bb-vectorize-req-chain-depth=3 -instcombine -gvn -S | FileCheck %s
+; RUN: opt < %s -bb-vectorize -bb-vectorize-req-chain-depth=3 -bb-vectorize-ignore-target-info -instcombine -gvn -S | FileCheck %s
 
 declare double @llvm.fma.f64(double, double, double)
 declare double @llvm.fmuladd.f64(double, double, double)
@@ -124,8 +124,10 @@ define double @test4(double %A1, double %A2, double %B1, double %B2, i32 %P) {
 ; CHECK: ret double %R
 }
 
-; CHECK: declare <2 x double> @llvm.fma.v2f64(<2 x double>, <2 x double>, <2 x double>) nounwind readnone
-; CHECK: declare <2 x double> @llvm.fmuladd.v2f64(<2 x double>, <2 x double>, <2 x double>) nounwind readnone
-; CHECK: declare <2 x double> @llvm.cos.v2f64(<2 x double>) nounwind readonly
-; CHECK: declare <2 x double> @llvm.powi.v2f64(<2 x double>, i32) nounwind readonly
+; CHECK: declare <2 x double> @llvm.fma.v2f64(<2 x double>, <2 x double>, <2 x double>) #0
+; CHECK: declare <2 x double> @llvm.fmuladd.v2f64(<2 x double>, <2 x double>, <2 x double>) #0
+; CHECK: declare <2 x double> @llvm.cos.v2f64(<2 x double>) #1
+; CHECK: declare <2 x double> @llvm.powi.v2f64(<2 x double>, i32) #1
 
+; CHECK: attributes #0 = { nounwind readnone }
+; CHECK: attributes #1 = { nounwind readonly }

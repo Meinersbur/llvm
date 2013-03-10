@@ -30,8 +30,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_INTERVAL_ITERATOR_H
-#define LLVM_INTERVAL_ITERATOR_H
+#ifndef LLVM_ANALYSIS_INTERVALITERATOR_H
+#define LLVM_ANALYSIS_INTERVALITERATOR_H
 
 #include "llvm/Analysis/IntervalPartition.h"
 #include "llvm/IR/Function.h"
@@ -157,7 +157,7 @@ public:
 private:
   // ProcessInterval - This method is used during the construction of the
   // interval graph.  It walks through the source graph, recursively creating
-  // an interval per invokation until the entire graph is covered.  This uses
+  // an interval per invocation until the entire graph is covered.  This uses
   // the ProcessNode method to add all of the nodes to the interval.
   //
   // This method is templated because it may operate on two different source

@@ -18,7 +18,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
-#include "llvm/DefaultPasses.h"
 #include "llvm/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -215,6 +214,10 @@ void PassManagerBuilder::populateModulePassManager(PassManagerBase &MPM) {
       MPM.add(createGVNPass());                   // Remove redundancies
     else
       MPM.add(createEarlyCSEPass());              // Catch trivial redundancies
+
+    // BBVectorize may have significantly shortened a loop body; unroll again.
+    if (!DisableUnrollLoops)
+      MPM.add(createLoopUnrollPass());
   }
 
   MPM.add(createAggressiveDCEPass());         // Delete dead instructions

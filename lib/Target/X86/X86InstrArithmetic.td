@@ -29,11 +29,11 @@ def LEA32r   : I<0x8D, MRMSrcMem,
 def LEA64_32r : I<0x8D, MRMSrcMem,
                   (outs GR32:$dst), (ins lea64_32mem:$src),
                   "lea{l}\t{$src|$dst}, {$dst|$src}",
-                  [(set GR32:$dst, lea32addr:$src)], IIC_LEA>,
+                  [(set GR32:$dst, lea64_32addr:$src)], IIC_LEA>,
                   Requires<[In64BitMode]>;
 
 let isReMaterializable = 1 in
-def LEA64r   : RI<0x8D, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
+def LEA64r   : RI<0x8D, MRMSrcMem, (outs GR64:$dst), (ins lea64mem:$src),
                   "lea{q}\t{$src|$dst}, {$dst|$src}",
                   [(set GR64:$dst, lea64addr:$src)], IIC_LEA>;
 
@@ -933,60 +933,60 @@ multiclass ArithBinOp_RF<bits<8> BaseOpc, bits<8> BaseOpc2, bits<8> BaseOpc4,
     let Constraints = "$src1 = $dst" in {
       let isCommutable = CommutableRR,
           isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
-        def #NAME#8rr  : BinOpRR_RF<BaseOpc, mnemonic, Xi8 , opnodeflag>;
-        def #NAME#16rr : BinOpRR_RF<BaseOpc, mnemonic, Xi16, opnodeflag>;
-        def #NAME#32rr : BinOpRR_RF<BaseOpc, mnemonic, Xi32, opnodeflag>;
-        def #NAME#64rr : BinOpRR_RF<BaseOpc, mnemonic, Xi64, opnodeflag>;
+        def NAME#8rr  : BinOpRR_RF<BaseOpc, mnemonic, Xi8 , opnodeflag>;
+        def NAME#16rr : BinOpRR_RF<BaseOpc, mnemonic, Xi16, opnodeflag>;
+        def NAME#32rr : BinOpRR_RF<BaseOpc, mnemonic, Xi32, opnodeflag>;
+        def NAME#64rr : BinOpRR_RF<BaseOpc, mnemonic, Xi64, opnodeflag>;
       } // isCommutable
 
-      def #NAME#8rr_REV  : BinOpRR_Rev<BaseOpc2, mnemonic, Xi8>;
-      def #NAME#16rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi16>;
-      def #NAME#32rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi32>;
-      def #NAME#64rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi64>;
+      def NAME#8rr_REV  : BinOpRR_Rev<BaseOpc2, mnemonic, Xi8>;
+      def NAME#16rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi16>;
+      def NAME#32rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi32>;
+      def NAME#64rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi64>;
 
-      def #NAME#8rm   : BinOpRM_RF<BaseOpc2, mnemonic, Xi8 , opnodeflag>;
-      def #NAME#16rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi16, opnodeflag>;
-      def #NAME#32rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi32, opnodeflag>;
-      def #NAME#64rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi64, opnodeflag>;
+      def NAME#8rm   : BinOpRM_RF<BaseOpc2, mnemonic, Xi8 , opnodeflag>;
+      def NAME#16rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi16, opnodeflag>;
+      def NAME#32rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi32, opnodeflag>;
+      def NAME#64rm  : BinOpRM_RF<BaseOpc2, mnemonic, Xi64, opnodeflag>;
 
       let isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
         // NOTE: These are order specific, we want the ri8 forms to be listed
         // first so that they are slightly preferred to the ri forms.
-        def #NAME#16ri8 : BinOpRI8_RF<0x82, mnemonic, Xi16, opnodeflag, RegMRM>;
-        def #NAME#32ri8 : BinOpRI8_RF<0x82, mnemonic, Xi32, opnodeflag, RegMRM>;
-        def #NAME#64ri8 : BinOpRI8_RF<0x82, mnemonic, Xi64, opnodeflag, RegMRM>;
+        def NAME#16ri8 : BinOpRI8_RF<0x82, mnemonic, Xi16, opnodeflag, RegMRM>;
+        def NAME#32ri8 : BinOpRI8_RF<0x82, mnemonic, Xi32, opnodeflag, RegMRM>;
+        def NAME#64ri8 : BinOpRI8_RF<0x82, mnemonic, Xi64, opnodeflag, RegMRM>;
 
-        def #NAME#8ri   : BinOpRI_RF<0x80, mnemonic, Xi8 , opnodeflag, RegMRM>;
-        def #NAME#16ri  : BinOpRI_RF<0x80, mnemonic, Xi16, opnodeflag, RegMRM>;
-        def #NAME#32ri  : BinOpRI_RF<0x80, mnemonic, Xi32, opnodeflag, RegMRM>;
-        def #NAME#64ri32: BinOpRI_RF<0x80, mnemonic, Xi64, opnodeflag, RegMRM>;
+        def NAME#8ri   : BinOpRI_RF<0x80, mnemonic, Xi8 , opnodeflag, RegMRM>;
+        def NAME#16ri  : BinOpRI_RF<0x80, mnemonic, Xi16, opnodeflag, RegMRM>;
+        def NAME#32ri  : BinOpRI_RF<0x80, mnemonic, Xi32, opnodeflag, RegMRM>;
+        def NAME#64ri32: BinOpRI_RF<0x80, mnemonic, Xi64, opnodeflag, RegMRM>;
       }
     } // Constraints = "$src1 = $dst"
 
-    def #NAME#8mr    : BinOpMR_RMW<BaseOpc, mnemonic, Xi8 , opnode>;
-    def #NAME#16mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi16, opnode>;
-    def #NAME#32mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi32, opnode>;
-    def #NAME#64mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi64, opnode>;
+    def NAME#8mr    : BinOpMR_RMW<BaseOpc, mnemonic, Xi8 , opnode>;
+    def NAME#16mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi16, opnode>;
+    def NAME#32mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi32, opnode>;
+    def NAME#64mr   : BinOpMR_RMW<BaseOpc, mnemonic, Xi64, opnode>;
 
     // NOTE: These are order specific, we want the mi8 forms to be listed
     // first so that they are slightly preferred to the mi forms.
-    def #NAME#16mi8  : BinOpMI8_RMW<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi8  : BinOpMI8_RMW<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi8  : BinOpMI8_RMW<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#16mi8  : BinOpMI8_RMW<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi8  : BinOpMI8_RMW<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi8  : BinOpMI8_RMW<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8mi    : BinOpMI_RMW<mnemonic, Xi8 , opnode, MemMRM>;
-    def #NAME#16mi   : BinOpMI_RMW<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi   : BinOpMI_RMW<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi32 : BinOpMI_RMW<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#8mi    : BinOpMI_RMW<mnemonic, Xi8 , opnode, MemMRM>;
+    def NAME#16mi   : BinOpMI_RMW<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi   : BinOpMI_RMW<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi32 : BinOpMI_RMW<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
-                              "{$src, %al|AL, $src}">;
-    def #NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
-                              "{$src, %ax|AX, $src}">;
-    def #NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
-                              "{$src, %eax|EAX, $src}">;
-    def #NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
-                              "{$src, %rax|RAX, $src}">;
+    def NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
+                             "{$src, %al|AL, $src}">;
+    def NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
+                             "{$src, %ax|AX, $src}">;
+    def NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
+                             "{$src, %eax|EAX, $src}">;
+    def NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
+                             "{$src, %rax|RAX, $src}">;
   }
 }
 
@@ -1004,60 +1004,60 @@ multiclass ArithBinOp_RFF<bits<8> BaseOpc, bits<8> BaseOpc2, bits<8> BaseOpc4,
     let Constraints = "$src1 = $dst" in {
       let isCommutable = CommutableRR,
           isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
-        def #NAME#8rr  : BinOpRR_RFF<BaseOpc, mnemonic, Xi8 , opnode>;
-        def #NAME#16rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi16, opnode>;
-        def #NAME#32rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi32, opnode>;
-        def #NAME#64rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi64, opnode>;
+        def NAME#8rr  : BinOpRR_RFF<BaseOpc, mnemonic, Xi8 , opnode>;
+        def NAME#16rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi16, opnode>;
+        def NAME#32rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi32, opnode>;
+        def NAME#64rr : BinOpRR_RFF<BaseOpc, mnemonic, Xi64, opnode>;
       } // isCommutable
 
-      def #NAME#8rr_REV  : BinOpRR_Rev<BaseOpc2, mnemonic, Xi8>;
-      def #NAME#16rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi16>;
-      def #NAME#32rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi32>;
-      def #NAME#64rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi64>;
+      def NAME#8rr_REV  : BinOpRR_Rev<BaseOpc2, mnemonic, Xi8>;
+      def NAME#16rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi16>;
+      def NAME#32rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi32>;
+      def NAME#64rr_REV : BinOpRR_Rev<BaseOpc2, mnemonic, Xi64>;
 
-      def #NAME#8rm   : BinOpRM_RFF<BaseOpc2, mnemonic, Xi8 , opnode>;
-      def #NAME#16rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi16, opnode>;
-      def #NAME#32rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi32, opnode>;
-      def #NAME#64rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi64, opnode>;
+      def NAME#8rm   : BinOpRM_RFF<BaseOpc2, mnemonic, Xi8 , opnode>;
+      def NAME#16rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi16, opnode>;
+      def NAME#32rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi32, opnode>;
+      def NAME#64rm  : BinOpRM_RFF<BaseOpc2, mnemonic, Xi64, opnode>;
 
       let isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
         // NOTE: These are order specific, we want the ri8 forms to be listed
         // first so that they are slightly preferred to the ri forms.
-        def #NAME#16ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi16, opnode, RegMRM>;
-        def #NAME#32ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi32, opnode, RegMRM>;
-        def #NAME#64ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi64, opnode, RegMRM>;
+        def NAME#16ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi16, opnode, RegMRM>;
+        def NAME#32ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi32, opnode, RegMRM>;
+        def NAME#64ri8 : BinOpRI8_RFF<0x82, mnemonic, Xi64, opnode, RegMRM>;
 
-        def #NAME#8ri   : BinOpRI_RFF<0x80, mnemonic, Xi8 , opnode, RegMRM>;
-        def #NAME#16ri  : BinOpRI_RFF<0x80, mnemonic, Xi16, opnode, RegMRM>;
-        def #NAME#32ri  : BinOpRI_RFF<0x80, mnemonic, Xi32, opnode, RegMRM>;
-        def #NAME#64ri32: BinOpRI_RFF<0x80, mnemonic, Xi64, opnode, RegMRM>;
+        def NAME#8ri   : BinOpRI_RFF<0x80, mnemonic, Xi8 , opnode, RegMRM>;
+        def NAME#16ri  : BinOpRI_RFF<0x80, mnemonic, Xi16, opnode, RegMRM>;
+        def NAME#32ri  : BinOpRI_RFF<0x80, mnemonic, Xi32, opnode, RegMRM>;
+        def NAME#64ri32: BinOpRI_RFF<0x80, mnemonic, Xi64, opnode, RegMRM>;
       }
     } // Constraints = "$src1 = $dst"
 
-    def #NAME#8mr    : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi8 , opnode>;
-    def #NAME#16mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi16, opnode>;
-    def #NAME#32mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi32, opnode>;
-    def #NAME#64mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi64, opnode>;
+    def NAME#8mr    : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi8 , opnode>;
+    def NAME#16mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi16, opnode>;
+    def NAME#32mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi32, opnode>;
+    def NAME#64mr   : BinOpMR_RMW_FF<BaseOpc, mnemonic, Xi64, opnode>;
 
     // NOTE: These are order specific, we want the mi8 forms to be listed
     // first so that they are slightly preferred to the mi forms.
-    def #NAME#16mi8  : BinOpMI8_RMW_FF<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi8  : BinOpMI8_RMW_FF<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi8  : BinOpMI8_RMW_FF<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#16mi8  : BinOpMI8_RMW_FF<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi8  : BinOpMI8_RMW_FF<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi8  : BinOpMI8_RMW_FF<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8mi    : BinOpMI_RMW_FF<mnemonic, Xi8 , opnode, MemMRM>;
-    def #NAME#16mi   : BinOpMI_RMW_FF<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi   : BinOpMI_RMW_FF<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi32 : BinOpMI_RMW_FF<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#8mi    : BinOpMI_RMW_FF<mnemonic, Xi8 , opnode, MemMRM>;
+    def NAME#16mi   : BinOpMI_RMW_FF<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi   : BinOpMI_RMW_FF<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi32 : BinOpMI_RMW_FF<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
-                              "{$src, %al|AL, $src}">;
-    def #NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
-                              "{$src, %ax|AX, $src}">;
-    def #NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
-                              "{$src, %eax|EAX, $src}">;
-    def #NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
-                              "{$src, %rax|RAX, $src}">;
+    def NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
+                             "{$src, %al|AL, $src}">;
+    def NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
+                             "{$src, %ax|AX, $src}">;
+    def NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
+                             "{$src, %eax|EAX, $src}">;
+    def NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
+                             "{$src, %rax|RAX, $src}">;
   }
 }
 
@@ -1072,59 +1072,59 @@ multiclass ArithBinOp_F<bits<8> BaseOpc, bits<8> BaseOpc2, bits<8> BaseOpc4,
   let Defs = [EFLAGS] in {
     let isCommutable = CommutableRR,
         isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
-      def #NAME#8rr  : BinOpRR_F<BaseOpc, mnemonic, Xi8 , opnode>;
-      def #NAME#16rr : BinOpRR_F<BaseOpc, mnemonic, Xi16, opnode>;
-      def #NAME#32rr : BinOpRR_F<BaseOpc, mnemonic, Xi32, opnode>;
-      def #NAME#64rr : BinOpRR_F<BaseOpc, mnemonic, Xi64, opnode>;
+      def NAME#8rr  : BinOpRR_F<BaseOpc, mnemonic, Xi8 , opnode>;
+      def NAME#16rr : BinOpRR_F<BaseOpc, mnemonic, Xi16, opnode>;
+      def NAME#32rr : BinOpRR_F<BaseOpc, mnemonic, Xi32, opnode>;
+      def NAME#64rr : BinOpRR_F<BaseOpc, mnemonic, Xi64, opnode>;
     } // isCommutable
 
-    def #NAME#8rr_REV  : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi8>;
-    def #NAME#16rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi16>;
-    def #NAME#32rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi32>;
-    def #NAME#64rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi64>;
+    def NAME#8rr_REV  : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi8>;
+    def NAME#16rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi16>;
+    def NAME#32rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi32>;
+    def NAME#64rr_REV : BinOpRR_F_Rev<BaseOpc2, mnemonic, Xi64>;
 
-    def #NAME#8rm   : BinOpRM_F<BaseOpc2, mnemonic, Xi8 , opnode>;
-    def #NAME#16rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi16, opnode>;
-    def #NAME#32rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi32, opnode>;
-    def #NAME#64rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi64, opnode>;
+    def NAME#8rm   : BinOpRM_F<BaseOpc2, mnemonic, Xi8 , opnode>;
+    def NAME#16rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi16, opnode>;
+    def NAME#32rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi32, opnode>;
+    def NAME#64rm  : BinOpRM_F<BaseOpc2, mnemonic, Xi64, opnode>;
 
     let isConvertibleToThreeAddress = ConvertibleToThreeAddress in {
       // NOTE: These are order specific, we want the ri8 forms to be listed
       // first so that they are slightly preferred to the ri forms.
-      def #NAME#16ri8 : BinOpRI8_F<0x82, mnemonic, Xi16, opnode, RegMRM>;
-      def #NAME#32ri8 : BinOpRI8_F<0x82, mnemonic, Xi32, opnode, RegMRM>;
-      def #NAME#64ri8 : BinOpRI8_F<0x82, mnemonic, Xi64, opnode, RegMRM>;
+      def NAME#16ri8 : BinOpRI8_F<0x82, mnemonic, Xi16, opnode, RegMRM>;
+      def NAME#32ri8 : BinOpRI8_F<0x82, mnemonic, Xi32, opnode, RegMRM>;
+      def NAME#64ri8 : BinOpRI8_F<0x82, mnemonic, Xi64, opnode, RegMRM>;
 
-      def #NAME#8ri   : BinOpRI_F<0x80, mnemonic, Xi8 , opnode, RegMRM>;
-      def #NAME#16ri  : BinOpRI_F<0x80, mnemonic, Xi16, opnode, RegMRM>;
-      def #NAME#32ri  : BinOpRI_F<0x80, mnemonic, Xi32, opnode, RegMRM>;
-      def #NAME#64ri32: BinOpRI_F<0x80, mnemonic, Xi64, opnode, RegMRM>;
+      def NAME#8ri   : BinOpRI_F<0x80, mnemonic, Xi8 , opnode, RegMRM>;
+      def NAME#16ri  : BinOpRI_F<0x80, mnemonic, Xi16, opnode, RegMRM>;
+      def NAME#32ri  : BinOpRI_F<0x80, mnemonic, Xi32, opnode, RegMRM>;
+      def NAME#64ri32: BinOpRI_F<0x80, mnemonic, Xi64, opnode, RegMRM>;
     }
 
-    def #NAME#8mr    : BinOpMR_F<BaseOpc, mnemonic, Xi8 , opnode>;
-    def #NAME#16mr   : BinOpMR_F<BaseOpc, mnemonic, Xi16, opnode>;
-    def #NAME#32mr   : BinOpMR_F<BaseOpc, mnemonic, Xi32, opnode>;
-    def #NAME#64mr   : BinOpMR_F<BaseOpc, mnemonic, Xi64, opnode>;
+    def NAME#8mr    : BinOpMR_F<BaseOpc, mnemonic, Xi8 , opnode>;
+    def NAME#16mr   : BinOpMR_F<BaseOpc, mnemonic, Xi16, opnode>;
+    def NAME#32mr   : BinOpMR_F<BaseOpc, mnemonic, Xi32, opnode>;
+    def NAME#64mr   : BinOpMR_F<BaseOpc, mnemonic, Xi64, opnode>;
 
     // NOTE: These are order specific, we want the mi8 forms to be listed
     // first so that they are slightly preferred to the mi forms.
-    def #NAME#16mi8  : BinOpMI8_F<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi8  : BinOpMI8_F<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi8  : BinOpMI8_F<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#16mi8  : BinOpMI8_F<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi8  : BinOpMI8_F<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi8  : BinOpMI8_F<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8mi    : BinOpMI_F<mnemonic, Xi8 , opnode, MemMRM>;
-    def #NAME#16mi   : BinOpMI_F<mnemonic, Xi16, opnode, MemMRM>;
-    def #NAME#32mi   : BinOpMI_F<mnemonic, Xi32, opnode, MemMRM>;
-    def #NAME#64mi32 : BinOpMI_F<mnemonic, Xi64, opnode, MemMRM>;
+    def NAME#8mi    : BinOpMI_F<mnemonic, Xi8 , opnode, MemMRM>;
+    def NAME#16mi   : BinOpMI_F<mnemonic, Xi16, opnode, MemMRM>;
+    def NAME#32mi   : BinOpMI_F<mnemonic, Xi32, opnode, MemMRM>;
+    def NAME#64mi32 : BinOpMI_F<mnemonic, Xi64, opnode, MemMRM>;
 
-    def #NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
-                              "{$src, %al|AL, $src}">;
-    def #NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
-                              "{$src, %ax|AX, $src}">;
-    def #NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
-                              "{$src, %eax|EAX, $src}">;
-    def #NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
-                              "{$src, %rax|RAX, $src}">;
+    def NAME#8i8   : BinOpAI<BaseOpc4, mnemonic, Xi8 , AL,
+                             "{$src, %al|AL, $src}">;
+    def NAME#16i16 : BinOpAI<BaseOpc4, mnemonic, Xi16, AX,
+                             "{$src, %ax|AX, $src}">;
+    def NAME#32i32 : BinOpAI<BaseOpc4, mnemonic, Xi32, EAX,
+                             "{$src, %eax|EAX, $src}">;
+    def NAME#64i32 : BinOpAI<BaseOpc4, mnemonic, Xi64, RAX,
+                             "{$src, %rax|RAX, $src}">;
   }
 }
 
@@ -1255,4 +1255,50 @@ let Predicates = [HasBMI2] in {
     defm MULX32 : bmi_mulx<"mulx{l}", GR32, i32mem>;
   let Uses = [RDX] in
     defm MULX64 : bmi_mulx<"mulx{q}", GR64, i64mem>, VEX_W;
+}
+
+//===----------------------------------------------------------------------===//
+// ADCX Instruction
+//
+let hasSideEffects = 0, Predicates = [HasADX], Defs = [EFLAGS] in {
+  def ADCX32rr : I<0xF6, MRMSrcReg, (outs GR32:$dst), (ins GR32:$src),
+             "adcx{l}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_NONMEM>, T8, OpSize;
+
+  def ADCX64rr : I<0xF6, MRMSrcReg, (outs GR64:$dst), (ins GR64:$src),
+             "adcx{q}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_NONMEM>, T8, OpSize, REX_W, Requires<[In64BitMode]>;
+
+  let mayLoad = 1 in {
+  def ADCX32rm : I<0xF6, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
+             "adcx{l}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_MEM>, T8, OpSize;
+ 
+  def ADCX64rm : I<0xF6, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
+             "adcx{q}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_MEM>, T8, OpSize, REX_W, Requires<[In64BitMode]>;
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// ADOX Instruction
+//
+let hasSideEffects = 0, Predicates = [HasADX], Defs = [EFLAGS] in {
+  def ADOX32rr : I<0xF6, MRMSrcReg, (outs GR32:$dst), (ins GR32:$src),
+             "adox{l}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_NONMEM>, T8XS;
+
+  def ADOX64rr : I<0xF6, MRMSrcReg, (outs GR64:$dst), (ins GR64:$src),
+             "adox{q}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_NONMEM>, T8XS, REX_W, Requires<[In64BitMode]>;
+
+  let mayLoad = 1 in {
+  def ADOX32rm : I<0xF6, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
+             "adox{l}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_MEM>, T8XS;
+ 
+  def ADOX64rm : I<0xF6, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
+             "adox{q}\t{$src, $dst|$dst, $src}",
+             [], IIC_BIN_MEM>, T8XS, REX_W, Requires<[In64BitMode]>;
+  }
 }

@@ -733,7 +733,8 @@ namespace {
       return Symbols.end();
     }
 
-    RecordStreamer(MCContext &Context) : MCStreamer(Context) {}
+    RecordStreamer(MCContext &Context)
+        : MCStreamer(SK_RecordStreamer, Context) {}
 
     virtual void EmitInstruction(const MCInst &Inst) {
       // Scan for values.
@@ -766,11 +767,12 @@ namespace {
     }
 
     virtual void EmitBundleAlignMode(unsigned AlignPow2) {}
-    virtual void EmitBundleLock() {}
+    virtual void EmitBundleLock(bool AlignToEnd) {}
     virtual void EmitBundleUnlock() {}
 
     // Noop calls.
     virtual void ChangeSection(const MCSection *Section) {}
+    virtual void InitToTextSection() {}
     virtual void InitSections() {}
     virtual void EmitAssemblerFlag(MCAssemblerFlag Flag) {}
     virtual void EmitThumbFunc(MCSymbol *Func) {}
@@ -803,6 +805,10 @@ namespace {
                                           const MCSymbol *Label,
                                           unsigned PointerSize) {}
     virtual void FinishImpl() {}
+
+    static bool classof(const MCStreamer *S) {
+      return S->getKind() == SK_RecordStreamer;
+    }
   };
 } // end anonymous namespace
 

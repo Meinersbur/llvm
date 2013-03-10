@@ -525,6 +525,13 @@ def lea64_32mem : Operand<i32> {
   let ParserMatchClass = X86MemAsmOperand;
 }
 
+// Memory operands that use 64-bit pointers in both ILP32 and LP64.
+def lea64mem : Operand<i64> {
+  let PrintMethod = "printi64mem";
+  let MIOperandInfo = (ops GR64, i8imm, GR64_NOSP, i32imm, i8imm);
+  let ParserMatchClass = X86MemAsmOperand;
+}
+
 
 //===----------------------------------------------------------------------===//
 // X86 Complex Pattern Definitions.
@@ -535,6 +542,12 @@ def addr      : ComplexPattern<iPTR, 5, "SelectAddr", [], [SDNPWantParent]>;
 def lea32addr : ComplexPattern<i32, 5, "SelectLEAAddr",
                                [add, sub, mul, X86mul_imm, shl, or, frameindex],
                                []>;
+// In 64-bit mode 32-bit LEAs can use RIP-relative addressing.
+def lea64_32addr : ComplexPattern<i32, 5, "SelectLEAAddr",
+                                  [add, sub, mul, X86mul_imm, shl, or,
+                                   frameindex, X86WrapperRIP],
+                                  []>;
+
 def tls32addr : ComplexPattern<i32, 5, "SelectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
@@ -590,6 +603,7 @@ def HasLZCNT     : Predicate<"Subtarget->hasLZCNT()">;
 def HasBMI       : Predicate<"Subtarget->hasBMI()">;
 def HasBMI2      : Predicate<"Subtarget->hasBMI2()">;
 def HasRTM       : Predicate<"Subtarget->hasRTM()">;
+def HasADX       : Predicate<"Subtarget->hasADX()">;
 def FPStackf32   : Predicate<"!Subtarget->hasSSE1()">;
 def FPStackf64   : Predicate<"!Subtarget->hasSSE2()">;
 def HasCmpxchg16b: Predicate<"Subtarget->hasCmpxchg16b()">;
@@ -856,16 +870,14 @@ let Defs = [RSP], Uses = [RSP, EFLAGS], mayStore = 1, neverHasSideEffects=1 in
 def PUSHF64    : I<0x9C, RawFrm, (outs), (ins), "pushfq", [], IIC_PUSH_F>,
                  Requires<[In64BitMode]>;
 
-
-
 let Defs = [EDI, ESI, EBP, EBX, EDX, ECX, EAX, ESP], Uses = [ESP],
     mayLoad=1, neverHasSideEffects=1 in {
-def POPA32   : I<0x61, RawFrm, (outs), (ins), "popa{l}", [], IIC_POP_A>,
+def POPA32   : I<0x61, RawFrm, (outs), (ins), "popa{l|d}", [], IIC_POP_A>,
                Requires<[In32BitMode]>;
 }
 let Defs = [ESP], Uses = [EDI, ESI, EBP, EBX, EDX, ECX, EAX, ESP],
     mayStore=1, neverHasSideEffects=1 in {
-def PUSHA32  : I<0x60, RawFrm, (outs), (ins), "pusha{l}", [], IIC_PUSH_A>,
+def PUSHA32  : I<0x60, RawFrm, (outs), (ins), "pusha{l|d}", [], IIC_PUSH_A>,
                Requires<[In32BitMode]>;
 }
 
@@ -1304,34 +1316,34 @@ def BTS64mi8 : RIi8<0xBA, MRM5m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
 multiclass ATOMIC_SWAP<bits<8> opc8, bits<8> opc, string mnemonic, string frag,
                        InstrItinClass itin> {
   let Constraints = "$val = $dst" in {
-    def #NAME#8rm  : I<opc8, MRMSrcMem, (outs GR8:$dst),
-                       (ins GR8:$val, i8mem:$ptr),
-                       !strconcat(mnemonic, "{b}\t{$val, $ptr|$ptr, $val}"),
+    def NAME#8rm  : I<opc8, MRMSrcMem, (outs GR8:$dst),
+                      (ins GR8:$val, i8mem:$ptr),
+                      !strconcat(mnemonic, "{b}\t{$val, $ptr|$ptr, $val}"),
+                      [(set
+                         GR8:$dst,
+                         (!cast<PatFrag>(frag # "_8") addr:$ptr, GR8:$val))],
+                      itin>;
+    def NAME#16rm : I<opc, MRMSrcMem, (outs GR16:$dst),
+                      (ins GR16:$val, i16mem:$ptr),
+                      !strconcat(mnemonic, "{w}\t{$val, $ptr|$ptr, $val}"),
+                      [(set
+                         GR16:$dst,
+                         (!cast<PatFrag>(frag # "_16") addr:$ptr, GR16:$val))],
+                      itin>, OpSize;
+    def NAME#32rm : I<opc, MRMSrcMem, (outs GR32:$dst),
+                      (ins GR32:$val, i32mem:$ptr),
+                      !strconcat(mnemonic, "{l}\t{$val, $ptr|$ptr, $val}"),
+                      [(set
+                         GR32:$dst,
+                         (!cast<PatFrag>(frag # "_32") addr:$ptr, GR32:$val))],
+                      itin>;
+    def NAME#64rm : RI<opc, MRMSrcMem, (outs GR64:$dst),
+                       (ins GR64:$val, i64mem:$ptr),
+                       !strconcat(mnemonic, "{q}\t{$val, $ptr|$ptr, $val}"),
                        [(set
-                          GR8:$dst,
-                          (!cast<PatFrag>(frag # "_8") addr:$ptr, GR8:$val))],
+                         GR64:$dst,
+                         (!cast<PatFrag>(frag # "_64") addr:$ptr, GR64:$val))],
                        itin>;
-    def #NAME#16rm : I<opc, MRMSrcMem, (outs GR16:$dst),
-                       (ins GR16:$val, i16mem:$ptr),
-                       !strconcat(mnemonic, "{w}\t{$val, $ptr|$ptr, $val}"),
-                       [(set
-                          GR16:$dst,
-                          (!cast<PatFrag>(frag # "_16") addr:$ptr, GR16:$val))],
-                       itin>, OpSize;
-    def #NAME#32rm : I<opc, MRMSrcMem, (outs GR32:$dst),
-                       (ins GR32:$val, i32mem:$ptr),
-                       !strconcat(mnemonic, "{l}\t{$val, $ptr|$ptr, $val}"),
-                       [(set
-                          GR32:$dst,
-                          (!cast<PatFrag>(frag # "_32") addr:$ptr, GR32:$val))],
-                       itin>;
-    def #NAME#64rm : RI<opc, MRMSrcMem, (outs GR64:$dst),
-                        (ins GR64:$val, i64mem:$ptr),
-                        !strconcat(mnemonic, "{q}\t{$val, $ptr|$ptr, $val}"),
-                        [(set
-                          GR64:$dst,
-                          (!cast<PatFrag>(frag # "_64") addr:$ptr, GR64:$val))],
-                        itin>;
   }
 }
 

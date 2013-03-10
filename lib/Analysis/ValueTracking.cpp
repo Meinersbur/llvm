@@ -1396,10 +1396,10 @@ bool llvm::CannotBeNegativeZero(const Value *V, unsigned Depth) {
       return true;
 
   // (add x, 0.0) is guaranteed to return +0.0, not -0.0.
-  if (I->getOpcode() == Instruction::FAdd &&
-      isa<ConstantFP>(I->getOperand(1)) &&
-      cast<ConstantFP>(I->getOperand(1))->isNullValue())
-    return true;
+  if (I->getOpcode() == Instruction::FAdd)
+    if (ConstantFP *CFP = dyn_cast<ConstantFP>(I->getOperand(1)))
+      if (CFP->isNullValue())
+        return true;
 
   // sitofp and uitofp turn into +0.0 for zero.
   if (isa<SIToFPInst>(I) || isa<UIToFPInst>(I))
@@ -1510,7 +1510,7 @@ static Value *BuildSubAggregate(Value *From, Value* To, Type *IndexedType,
                                 SmallVector<unsigned, 10> &Idxs,
                                 unsigned IdxSkip,
                                 Instruction *InsertBefore) {
-  llvm::StructType *STy = llvm::dyn_cast<llvm::StructType>(IndexedType);
+  llvm::StructType *STy = dyn_cast<llvm::StructType>(IndexedType);
   if (STy) {
     // Save the original To argument so we can modify it
     Value *OrigTo = To;
@@ -1671,8 +1671,10 @@ Value *llvm::FindInsertedValue(Value *V, ArrayRef<unsigned> idx_range,
 /// it can be expressed as a base pointer plus a constant offset.  Return the
 /// base and offset to the caller.
 Value *llvm::GetPointerBaseWithConstantOffset(Value *Ptr, int64_t &Offset,
-                                              const DataLayout &TD) {
-  unsigned BitWidth = TD.getPointerSizeInBits();
+                                              const DataLayout *TD) {
+  // Without DataLayout, conservatively assume 64-bit offsets, which is
+  // the widest we support.
+  unsigned BitWidth = TD ? TD->getPointerSizeInBits() : 64;
   APInt ByteOffset(BitWidth, 0);
   while (1) {
     if (Ptr->getType()->isVectorTy())
@@ -1680,7 +1682,7 @@ Value *llvm::GetPointerBaseWithConstantOffset(Value *Ptr, int64_t &Offset,
 
     if (GEPOperator *GEP = dyn_cast<GEPOperator>(Ptr)) {
       APInt GEPOffset(BitWidth, 0);
-      if (!GEP->accumulateConstantOffset(TD, GEPOffset))
+      if (TD && !GEP->accumulateConstantOffset(*TD, GEPOffset))
         break;
       ByteOffset += GEPOffset;
       Ptr = GEP->getPointerOperand();
@@ -2011,4 +2013,20 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
   case Instruction::Resume:
     return false; // Misc instructions which have effects
   }
+}
+
+/// isKnownNonNull - Return true if we know that the specified value is never
+/// null.
+bool llvm::isKnownNonNull(const Value *V) {
+  // Alloca never returns null, malloc might.
+  if (isa<AllocaInst>(V)) return true;
+
+  // A byval argument is never null.
+  if (const Argument *A = dyn_cast<Argument>(V))
+    return A->hasByValAttr();
+
+  // Global values are not null unless extern weak.
+  if (const GlobalValue *GV = dyn_cast<GlobalValue>(V))
+    return !GV->hasExternalWeakLinkage();
+  return false;
 }
