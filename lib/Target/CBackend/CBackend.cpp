@@ -557,12 +557,18 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
     ArrayType *ATy = cast<ArrayType>(Ty);
     unsigned NumElements = ATy->getNumElements();
     if (NumElements == 0) NumElements = 1;
-    // Arrays are wrapped in structs to allow them to have normal
-    // value semantics (avoiding the array "decay").
-    Out << "struct { ";
-    printType(Out, ATy->getElementType(), false,
-              "array[" + utostr(NumElements) + "]");
-    return Out << "; } " << NameSoFar << " ";
+
+    // Question: would a non-array always be a bottom type,
+    //  (which implies we should print the array name afterwards)
+    bool bottom_type = true;
+    if (ATy->getElementType()->getTypeID() == Type::ArrayTyID) {
+      bottom_type = false;
+    }
+
+    // only !IgnoreName on the bottom type
+    printType(Out, ATy->getElementType(), isSigned, NameSoFar, !bottom_type);
+    Out << "[" + utostr(NumElements) + "]";
+    return Out;
   }
 
   default:
@@ -1761,10 +1767,11 @@ bool CWriter::doInitialization(Module &M) {
 
       if (I->getType()->getElementType()->isArrayTy()) {
         if (nameToType.find(GetValueName(I)) == nameToType.end() ) {
-          Out << "typedef ";
-          printType(Out, I->getType()->getElementType(), false, GetValueName(I) + std::string("_t"));
-          nameToType[GetValueName(I)] = GetValueName(I) + std::string("_t");
-          Out << ";\n";
+	  Out << "typedef ";
+	  std::string newType = GetValueName(I) + "_t";
+          printType(Out, I->getType()->getElementType(), true, GetValueName(I));
+          nameToType[GetValueName(I)] = newType;
+          Out << " " << newType << ";\n";
          }
       }
 
@@ -3076,7 +3083,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID,
     // If this is an intrinsic that directly corresponds to a GCC
     // builtin, we emit it here.
     const char *BuiltinName = "";
-    Function *F = I.getCalledFunction();
+    //unused, stop warning: Function *F = I.getCalledFunction();
 #define GET_GCC_BUILTIN_NAME
 #include "llvm/Intrinsics.gen"
 #undef GET_GCC_BUILTIN_NAME
