@@ -67,6 +67,8 @@ extern "C" void LLVMInitializeCBackendTarget() {
   RegisterTargetMachine<CTargetMachine> X(TheCBackendTarget);
 }
 
+//char* env_cbe_arrays_within_struct = getenv("CBE_ARRAYS_WITHIN_STRUCT");
+
 namespace {
   class CBEMCAsmInfo : public MCAsmInfo {
   public:
@@ -160,7 +162,8 @@ namespace {
                            bool isSigned = true,
                            const std::string &VariableName = "",
                            bool IgnoreName = false,
-                           const AttributeSet &PAL = AttributeSet());
+                           const AttributeSet &PAL = AttributeSet(),
+			   bool isTypedef = false);
     raw_ostream &printSimpleType(raw_ostream &Out, Type *Ty,
                                  bool isSigned,
                                  const std::string &NameSoFar = "");
@@ -465,12 +468,15 @@ CWriter::printSimpleType(raw_ostream &Out, Type *Ty, bool isSigned,
   }
 }
 
+
+
 // Pass the Type* and the variable name and this prints out the variable
 // declaration.
 //
 raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
                                 bool isSigned, const std::string &NameSoFar,
-                                bool IgnoreName, const AttributeSet &PAL) {
+                                bool IgnoreName, const AttributeSet &PAL,
+				bool isTypedef) {
   if (Ty->isPrimitiveType() || Ty->isIntegerTy() || Ty->isVectorTy()) {
     printSimpleType(Out, Ty, isSigned, NameSoFar);
     return Out;
@@ -514,8 +520,9 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
     StructType *STy = cast<StructType>(Ty);
 
     // Check to see if the type is named.
-    if (!IgnoreName)
+    if (!IgnoreName) {
       return Out << getStructName(STy) << ' ' << NameSoFar;
+    }
 
     Out << "struct " + NameSoFar + " {\n";
     unsigned Idx = 0;
@@ -558,16 +565,26 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
     unsigned NumElements = ATy->getNumElements();
     if (NumElements == 0) NumElements = 1;
 
-    // Question: would a non-array always be a bottom type,
-    //  (which implies we should print the array name afterwards)
-    bool bottom_type = true;
-    if (ATy->getElementType()->getTypeID() == Type::ArrayTyID) {
-      bottom_type = false;
+    if (true) { //env_cbe_arrays_within_struct)
+      // Arrays are wrapped in structs to allow them to have normal
+      // value semantics (avoiding the array "decay").
+      Out << "struct { ";
+      printType(Out, ATy->getElementType(), false,
+		"array[" + utostr(NumElements) + "]");
+      Out << "; } " << NameSoFar << " ";
+      
+    } else {
+      // Simpler more readable output, but arrays will get
+      // passed by reference, which could have untested consequences.
+      printType(Out, ATy->getElementType(), 
+		isSigned, 
+		NameSoFar, 
+		bool(ATy->getElementType()->getTypeID() == Type::ArrayTyID), 
+		AttributeSet(), 
+		isTypedef);
+      Out << "[" + utostr(NumElements) + "]";
     }
-
-    // only !IgnoreName on the bottom type
-    printType(Out, ATy->getElementType(), isSigned, NameSoFar, !bottom_type);
-    Out << "[" + utostr(NumElements) + "]";
+    
     return Out;
   }
 
@@ -1767,12 +1784,12 @@ bool CWriter::doInitialization(Module &M) {
 
       if (I->getType()->getElementType()->isArrayTy()) {
         if (nameToType.find(GetValueName(I)) == nameToType.end() ) {
-	  Out << "typedef ";
-	  std::string newType = GetValueName(I) + "_t";
-          printType(Out, I->getType()->getElementType(), true, GetValueName(I));
+          Out << "typedef ";
+	  std::string newType = GetValueName(I) + std::string("_t");
+          printType(Out, I->getType()->getElementType(), false, newType);
           nameToType[GetValueName(I)] = newType;
-          Out << " " << newType << ";\n";
-         }
+          Out << ";\n";
+	}
       }
 
       if (I->hasExternalLinkage() || I->hasExternalWeakLinkage() || I->hasCommonLinkage())
