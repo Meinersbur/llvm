@@ -831,7 +831,7 @@ PPCFrameLowering::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   //        r0 for now.
 
   if (RegInfo->requiresRegisterScavenging(MF))
-    if (needsFP(MF) || spillsCR(MF)) {
+    if (MFI->hasVarSizedObjects() || spillsCR(MF)) {
       const TargetRegisterClass *GPRC = &PPC::GPRCRegClass;
       const TargetRegisterClass *G8RC = &PPC::G8RCRegClass;
       const TargetRegisterClass *RC = isPPC64 ? G8RC : GPRC;
@@ -841,8 +841,8 @@ PPCFrameLowering::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
     }
 }
 
-void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF)
-                                                                        const {
+void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
+                                                         RegScavenger *) const {
   // Early exit if not using the SVR4 ABI.
   if (!Subtarget.isSVR4ABI())
     return;

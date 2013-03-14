@@ -44,7 +44,8 @@ public:
 
   void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
                                             RegScavenger *RS = NULL) const;
-  void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
+  void processFunctionBeforeFrameFinalized(MachineFunction &MF,
+                                       RegScavenger *RS = NULL) const;
 
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
@@ -143,6 +144,9 @@ public:
       NumEntries = 0;
       return 0;
     }
+
+    // Note that the offsets here overlap, but this is fixed up in
+    // processFunctionBeforeFrameFinalized.
 
     static const SpillSlot Offsets[] = {
       // Floating-point register save area offsets.
