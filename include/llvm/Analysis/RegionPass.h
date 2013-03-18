@@ -28,7 +28,6 @@ namespace llvm {
 class RGPassManager;
 class Function;
 
-
 //===----------------------------------------------------------------------===//
 /// @brief A pass that runs on each Region in a function.
 ///
@@ -125,13 +124,8 @@ public:
   }
 
 // BEGIN Molly
-private:
-  //SmallVector<RegionPassResults*, 4> PassResults;
-
 public:
-  //~RGPassManager();
-  void addAnalysisToRemember(Pass *representive, Region *region, Pass *pass);
-  //Pass *getAnalyisFor(Pass *representive, Region *region);
+  void addAnalysisToRemember(RegionPass *representive, Region *region, RegionPass *pass);
 // END Molly
 };
 

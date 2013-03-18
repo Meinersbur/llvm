@@ -100,8 +100,9 @@ namespace llvm {
   class Timer;
   class PMDataManager;
 // BEGIN Molly
-  class FunctionPassResults;
+  class RegionPass;
   class RegionPassResults;
+  class FunctionPassResults;
 // END Molly
 
 // enums for debugging strings
@@ -271,8 +272,11 @@ public:
   void registerAvailableAnalysis(Pass *P);
 
   DenseMap<Pass*, RegionPassResults*> AvailableRegionResults;
-  Pass *getAnalysis(Pass *Requester, AnalysisID PI, Region &R);
-  void rememberAnalysis(Pass *Representative, Pass *P, Region &R);
+  DenseMap<Pass*, FunctionPassResults*> AvailableFunctionResults;
+  RegionPass *getAnalysis(AnalysisID, Region &);
+  FunctionPass *getAnalysis(AnalysisID, Function &);
+  void rememberAnalysis(RegionPass *Representative, RegionPass *P, Region &R);
+  void rememberAnalysis(FunctionPass *, FunctionPass *, Function &);
   void removeNotPreservedAnalysis(Pass *P);
   void removeDeadPasses(ArrayRef<Pass*> Passes, Pass *LastPass);
   // END Molly
@@ -424,18 +428,6 @@ private:
   // BEGIN Molly
   public: 
     bool needToRememberPass(Pass *pass);
-#if 0
-  public:
-    //DenseSet<Pass*> RememberPasses;
-
-    bool doRememberPass(Pass *pass) {
-      return RememberPasses.find(pass)!=RememberPasses.end();
-    }
-
-  void setRememberAnalysis(Pass *pass) {
-    RememberPasses.insert(pass);
-  }
-#endif
   // END Molly
 };
 
@@ -502,6 +494,10 @@ public:
   virtual PassManagerType getPassManagerType() const {
     return PMT_FunctionPassManager;
   }
+
+// BEGIN Molly
+  void addAnalysisToRemember(FunctionPass *Representative, Function *, FunctionPass *Pass);
+// END Molly
 };
 
 Timer *getPassTimer(Pass *);
