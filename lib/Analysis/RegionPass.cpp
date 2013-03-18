@@ -68,13 +68,13 @@ bool RGPassManager::runOnFunction(Function &F) {
     Region *R = *I;
     for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
       RegionPass *RP = (RegionPass *)getContainedPass(Index);
-      Changed |= RP->doInitialization(R, *this);
+      Changed |= RP->doInitialization(R, *this); //TODO: Unessary if needToRememberPass(P)
     }
   }
 
   // Walk Regions
   while (!RQ.empty()) {
-
+    bool LocalChanged = false;
     CurrentRegion  = RQ.back();
     skipThisRegion = false;
     redoThisRegion = false;
@@ -82,6 +82,18 @@ bool RGPassManager::runOnFunction(Function &F) {
     // Run all passes on the current Region.
     for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
       RegionPass *P = (RegionPass*)getContainedPass(Index);
+// BEGIN Molly
+      RegionPass *RealPass = P;
+      bool rememberPass = false;
+      if (needToRememberPass(P)) {
+        rememberPass = true;
+        // Create an on-the-fly pass that we don't have to clear for the next region
+        auto ID = P->getPassID();
+        const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(ID);
+        RealPass = static_cast<RegionPass*>(PI->createPass());
+        LocalChanged |= P->doInitialization(CurrentRegion, *this);
+      }
+// END Molly
 
       dumpPassInfo(P, EXECUTION_MSG, ON_REGION_MSG,
                    CurrentRegion->getNameStr());
@@ -93,11 +105,12 @@ bool RGPassManager::runOnFunction(Function &F) {
         PassManagerPrettyStackEntry X(P, *CurrentRegion->getEntry());
 
         TimeRegion PassTimer(getPassTimer(P));
-        Changed |= P->runOnRegion(CurrentRegion, *this);
+        LocalChanged |= RealPass->runOnRegion(CurrentRegion, *this);
       }
 
-      if (Changed)
-        dumpPassInfo(P, MODIFICATION_MSG, ON_REGION_MSG,
+      Changed |= LocalChanged;
+      if (LocalChanged)
+        dumpPassInfo(RealPass, MODIFICATION_MSG, ON_REGION_MSG,
                      skipThisRegion ? "<deleted>" :
                                     CurrentRegion->getNameStr());
       dumpPreservedSet(P);
@@ -117,12 +130,24 @@ bool RGPassManager::runOnFunction(Function &F) {
         verifyPreservedAnalysis(P);
       }
 
-      removeNotPreservedAnalysis(P);
+      if (LocalChanged) 
+        removeNotPreservedAnalysis(P);
       recordAvailableAnalysis(P);
+      // BEGIN Molly
+      if (rememberPass) {
+          addAnalysisToRemember(P, CurrentRegion, RealPass);
+      } 
+      // END Molly
       removeDeadPasses(P,
                        skipThisRegion ? "<deleted>" :
                                       CurrentRegion->getNameStr(),
                        ON_REGION_MSG);
+
+      // BEGIN Molly
+      if (rememberPass) {
+        Changed |= P->doFinalization();
+      }
+      // END
 
       if (skipThisRegion)
         // Do not run other passes on this region.
@@ -151,7 +176,7 @@ bool RGPassManager::runOnFunction(Function &F) {
   // Finalization
   for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
     RegionPass *P = (RegionPass*)getContainedPass(Index);
-    Changed |= P->doFinalization();
+    Changed |= P->doFinalization(); //TODO: Unessary if needToRememberPass(P)
   }
 
   // Print the region tree after all pass.
@@ -174,6 +199,50 @@ void RGPassManager::dumpPassStructure(unsigned Offset) {
     dumpLastUses(P, Offset+1);
   }
 }
+
+
+// BEGIN Molly
+#if 0
+RGPassManager::~RGPassManager() {
+  for (auto it = PassResults.begin(), end = PassResults.end(); it!=end; ++it) 
+    delete *it;
+}
+#endif
+
+void RGPassManager::addAnalysisToRemember(Pass *representive, Region *region, Pass *pass) {
+ auto AR = getResolver();
+ assert(AR && "Must be added to a PassManager");
+ auto TLM = AR->getPMDataManager().getTopLevelManager();
+ TLM->rememberAnalysis(representive, pass, *region);
+
+#if 0
+  RegionPassResults *results;
+  for (auto it = PassResults.begin(), end = PassResults.end(); it!=end; ++it) {
+    auto result = *it;
+    if (result->getRepresentivePass() == representive)
+      results = result;
+  }
+
+  if (!results)
+    results = new RegionPassResults(representive); // no results for this pass yet, ass it
+
+  results->setAnalysisFor(region, pass);
+#endif
+}
+
+#if 0
+Pass *RGPassManager::getAnalyisFor(Pass *representive, Region *region) {
+  for (auto it = PassResults.begin(), end = PassResults.end(); it!=end; ++it) {
+    auto result = *it;
+    if (result->getRepresentivePass() == representive)
+      return result->getAnalyisFor(region);
+  }
+  // AnalysisID not found, therefore we have no stored analysis
+  return NULL;
+}
+#endif
+// END Molly
+
 
 namespace {
 //===----------------------------------------------------------------------===//

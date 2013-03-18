@@ -290,7 +290,7 @@ static bool shouldUseMmap(int FD,
                           size_t MapSize,
                           off_t Offset,
                           bool RequiresNullTerminator,
-                          int PageSize) {
+                          int PageSize) { return false;
   // We don't use mmap for small files because this can severely fragment our
   // address space.
   if (MapSize < 4096*4)

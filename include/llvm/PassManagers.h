@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Pass.h"
+#include "llvm/ADT/DenseSet.h"
 #include <map>
 #include <vector>
 
@@ -98,6 +99,10 @@ namespace llvm {
   class Value;
   class Timer;
   class PMDataManager;
+// BEGIN Molly
+  class FunctionPassResults;
+  class RegionPassResults;
+// END Molly
 
 // enums for debugging strings
 enum PassDebuggingString {
@@ -185,6 +190,11 @@ public:
   void schedulePass(Pass *P);
 
   /// Set pass P as the last user of the given analysis passes.
+// BEGIN Molly
+private:
+  void setLastUserOf(Pass* AnalysisPass, Pass *P);
+public:
+// END Molly
   void setLastUser(ArrayRef<Pass*> AnalysisPasses, Pass *P);
 
   /// Collect passes whose last user is P
@@ -251,8 +261,22 @@ private:
   SmallVector<ImmutablePass *, 8> ImmutablePasses;
 
   DenseMap<Pass *, AnalysisUsage *> AnUsageMap;
-};
 
+  // BEGIN Molly
+public:
+  SmallPtrSet<Pass*, 12> RememberPasses;
+  bool needToRememberPass(Pass *);
+
+  DenseMap<AnalysisID, Pass*> IDToLastAnalysis; //TDODO: Rename AvailableAnalyses
+  void registerAvailableAnalysis(Pass *P);
+
+  DenseMap<Pass*, RegionPassResults*> AvailableRegionResults;
+  Pass *getAnalysis(Pass *Requester, AnalysisID PI, Region &R);
+  void rememberAnalysis(Pass *Representative, Pass *P, Region &R);
+  void removeNotPreservedAnalysis(Pass *P);
+  void removeDeadPasses(ArrayRef<Pass*> Passes, Pass *LastPass);
+  // END Molly
+};
 
 
 //===----------------------------------------------------------------------===//
@@ -396,6 +420,23 @@ private:
   SmallVector<Pass *, 8> HigherLevelAnalysis;
 
   unsigned Depth;
+
+  // BEGIN Molly
+  public: 
+    bool needToRememberPass(Pass *pass);
+#if 0
+  public:
+    //DenseSet<Pass*> RememberPasses;
+
+    bool doRememberPass(Pass *pass) {
+      return RememberPasses.find(pass)!=RememberPasses.end();
+    }
+
+  void setRememberAnalysis(Pass *pass) {
+    RememberPasses.insert(pass);
+  }
+#endif
+  // END Molly
 };
 
 //===----------------------------------------------------------------------===//

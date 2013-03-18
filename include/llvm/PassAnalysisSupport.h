@@ -25,6 +25,7 @@
 #include <vector>
 
 namespace llvm {
+  class Region;
 
 //===----------------------------------------------------------------------===//
 // AnalysisUsage - Represent the analysis usage information of a pass.  This
@@ -165,6 +166,11 @@ private:
 
   // PassManager that is used to resolve analysis info
   PMDataManager &PM;
+
+  // BEGIN Molly
+public:
+  Pass *findImplPass(Pass *P, AnalysisID PI, Region &R);
+  // END Molly
 };
 
 /// getAnalysisIfAvailable<AnalysisType>() - Subclasses use this function to
@@ -247,6 +253,19 @@ AnalysisType &Pass::getAnalysisID(AnalysisID PI, Function &F) {
   // from pass, once from AnalysisType).
   return *(AnalysisType*)ResultPass->getAdjustedAnalysisPointer(PI);
 }
+
+// BEGIN Molly
+  template<typename AnalysisType>
+  AnalysisType &Pass::getAnalysis(Region &R) {
+    return getAnalysisID<AnalysisType>(&AnalysisType::ID, R);
+  }
+
+  template<typename AnalysisType>
+  AnalysisType &Pass::getAnalysisID(AnalysisID PI, Region &R) {
+     Pass *ResultPass = Resolver->findImplPass(this, PI, R);
+     return *(AnalysisType*)ResultPass->getAdjustedAnalysisPointer(PI);
+  }
+// END Molly
 
 } // End llvm namespace
 

@@ -45,6 +45,7 @@ class AnalysisResolver;
 class PMDataManager;
 class raw_ostream;
 class StringRef;
+class Region;
 
 // AnalysisID - Use the PassInfo to identify a pass...
 typedef const void* AnalysisID;
@@ -224,6 +225,14 @@ public:
 
   template<typename AnalysisType>
   AnalysisType &getAnalysisID(AnalysisID PI, Function &F);
+
+  // BEGIN Molly
+  template<typename AnalysisType>
+  AnalysisType &getAnalysis(Region &R);
+
+  template<typename AnalysisType>
+  AnalysisType &getAnalysisID(AnalysisID PI, Region &R);
+  // END Molly
 };
 
 

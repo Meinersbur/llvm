@@ -20,12 +20,14 @@
 #include "llvm/IR/Function.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManagers.h"
+#include "llvm/ADT/SmallVector.h"
 #include <deque>
 
 namespace llvm {
 
 class RGPassManager;
 class Function;
+
 
 //===----------------------------------------------------------------------===//
 /// @brief A pass that runs on each Region in a function.
@@ -79,6 +81,7 @@ public:
   //@}
 };
 
+
 /// @brief The pass manager to schedule RegionPasses.
 class RGPassManager : public FunctionPass, public PMDataManager {
   std::deque<Region*> RQ;
@@ -120,6 +123,16 @@ public:
   virtual PassManagerType getPassManagerType() const {
     return PMT_RegionPassManager;
   }
+
+// BEGIN Molly
+private:
+  //SmallVector<RegionPassResults*, 4> PassResults;
+
+public:
+  //~RGPassManager();
+  void addAnalysisToRemember(Pass *representive, Region *region, Pass *pass);
+  //Pass *getAnalyisFor(Pass *representive, Region *region);
+// END Molly
 };
 
 } // End llvm namespace
