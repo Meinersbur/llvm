@@ -91,6 +91,7 @@ bool RGPassManager::runOnFunction(Function &F) {
         auto ID = P->getPassID();
         const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(ID);
         RealPass = static_cast<RegionPass*>(PI->createPass());
+        RealPass->setResolver(P->getResolver(), false);
         LocalChanged |= RealPass->doInitialization(CurrentRegion, *this);
       }
 // END Molly

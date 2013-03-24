@@ -27,7 +27,9 @@ using namespace llvm;
 
 // Force out-of-line virtual method.
 Pass::~Pass() {
-  delete Resolver;
+  if (OwnsResolver)
+    delete Resolver;
+  Resolver = NULL;
 }
 
 // Force out-of-line virtual method.
@@ -96,9 +98,10 @@ PMDataManager *Pass::getAsPMDataManager() {
   return 0;
 }
 
-void Pass::setResolver(AnalysisResolver *AR) {
+void Pass::setResolver(AnalysisResolver *AR, bool takeOwnership) {
   assert(!Resolver && "Resolver is already set");
   Resolver = AR;
+  OwnsResolver = takeOwnership;
 }
 
 // print - Print out the internal state of the pass.  This is called by Analyze

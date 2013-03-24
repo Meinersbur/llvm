@@ -125,6 +125,9 @@ namespace llvm {
       // This value must be a multiple of 32.
       MAX_ALLOWED_VALUETYPE = 64,
 
+      // Consume all the remaining arguemts
+      Vararg = 249,
+
       // Metadata - This is MDNode or MDString.
       Metadata       = 250,
 
@@ -591,6 +594,12 @@ namespace llvm {
       if (M.SimpleTy >= 0)
         return M;
       return getExtendedVectorVT(Context, VT, NumElements);
+    }
+
+    static EVT getLlvmVT(LLVMContext &Contex, Type *ty) {
+      EVT ResultVT;
+      ResultVT.LLVMTy = ty;
+      return ResultVT;
     }
 
     /// changeVectorElementTypeToInteger - Return a vector with the same number

@@ -263,6 +263,12 @@ AnalysisType &Pass::getAnalysisID(AnalysisID PI, Function &F) {
 
   template<typename AnalysisType>
   AnalysisType &Pass::getAnalysisID(AnalysisID PI, Region &R) {
+#ifndef NDEBUG
+    auto Representative = &getAnalysisID<AnalysisType>(PI);
+    auto ID = Representative->getPassID();
+    auto Info = PassRegistry::getPassRegistry()->getPassInfo(ID);
+    assert(Info->isAnalysis() && "Only analyses can be preserved between PassManagers");
+#endif
     Pass *ResultPass = Resolver->findImplPass(static_cast<RegionPass*>(this), PI, R);
     return *(AnalysisType*)ResultPass->getAdjustedAnalysisPointer(PI);
   }

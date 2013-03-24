@@ -430,7 +430,8 @@ enum IIT_Info {
   IIT_STRUCT5 = 22,
   IIT_EXTEND_VEC_ARG = 23,
   IIT_TRUNC_VEC_ARG = 24,
-  IIT_ANYPTR = 25
+  IIT_ANYPTR = 25,
+  IIT_VARARG = 26
 };
 
 
@@ -534,6 +535,11 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
       DecodeIITType(NextElt, Infos, OutputTable);
     return;
   }
+  case IIT_VARARG: {
+      // Consume all the remaining args
+      OutputTable.push_back(IITDescriptor::get(IITDescriptor::Vararg, 0));
+      return;
+    }
   }
   llvm_unreachable("unhandled");
 }
@@ -578,7 +584,7 @@ void Intrinsic::getIntrinsicInfoTableEntries(ID id,
 
 
 static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
-                             ArrayRef<Type*> Tys, LLVMContext &Context) {
+                             ArrayRef<Type*> Tys, LLVMContext &Context, unsigned &varargStart) {
   using namespace Intrinsic;
   IITDescriptor D = Infos.front();
   Infos = Infos.slice(1);
@@ -594,27 +600,32 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
   case IITDescriptor::Integer:
     return IntegerType::get(Context, D.Integer_Width);
   case IITDescriptor::Vector:
-    return VectorType::get(DecodeFixedType(Infos, Tys, Context),D.Vector_Width);
+    return VectorType::get(DecodeFixedType(Infos, Tys, Context, varargStart),D.Vector_Width);
   case IITDescriptor::Pointer:
-    return PointerType::get(DecodeFixedType(Infos, Tys, Context),
+    return PointerType::get(DecodeFixedType(Infos, Tys, Context, varargStart),
                             D.Pointer_AddressSpace);
   case IITDescriptor::Struct: {
     Type *Elts[5];
     assert(D.Struct_NumElements <= 5 && "Can't handle this yet");
     for (unsigned i = 0, e = D.Struct_NumElements; i != e; ++i)
-      Elts[i] = DecodeFixedType(Infos, Tys, Context);
+      Elts[i] = DecodeFixedType(Infos, Tys, Context, varargStart);
     return StructType::get(Context, ArrayRef<Type*>(Elts,D.Struct_NumElements));
   }
 
   case IITDescriptor::Argument:
+    varargStart = std::max(varargStart, D.getArgumentNumber()+1);
     return Tys[D.getArgumentNumber()];
   case IITDescriptor::ExtendVecArgument:
+    varargStart = std::max(varargStart, D.getArgumentNumber()+1);
     return VectorType::getExtendedElementVectorType(cast<VectorType>(
                                                   Tys[D.getArgumentNumber()]));
 
   case IITDescriptor::TruncVecArgument:
+    varargStart = std::max(varargStart, D.getArgumentNumber()+1);
     return VectorType::getTruncatedElementVectorType(cast<VectorType>(
                                                   Tys[D.getArgumentNumber()]));
+  case IITDescriptor::Vararg:
+     llvm_unreachable("Since we'd need to return multiple elements, we cannot handle varargs here");
   }
   llvm_unreachable("unhandled");
 }
@@ -626,12 +637,18 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
   SmallVector<IITDescriptor, 8> Table;
   getIntrinsicInfoTableEntries(id, Table);
 
+  unsigned int varargStart = 0;
   ArrayRef<IITDescriptor> TableRef = Table;
-  Type *ResultTy = DecodeFixedType(TableRef, Tys, Context);
+  Type *ResultTy = DecodeFixedType(TableRef, Tys, Context, varargStart);
 
   SmallVector<Type*, 8> ArgTys;
-  while (!TableRef.empty())
-    ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context));
+  while (!TableRef.empty()) {
+    if (TableRef.front().Kind == IITDescriptor::Vararg) { TableRef = TableRef.slice(1);
+      ArgTys.append(Tys.begin()+varargStart, Tys.end());
+      continue;
+    } 
+    ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context, varargStart));
+  }
 
   return FunctionType::get(ResultTy, ArgTys, false);
 }

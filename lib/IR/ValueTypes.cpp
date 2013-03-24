@@ -17,6 +17,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 EVT EVT::changeExtendedVectorElementTypeToInteger() const {
@@ -105,13 +106,19 @@ unsigned EVT::getExtendedSizeInBits() const {
 /// getEVTString - This function returns value type as a string, e.g. "i32".
 std::string EVT::getEVTString() const {
   switch (V.SimpleTy) {
-  default:
-    if (isVector())
-      return "v" + utostr(getVectorNumElements()) +
-             getVectorElementType().getEVTString();
-    if (isInteger())
-      return "i" + utostr(getSizeInBits());
-    llvm_unreachable("Invalid EVT!");
+  default: 
+    {
+      if (isVector())
+        return "v" + utostr(getVectorNumElements()) +
+               getVectorElementType().getEVTString();
+      if (isInteger())
+        return "i" + utostr(getSizeInBits());
+
+      std::string buf;
+      llvm::raw_string_ostream OS(buf);
+      LLVMTy->print(OS);
+      return OS.str();
+    }
   case MVT::i1:      return "i1";
   case MVT::i8:      return "i8";
   case MVT::i16:     return "i16";
@@ -272,6 +279,8 @@ EVT EVT::getEVT(Type *Ty, bool HandleUnknown){
     VectorType *VTy = cast<VectorType>(Ty);
     return getVectorVT(Ty->getContext(), getEVT(VTy->getElementType(), false),
                        VTy->getNumElements());
-  }
+    }
+  case Type::StructTyID:
+    return getLlvmVT(Ty->getContext(), Ty);
   }
 }

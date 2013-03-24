@@ -81,6 +81,7 @@ enum PassKind {
 /// constrained passes described below.
 ///
 class Pass {
+  bool OwnsResolver;
   AnalysisResolver *Resolver;  // Used to resolve analysis
   const void *PassID;
   PassKind Kind;
@@ -88,7 +89,7 @@ class Pass {
   Pass(const Pass &) LLVM_DELETED_FUNCTION;
 
 public:
-  explicit Pass(PassKind K, char &pid) : Resolver(0), PassID(&pid), Kind(K) { }
+  explicit Pass(PassKind K, char &pid) : OwnsResolver(false), Resolver(0), PassID(&pid), Kind(K) { }
   virtual ~Pass();
 
 
@@ -141,7 +142,7 @@ public:
   virtual PassManagerType getPotentialPassManagerType() const;
 
   // Access AnalysisResolver
-  void setResolver(AnalysisResolver *AR);
+  void setResolver(AnalysisResolver *AR, bool takeOwnership = true);
   AnalysisResolver *getResolver() const { return Resolver; }
 
   /// getAnalysisUsage - This function should be overriden by passes that need

@@ -1987,6 +1987,8 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
            !isa<VectorType>(ArgTys[D.getArgumentNumber()]) ||
            VectorType::getTruncatedElementVectorType(
                          cast<VectorType>(ArgTys[D.getArgumentNumber()])) != Ty;
+  case IITDescriptor::Vararg:
+    return false;
   }
   llvm_unreachable("unhandled");
 }
@@ -2010,9 +2012,17 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   SmallVector<Type *, 4> ArgTys;
   Assert1(!VerifyIntrinsicType(IFTy->getReturnType(), TableRef, ArgTys),
           "Intrinsic has incorrect return type!", IF);
-  for (unsigned i = 0, e = IFTy->getNumParams(); i != e; ++i)
+  for (unsigned i = 0, e = IFTy->getNumParams(); i != e; ++i) {
+    if (TableRef.front().Kind == Intrinsic::IITDescriptor::Vararg) {
+      TableRef = TableRef.slice(1);
+      for (;i!=e;i+=1) {
+        ArgTys.push_back(IFTy->getParamType(i));
+      }
+      break;
+    }
     Assert1(!VerifyIntrinsicType(IFTy->getParamType(i), TableRef, ArgTys),
             "Intrinsic has incorrect argument type!", IF);
+  }
   Assert1(TableRef.empty(), "Intrinsic has too few arguments!", IF);
 
   // Now that we have the intrinsic ID and the actual argument types (and we

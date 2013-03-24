@@ -76,6 +76,7 @@ def x86mmx : ValueType<64 , 49>;   // X86 MMX value
 def FlagVT : ValueType<0  , 50>;   // Pre-RA sched glue
 def isVoid : ValueType<0  , 51>;   // Produces no value
 def untyped: ValueType<8  , 52>;   // Produces an untyped value
+def vararg : ValueType<0  , 249>;   // Consume every argument
 def MetadataVT: ValueType<0, 250>; // Metadata
 
 // Pseudo valuetype mapped to the current pointer size to any address space.

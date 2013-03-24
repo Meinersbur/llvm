@@ -242,7 +242,8 @@ enum IIT_Info {
   IIT_STRUCT5 = 22,
   IIT_EXTEND_VEC_ARG = 23,
   IIT_TRUNC_VEC_ARG = 24,
-  IIT_ANYPTR = 25
+  IIT_ANYPTR = 25,
+  IIT_VARARG = 26
 };
 
 
@@ -259,7 +260,7 @@ static void EncodeFixedValueType(MVT::SimpleValueType VT,
     case 64: return Sig.push_back(IIT_I64);
     }
   }
-  
+
   switch (VT) {
   default: PrintFatalError("unhandled MVT in intrinsic!");
   case MVT::f16: return Sig.push_back(IIT_F16);
@@ -269,6 +270,7 @@ static void EncodeFixedValueType(MVT::SimpleValueType VT,
   case MVT::x86mmx: return Sig.push_back(IIT_MMX);
   // MVT::OtherVT is used to mean the empty struct type here.
   case MVT::Other: return Sig.push_back(IIT_EMPTYSTRUCT);
+  //case MVT::isVoid: return Sig.push_back(IIT_Done);
   }
 }
 
@@ -326,6 +328,9 @@ static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
     }
     return EncodeFixedType(R->getValueAsDef("ElTy"), ArgCodes, Sig);
   }
+
+  case MVT::Vararg: 
+    return Sig.push_back(IIT_VARARG); // for llvm_vararg_ty as last argument
   }
   
   if (EVT(VT).isVector()) {

@@ -143,7 +143,7 @@ public:
   PassType *getRepresentivePass() {
     return RepresentivePass; 
   }
-  void setAnalysisFor(UnitType *region, PassType *pass) { 
+  void setAnalysisFor(UnitType *region, PassType *pass) { assert(Results.find(region) == Results.end());
     assert(region); 
     assert(pass);
     Results[region] = pass;
@@ -1092,7 +1092,7 @@ void PMTopLevelManager::rememberAnalysis(FunctionPass *Representative, FunctionP
 }
 
 
- void PMTopLevelManager::rememberAnalysis(RegionPass *Representative, RegionPass *P, Region &R) {
+ void PMTopLevelManager::rememberAnalysis(RegionPass *Representative, RegionPass *P, Region &R) { //TODO: Ensure that also transitive requirements are remembered
    auto &Results = AvailableRegionResults[Representative];
    if (!Results) {
      Results = new RegionPassResults(Representative); // no results for this pass yet, create it
@@ -1163,6 +1163,9 @@ void PMTopLevelManager::rememberAnalysis(FunctionPass *Representative, FunctionP
          }
          break;
        }
+     default:
+       // Not yet supporter kind an therefore nothing to remove
+       break;
      }
    }
  }
@@ -1928,7 +1931,7 @@ bool FPPassManager::runOnFunction(Function &F) {
       // Create an on-the-fly pass that we don't have to clear for the next function
       auto ID = FP->getPassID();
       const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(ID);
-      RealPass = static_cast<FunctionPass*>(PI->createPass());
+      RealPass = static_cast<FunctionPass*>(PI->createPass(), false);
       LocalChanged |= RealPass->doInitialization(*F.getParent());
     }
 // END Molly
