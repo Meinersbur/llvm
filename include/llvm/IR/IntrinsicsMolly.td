@@ -1,11 +1,13 @@
 
-// TODO: Using 32-bit coordinates for now to avoid fuss with overloading
 
 def int_molly_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to field*/, llvm_vararg_ty/*coordinates*/], [IntrNoMem/*Access itself done by explicit LoadInst/StoreInst*/]>;
 
-def int_molly_get : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to field*/, llvm_vararg_ty/*coordinates*/], [IntrReadArgMem]>;
+// We do this in buffers because of trouble if the value is a StructType
+def int_molly_get : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*target buffer*/, llvm_vararg_ty/*coordinates*/], [IntrReadWriteArgMem]>;
+def int_molly_set : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*source buffer*/, llvm_vararg_ty/*coordinates*/], []>;
 
-def int_molly_set : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_ptr_ty/*ptr to value*/, llvm_vararg_ty/*coordinates*/], []>;
+def int_molly_islocal : Intrinsic<[llvm_i1_ty], [llvm_anyptr_ty/*ptr to field*/, llvm_vararg_ty/*coordinates*/], [IntrNoMem]>;
+def int_molly_rankof : Intrinsic<[llvm_i32_ty], [llvm_anyptr_ty/*ptr to field*/, llvm_vararg_ty/*coordinates*/], [IntrNoMem]>;
 
 
 
