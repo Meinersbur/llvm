@@ -324,6 +324,9 @@ static bool iterativelySimplifyCFG(Function &F, const TargetTransformInfo &TTI,
 // simplify the CFG.
 //
 bool CFGSimplifyPass::runOnFunction(Function &F) {
+  if (F.getName() == "main") {
+    int a = 0;
+  }
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   const DataLayout *TD = getAnalysisIfAvailable<DataLayout>();
   bool EverChanged = removeUnreachableBlocksFromFn(F);

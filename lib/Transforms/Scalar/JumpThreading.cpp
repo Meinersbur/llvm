@@ -146,6 +146,9 @@ FunctionPass *llvm::createJumpThreadingPass() { return new JumpThreading(); }
 /// runOnFunction - Top level algorithm.
 ///
 bool JumpThreading::runOnFunction(Function &F) {
+  if (F.getName() == "main") {
+    int a = 0;
+  }
   DEBUG(dbgs() << "Jump threading on function '" << F.getName() << "'\n");
   TD = getAnalysisIfAvailable<DataLayout>();
   TLI = &getAnalysis<TargetLibraryInfo>();

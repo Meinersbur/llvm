@@ -1553,6 +1553,9 @@ static void DeleteInstructionInBlock(BasicBlock *BB) {
 // and return true if the function was modified.
 //
 bool SCCP::runOnFunction(Function &F) {
+  if (F.getName() == "main") {
+    int a = 0;
+  }
   DEBUG(dbgs() << "SCCP on function '" << F.getName() << "'\n");
   const DataLayout *TD = getAnalysisIfAvailable<DataLayout>();
   const TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfo>();

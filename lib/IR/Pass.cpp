@@ -19,6 +19,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PassNameParser.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Analysis/RegionPass.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -47,6 +48,13 @@ PassManagerType ModulePass::getPotentialPassManagerType() const {
 bool Pass::mustPreserveAnalysisID(char &AID) const {
   return Resolver->getAnalysisIfAvailable(&AID, true) != 0;
 }
+
+// BEGIN Molly
+Pass *Pass::findRegionPassResult(AnalysisID PI, Region &R) {
+  Pass *ResultPass = Resolver->findImplPass(static_cast<RegionPass*>(this), PI, R);
+  return ResultPass;
+}
+// END Molly
 
 // dumpPassStructure - Implement the -debug-pass=Structure option
 void Pass::dumpPassStructure(unsigned Offset) {

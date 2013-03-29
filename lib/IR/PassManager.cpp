@@ -1931,7 +1931,7 @@ bool FPPassManager::runOnFunction(Function &F) {
       // Create an on-the-fly pass that we don't have to clear for the next function
       auto ID = FP->getPassID();
       const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(ID);
-      RealPass = static_cast<FunctionPass*>(PI->createPass(), false);
+      RealPass = static_cast<FunctionPass*>(PI->createPass());
       LocalChanged |= RealPass->doInitialization(*F.getParent());
     }
 // END Molly

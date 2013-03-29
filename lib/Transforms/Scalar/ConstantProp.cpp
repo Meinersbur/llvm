@@ -61,6 +61,9 @@ FunctionPass *llvm::createConstantPropagationPass() {
 }
 
 bool ConstantPropagation::runOnFunction(Function &F) {
+  if (F.getName() == "main") {
+    int a = 0;
+  }
   // Initialize the worklist to all of the instructions ready to process...
   std::set<Instruction*> WorkList;
   for(inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {

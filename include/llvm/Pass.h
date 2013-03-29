@@ -233,6 +233,9 @@ public:
 
   template<typename AnalysisType>
   AnalysisType &getAnalysisID(AnalysisID PI, Region &R);
+
+private:
+  Pass *findRegionPassResult(AnalysisID PI, Region &R);
   // END Molly
 };
 

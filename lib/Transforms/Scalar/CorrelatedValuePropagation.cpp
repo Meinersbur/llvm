@@ -281,6 +281,9 @@ bool CorrelatedValuePropagation::processSwitch(SwitchInst *SI) {
 }
 
 bool CorrelatedValuePropagation::runOnFunction(Function &F) {
+  if (F.getName() == "main") {
+    int a = 0;
+  }
   LVI = &getAnalysis<LazyValueInfo>();
 
   bool FnChanged = false;
