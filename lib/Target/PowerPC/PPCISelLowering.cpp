@@ -70,6 +70,7 @@ static TargetLoweringObjectFile *CreateTLOF(const PPCTargetMachine &TM) {
 PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   : TargetLowering(TM, CreateTLOF(TM)), PPCSubTarget(*TM.getSubtargetImpl()) {
   const PPCSubtarget *Subtarget = &TM.getSubtarget<PPCSubtarget>();
+  PPCRegInfo = TM.getRegisterInfo();
 
   setPow2DivIsCheap();
 
@@ -157,17 +158,40 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
   setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
 
+  if (Subtarget->hasFPRND()) {
+    setOperationAction(ISD::FFLOOR, MVT::f64, Legal);
+    setOperationAction(ISD::FCEIL,  MVT::f64, Legal);
+    setOperationAction(ISD::FTRUNC, MVT::f64, Legal);
+
+    setOperationAction(ISD::FFLOOR, MVT::f32, Legal);
+    setOperationAction(ISD::FCEIL,  MVT::f32, Legal);
+    setOperationAction(ISD::FTRUNC, MVT::f32, Legal);
+
+    // frin does not implement "ties to even." Thus, this is safe only in
+    // fast-math mode.
+    if (TM.Options.UnsafeFPMath) {
+      setOperationAction(ISD::FNEARBYINT, MVT::f64, Legal);
+      setOperationAction(ISD::FNEARBYINT, MVT::f32, Legal);
+    }
+  }
+
   // PowerPC does not have BSWAP, CTPOP or CTTZ
   setOperationAction(ISD::BSWAP, MVT::i32  , Expand);
-  setOperationAction(ISD::CTPOP, MVT::i32  , Expand);
   setOperationAction(ISD::CTTZ , MVT::i32  , Expand);
   setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i32, Expand);
   setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i32, Expand);
   setOperationAction(ISD::BSWAP, MVT::i64  , Expand);
-  setOperationAction(ISD::CTPOP, MVT::i64  , Expand);
   setOperationAction(ISD::CTTZ , MVT::i64  , Expand);
   setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i64, Expand);
   setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i64, Expand);
+
+  if (Subtarget->hasPOPCNTD()) {
+    setOperationAction(ISD::CTPOP, MVT::i32  , Promote);
+    setOperationAction(ISD::CTPOP, MVT::i64  , Legal);
+  } else {
+    setOperationAction(ISD::CTPOP, MVT::i32  , Expand);
+    setOperationAction(ISD::CTPOP, MVT::i64  , Expand);
+  }
 
   // PowerPC does not have ROTR
   setOperationAction(ISD::ROTR, MVT::i32   , Expand);
@@ -211,6 +235,14 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
   setOperationAction(ISD::EHSELECTION,   MVT::i32, Expand);
 
+  // NOTE: EH_SJLJ_SETJMP/_LONGJMP supported here is NOT intended to support
+  // SjLj exception handling but a light-weight setjmp/longjmp replacement to
+  // support continuation, user-level threading, and etc.. As a result, no
+  // other SjLj exception interfaces are implemented and please don't build
+  // your own exception handling based on them.
+  // LLVM/Clang supports zero-cost DWARF exception handling.
+  setOperationAction(ISD::EH_SJLJ_SETJMP, MVT::i32, Custom);
+  setOperationAction(ISD::EH_SJLJ_LONGJMP, MVT::Other, Custom);
 
   // We want to legalize GlobalAddress and ConstantPool nodes into the
   // appropriate instructions to materialize the address.
@@ -511,7 +543,6 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     MaxStoresPerMemmoveOptSize = 8;
 
     setPrefFunctionAlignment(4);
-    BenefitFromCodePlacementOpt = true;
   }
 }
 
@@ -559,14 +590,13 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::SHL:             return "PPCISD::SHL";
   case PPCISD::EXTSW_32:        return "PPCISD::EXTSW_32";
   case PPCISD::STD_32:          return "PPCISD::STD_32";
-  case PPCISD::CALL_SVR4:       return "PPCISD::CALL_SVR4";
-  case PPCISD::CALL_NOP_SVR4:   return "PPCISD::CALL_NOP_SVR4";
-  case PPCISD::CALL_Darwin:     return "PPCISD::CALL_Darwin";
-  case PPCISD::NOP:             return "PPCISD::NOP";
+  case PPCISD::CALL:            return "PPCISD::CALL";
+  case PPCISD::CALL_NOP:        return "PPCISD::CALL_NOP";
   case PPCISD::MTCTR:           return "PPCISD::MTCTR";
-  case PPCISD::BCTRL_Darwin:    return "PPCISD::BCTRL_Darwin";
-  case PPCISD::BCTRL_SVR4:      return "PPCISD::BCTRL_SVR4";
+  case PPCISD::BCTRL:           return "PPCISD::BCTRL";
   case PPCISD::RET_FLAG:        return "PPCISD::RET_FLAG";
+  case PPCISD::EH_SJLJ_SETJMP:  return "PPCISD::EH_SJLJ_SETJMP";
+  case PPCISD::EH_SJLJ_LONGJMP: return "PPCISD::EH_SJLJ_LONGJMP";
   case PPCISD::MFCR:            return "PPCISD::MFCR";
   case PPCISD::VCMP:            return "PPCISD::VCMP";
   case PPCISD::VCMPo:           return "PPCISD::VCMPo";
@@ -576,10 +606,7 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::STCX:            return "PPCISD::STCX";
   case PPCISD::COND_BRANCH:     return "PPCISD::COND_BRANCH";
   case PPCISD::MFFS:            return "PPCISD::MFFS";
-  case PPCISD::MTFSB0:          return "PPCISD::MTFSB0";
-  case PPCISD::MTFSB1:          return "PPCISD::MTFSB1";
   case PPCISD::FADDRTZ:         return "PPCISD::FADDRTZ";
-  case PPCISD::MTFSF:           return "PPCISD::MTFSF";
   case PPCISD::TC_RETURN:       return "PPCISD::TC_RETURN";
   case PPCISD::CR6SET:          return "PPCISD::CR6SET";
   case PPCISD::CR6UNSET:        return "PPCISD::CR6UNSET";
@@ -1031,7 +1058,7 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
     short Imm;
     if (isIntS16Immediate(CN, Imm)) {
       Disp = DAG.getTargetConstant(Imm, CN->getValueType(0));
-      Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::X0 : PPC::R0,
+      Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::ZERO8 : PPC::ZERO,
                              CN->getValueType(0));
       return true;
     }
@@ -1080,7 +1107,7 @@ bool PPCTargetLowering::SelectAddressRegRegOnly(SDValue N, SDValue &Base,
   }
 
   // Otherwise, do it the hard way, using R0 as the base register.
-  Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::X0 : PPC::R0,
+  Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::ZERO8 : PPC::ZERO,
                          N.getValueType());
   Index = N;
   return true;
@@ -1143,7 +1170,7 @@ bool PPCTargetLowering::SelectAddressRegImmShift(SDValue N, SDValue &Disp,
       short Imm;
       if (isIntS16Immediate(CN, Imm)) {
         Disp = DAG.getTargetConstant((unsigned short)Imm >> 2, getPointerTy());
-        Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::X0 : PPC::R0,
+        Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::ZERO8 : PPC::ZERO,
                                CN->getValueType(0));
         return true;
       }
@@ -1181,15 +1208,19 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
                                                   SelectionDAG &DAG) const {
   if (DisablePPCPreinc) return false;
 
+  bool isLoad = true;
   SDValue Ptr;
   EVT VT;
+  unsigned Alignment;
   if (LoadSDNode *LD = dyn_cast<LoadSDNode>(N)) {
     Ptr = LD->getBasePtr();
     VT = LD->getMemoryVT();
-
+    Alignment = LD->getAlignment();
   } else if (StoreSDNode *ST = dyn_cast<StoreSDNode>(N)) {
     Ptr = ST->getBasePtr();
     VT  = ST->getMemoryVT();
+    Alignment = ST->getAlignment();
+    isLoad = false;
   } else
     return false;
 
@@ -1197,7 +1228,25 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
   if (VT.isVector())
     return false;
 
-  if (SelectAddressRegReg(Ptr, Offset, Base, DAG)) {
+  if (SelectAddressRegReg(Ptr, Base, Offset, DAG)) {
+
+    // Common code will reject creating a pre-inc form if the base pointer
+    // is a frame index, or if N is a store and the base pointer is either
+    // the same as or a predecessor of the value being stored.  Check for
+    // those situations here, and try with swapped Base/Offset instead.
+    bool Swap = false;
+
+    if (isa<FrameIndexSDNode>(Base) || isa<RegisterSDNode>(Base))
+      Swap = true;
+    else if (!isLoad) {
+      SDValue Val = cast<StoreSDNode>(N)->getValue();
+      if (Val == Base || Base.getNode()->isPredecessorOf(Val.getNode()))
+        Swap = true;
+    }
+
+    if (Swap)
+      std::swap(Base, Offset);
+
     AM = ISD::PRE_INC;
     return true;
   }
@@ -1208,6 +1257,10 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     if (!SelectAddressRegImm(Ptr, Offset, Base, DAG))
       return false;
   } else {
+    // LDU/STU need an address with at least 4-byte alignment.
+    if (Alignment < 4)
+      return false;
+
     // reg + imm * 4.
     if (!SelectAddressRegImmShift(Ptr, Offset, Base, DAG))
       return false;
@@ -3099,7 +3152,7 @@ unsigned PrepareCall(SelectionDAG &DAG, SDValue &Callee, SDValue &InFlag,
   NodeTys.push_back(MVT::Other);   // Returns a chain
   NodeTys.push_back(MVT::Glue);    // Returns a flag for retval copy to use.
 
-  unsigned CallOpc = isSVR4ABI ? PPCISD::CALL_SVR4 : PPCISD::CALL_Darwin;
+  unsigned CallOpc = PPCISD::CALL;
 
   bool needIndirectCall = true;
   if (SDNode *Dest = isBLACompatibleAddress(Callee, DAG)) {
@@ -3232,8 +3285,11 @@ unsigned PrepareCall(SelectionDAG &DAG, SDValue &Callee, SDValue &InFlag,
     NodeTys.push_back(MVT::Other);
     NodeTys.push_back(MVT::Glue);
     Ops.push_back(Chain);
-    CallOpc = isSVR4ABI ? PPCISD::BCTRL_SVR4 : PPCISD::BCTRL_Darwin;
+    CallOpc = PPCISD::BCTRL;
     Callee.setNode(0);
+    // Add use of X11 (holding environment pointer)
+    if (isSVR4ABI && isPPC64)
+      Ops.push_back(DAG.getRegister(PPC::X11, PtrVT));
     // Add CTR register as callee so a bctr can be emitted later.
     if (isTailCall)
       Ops.push_back(DAG.getRegister(isPPC64 ? PPC::CTR8 : PPC::CTR, PtrVT));
@@ -3372,7 +3428,7 @@ PPCTargetLowering::FinishCall(CallingConv::ID CallConv, DebugLoc dl,
 
   bool needsTOCRestore = false;
   if (!isTailCall && PPCSubTarget.isSVR4ABI()&& PPCSubTarget.isPPC64()) {
-    if (CallOpc == PPCISD::BCTRL_SVR4) {
+    if (CallOpc == PPCISD::BCTRL) {
       // This is a call through a function pointer.
       // Restore the caller TOC from the save area into R2.
       // See PrepareCall() for more information about calls through function
@@ -3383,9 +3439,9 @@ PPCTargetLowering::FinishCall(CallingConv::ID CallConv, DebugLoc dl,
       // from allocating it), resulting in an additional register being
       // allocated and an unnecessary move instruction being generated.
       needsTOCRestore = true;
-    } else if ((CallOpc == PPCISD::CALL_SVR4) && !isLocalCall(Callee)) {
+    } else if ((CallOpc == PPCISD::CALL) && !isLocalCall(Callee)) {
       // Otherwise insert NOP for non-local calls.
-      CallOpc = PPCISD::CALL_NOP_SVR4;
+      CallOpc = PPCISD::CALL_NOP;
     }
   }
 
@@ -4558,6 +4614,21 @@ SDValue PPCTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   return DAG.getNode(PPCISD::DYNALLOC, dl, VTs, Ops, 3);
 }
 
+SDValue PPCTargetLowering::lowerEH_SJLJ_SETJMP(SDValue Op,
+                                               SelectionDAG &DAG) const {
+  DebugLoc DL = Op.getDebugLoc();
+  return DAG.getNode(PPCISD::EH_SJLJ_SETJMP, DL,
+                     DAG.getVTList(MVT::i32, MVT::Other),
+                     Op.getOperand(0), Op.getOperand(1));
+}
+
+SDValue PPCTargetLowering::lowerEH_SJLJ_LONGJMP(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  DebugLoc DL = Op.getDebugLoc();
+  return DAG.getNode(PPCISD::EH_SJLJ_LONGJMP, DL, MVT::Other,
+                     Op.getOperand(0), Op.getOperand(1));
+}
+
 /// LowerSELECT_CC - Lower floating point select_cc's into fsel instruction when
 /// possible.
 SDValue PPCTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
@@ -5554,6 +5625,9 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::DYNAMIC_STACKALLOC:
     return LowerDYNAMIC_STACKALLOC(Op, DAG, PPCSubTarget);
 
+  case ISD::EH_SJLJ_SETJMP:     return lowerEH_SJLJ_SETJMP(Op, DAG);
+  case ISD::EH_SJLJ_LONGJMP:    return lowerEH_SJLJ_LONGJMP(Op, DAG);
+
   case ISD::SELECT_CC:          return LowerSELECT_CC(Op, DAG);
   case ISD::FP_TO_UINT:
   case ISD::FP_TO_SINT:         return LowerFP_TO_INT(Op, DAG,
@@ -5612,50 +5686,8 @@ void PPCTargetLowering::ReplaceNodeResults(SDNode *N,
                              MVT::f64, N->getOperand(0),
                              DAG.getIntPtrConstant(1));
 
-    // This sequence changes FPSCR to do round-to-zero, adds the two halves
-    // of the long double, and puts FPSCR back the way it was.  We do not
-    // actually model FPSCR.
-    std::vector<EVT> NodeTys;
-    SDValue Ops[4], Result, MFFSreg, InFlag, FPreg;
-
-    NodeTys.push_back(MVT::f64);   // Return register
-    NodeTys.push_back(MVT::Glue);    // Returns a flag for later insns
-    Result = DAG.getNode(PPCISD::MFFS, dl, NodeTys, &InFlag, 0);
-    MFFSreg = Result.getValue(0);
-    InFlag = Result.getValue(1);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = DAG.getConstant(31, MVT::i32);
-    Ops[1] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSB1, dl, NodeTys, Ops, 2);
-    InFlag = Result.getValue(0);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = DAG.getConstant(30, MVT::i32);
-    Ops[1] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSB0, dl, NodeTys, Ops, 2);
-    InFlag = Result.getValue(0);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::f64);    // result of add
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = Lo;
-    Ops[1] = Hi;
-    Ops[2] = InFlag;
-    Result = DAG.getNode(PPCISD::FADDRTZ, dl, NodeTys, Ops, 3);
-    FPreg = Result.getValue(0);
-    InFlag = Result.getValue(1);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::f64);
-    Ops[0] = DAG.getConstant(1, MVT::i32);
-    Ops[1] = MFFSreg;
-    Ops[2] = FPreg;
-    Ops[3] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSF, dl, NodeTys, Ops, 4);
-    FPreg = Result.getValue(0);
+    // Add the two halves of the long double in round-to-zero mode.
+    SDValue FPreg = DAG.getNode(PPCISD::FADDRTZ, dl, MVT::f64, Lo, Hi);
 
     // We know the low half is about to be thrown away, so just use something
     // convenient.
@@ -5747,7 +5779,7 @@ PPCTargetLowering::EmitPartwordAtomicBinary(MachineInstr *MI,
   // registers without caring whether they're 32 or 64, but here we're
   // doing actual arithmetic on the addresses.
   bool is64bit = PPCSubTarget.isPPC64();
-  unsigned ZeroReg = is64bit ? PPC::X0 : PPC::R0;
+  unsigned ZeroReg = is64bit ? PPC::ZERO8 : PPC::ZERO;
 
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
   MachineFunction *F = BB->getParent();
@@ -5866,9 +5898,238 @@ PPCTargetLowering::EmitPartwordAtomicBinary(MachineInstr *MI,
   return BB;
 }
 
+llvm::MachineBasicBlock*
+PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
+                                    MachineBasicBlock *MBB) const {
+  DebugLoc DL = MI->getDebugLoc();
+  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+
+  const BasicBlock *BB = MBB->getBasicBlock();
+  MachineFunction::iterator I = MBB;
+  ++I;
+
+  // Memory Reference
+  MachineInstr::mmo_iterator MMOBegin = MI->memoperands_begin();
+  MachineInstr::mmo_iterator MMOEnd = MI->memoperands_end();
+
+  unsigned DstReg = MI->getOperand(0).getReg();
+  const TargetRegisterClass *RC = MRI.getRegClass(DstReg);
+  assert(RC->hasType(MVT::i32) && "Invalid destination!");
+  unsigned mainDstReg = MRI.createVirtualRegister(RC);
+  unsigned restoreDstReg = MRI.createVirtualRegister(RC);
+
+  MVT PVT = getPointerTy();
+  assert((PVT == MVT::i64 || PVT == MVT::i32) &&
+         "Invalid Pointer Size!");
+  // For v = setjmp(buf), we generate
+  //
+  // thisMBB:
+  //  SjLjSetup mainMBB
+  //  bl mainMBB
+  //  v_restore = 1
+  //  b sinkMBB
+  //
+  // mainMBB:
+  //  buf[LabelOffset] = LR
+  //  v_main = 0
+  //
+  // sinkMBB:
+  //  v = phi(main, restore)
+  //
+
+  MachineBasicBlock *thisMBB = MBB;
+  MachineBasicBlock *mainMBB = MF->CreateMachineBasicBlock(BB);
+  MachineBasicBlock *sinkMBB = MF->CreateMachineBasicBlock(BB);
+  MF->insert(I, mainMBB);
+  MF->insert(I, sinkMBB);
+
+  MachineInstrBuilder MIB;
+
+  // Transfer the remainder of BB and its successor edges to sinkMBB.
+  sinkMBB->splice(sinkMBB->begin(), MBB,
+                  llvm::next(MachineBasicBlock::iterator(MI)), MBB->end());
+  sinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
+
+  // Note that the structure of the jmp_buf used here is not compatible
+  // with that used by libc, and is not designed to be. Specifically, it
+  // stores only those 'reserved' registers that LLVM does not otherwise
+  // understand how to spill. Also, by convention, by the time this
+  // intrinsic is called, Clang has already stored the frame address in the
+  // first slot of the buffer and stack address in the third. Following the
+  // X86 target code, we'll store the jump address in the second slot. We also
+  // need to save the TOC pointer (R2) to handle jumps between shared
+  // libraries, and that will be stored in the fourth slot. The thread
+  // identifier (R13) is not affected.
+
+  // thisMBB:
+  const int64_t LabelOffset = 1 * PVT.getStoreSize();
+  const int64_t TOCOffset   = 3 * PVT.getStoreSize();
+
+  // Prepare IP either in reg.
+  const TargetRegisterClass *PtrRC = getRegClassFor(PVT);
+  unsigned LabelReg = MRI.createVirtualRegister(PtrRC);
+  unsigned BufReg = MI->getOperand(1).getReg();
+
+  if (PPCSubTarget.isPPC64() && PPCSubTarget.isSVR4ABI()) {
+    MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::STD))
+            .addReg(PPC::X2)
+            .addImm(TOCOffset / 4)
+            .addReg(BufReg);
+
+    MIB.setMemRefs(MMOBegin, MMOEnd);
+  }
+
+  // Setup
+  MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::BCL)).addMBB(mainMBB);
+  MIB.addRegMask(PPCRegInfo->getNoPreservedMask());
+
+  BuildMI(*thisMBB, MI, DL, TII->get(PPC::LI), restoreDstReg).addImm(1);
+
+  MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::EH_SjLj_Setup))
+          .addMBB(mainMBB);
+  MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::B)).addMBB(sinkMBB);
+
+  thisMBB->addSuccessor(mainMBB, /* weight */ 0);
+  thisMBB->addSuccessor(sinkMBB, /* weight */ 1);
+
+  // mainMBB:
+  //  mainDstReg = 0
+  MIB = BuildMI(mainMBB, DL,
+    TII->get(PPCSubTarget.isPPC64() ? PPC::MFLR8 : PPC::MFLR), LabelReg);
+
+  // Store IP
+  if (PPCSubTarget.isPPC64()) {
+    MIB = BuildMI(mainMBB, DL, TII->get(PPC::STD))
+            .addReg(LabelReg)
+            .addImm(LabelOffset / 4)
+            .addReg(BufReg);
+  } else {
+    MIB = BuildMI(mainMBB, DL, TII->get(PPC::STW))
+            .addReg(LabelReg)
+            .addImm(LabelOffset)
+            .addReg(BufReg);
+  }
+
+  MIB.setMemRefs(MMOBegin, MMOEnd);
+
+  BuildMI(mainMBB, DL, TII->get(PPC::LI), mainDstReg).addImm(0);
+  mainMBB->addSuccessor(sinkMBB);
+
+  // sinkMBB:
+  BuildMI(*sinkMBB, sinkMBB->begin(), DL,
+          TII->get(PPC::PHI), DstReg)
+    .addReg(mainDstReg).addMBB(mainMBB)
+    .addReg(restoreDstReg).addMBB(thisMBB);
+
+  MI->eraseFromParent();
+  return sinkMBB;
+}
+
+MachineBasicBlock *
+PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
+                                     MachineBasicBlock *MBB) const {
+  DebugLoc DL = MI->getDebugLoc();
+  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+
+  // Memory Reference
+  MachineInstr::mmo_iterator MMOBegin = MI->memoperands_begin();
+  MachineInstr::mmo_iterator MMOEnd = MI->memoperands_end();
+
+  MVT PVT = getPointerTy();
+  assert((PVT == MVT::i64 || PVT == MVT::i32) &&
+         "Invalid Pointer Size!");
+
+  const TargetRegisterClass *RC =
+    (PVT == MVT::i64) ? &PPC::G8RCRegClass : &PPC::GPRCRegClass;
+  unsigned Tmp = MRI.createVirtualRegister(RC);
+  // Since FP is only updated here but NOT referenced, it's treated as GPR.
+  unsigned FP  = (PVT == MVT::i64) ? PPC::X31 : PPC::R31;
+  unsigned SP  = (PVT == MVT::i64) ? PPC::X1 : PPC::R1;
+
+  MachineInstrBuilder MIB;
+
+  const int64_t LabelOffset = 1 * PVT.getStoreSize();
+  const int64_t SPOffset    = 2 * PVT.getStoreSize();
+  const int64_t TOCOffset   = 3 * PVT.getStoreSize();
+
+  unsigned BufReg = MI->getOperand(0).getReg();
+
+  // Reload FP (the jumped-to function may not have had a
+  // frame pointer, and if so, then its r31 will be restored
+  // as necessary).
+  if (PVT == MVT::i64) {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), FP)
+            .addImm(0)
+            .addReg(BufReg);
+  } else {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), FP)
+            .addImm(0)
+            .addReg(BufReg);
+  }
+  MIB.setMemRefs(MMOBegin, MMOEnd);
+
+  // Reload IP
+  if (PVT == MVT::i64) {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), Tmp)
+            .addImm(LabelOffset / 4)
+            .addReg(BufReg);
+  } else {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), Tmp)
+            .addImm(LabelOffset)
+            .addReg(BufReg);
+  }
+  MIB.setMemRefs(MMOBegin, MMOEnd);
+
+  // Reload SP
+  if (PVT == MVT::i64) {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), SP)
+            .addImm(SPOffset / 4)
+            .addReg(BufReg);
+  } else {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), SP)
+            .addImm(SPOffset)
+            .addReg(BufReg);
+  }
+  MIB.setMemRefs(MMOBegin, MMOEnd);
+
+  // FIXME: When we also support base pointers, that register must also be
+  // restored here.
+
+  // Reload TOC
+  if (PVT == MVT::i64 && PPCSubTarget.isSVR4ABI()) {
+    MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), PPC::X2)
+            .addImm(TOCOffset / 4)
+            .addReg(BufReg);
+
+    MIB.setMemRefs(MMOBegin, MMOEnd);
+  }
+
+  // Jump
+  BuildMI(*MBB, MI, DL,
+          TII->get(PVT == MVT::i64 ? PPC::MTCTR8 : PPC::MTCTR)).addReg(Tmp);
+  BuildMI(*MBB, MI, DL, TII->get(PVT == MVT::i64 ? PPC::BCTR8 : PPC::BCTR));
+
+  MI->eraseFromParent();
+  return MBB;
+}
+
 MachineBasicBlock *
 PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                MachineBasicBlock *BB) const {
+  if (MI->getOpcode() == PPC::EH_SjLj_SetJmp32 ||
+      MI->getOpcode() == PPC::EH_SjLj_SetJmp64) {
+    return emitEHSjLjSetJmp(MI, BB);
+  } else if (MI->getOpcode() == PPC::EH_SjLj_LongJmp32 ||
+             MI->getOpcode() == PPC::EH_SjLj_LongJmp64) {
+    return emitEHSjLjLongJmp(MI, BB);
+  }
+
   const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
 
   // To "insert" these instructions we actually have to insert their
@@ -5886,24 +6147,24 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     unsigned SelectPred = MI->getOperand(4).getImm();
     DebugLoc dl = MI->getDebugLoc();
 
-    // The SelectPred is ((BI << 5) | BO) for a BCC
-    unsigned BO = SelectPred & 0xF;
-    assert((BO == 12 || BO == 4) && "invalid predicate BO field for isel");
-
-    unsigned TrueOpNo, FalseOpNo;
-    if (BO == 12) {
-      TrueOpNo = 2;
-      FalseOpNo = 3;
-    } else {
-      TrueOpNo = 3;
-      FalseOpNo = 2;
-      SelectPred = PPC::InvertPredicate((PPC::Predicate)SelectPred);
+    unsigned SubIdx;
+    bool SwapOps;
+    switch (SelectPred) {
+    default: llvm_unreachable("invalid predicate for isel");
+    case PPC::PRED_EQ: SubIdx = PPC::sub_eq; SwapOps = false; break;
+    case PPC::PRED_NE: SubIdx = PPC::sub_eq; SwapOps = true; break;
+    case PPC::PRED_LT: SubIdx = PPC::sub_lt; SwapOps = false; break;
+    case PPC::PRED_GE: SubIdx = PPC::sub_lt; SwapOps = true; break;
+    case PPC::PRED_GT: SubIdx = PPC::sub_gt; SwapOps = false; break;
+    case PPC::PRED_LE: SubIdx = PPC::sub_gt; SwapOps = true; break;
+    case PPC::PRED_UN: SubIdx = PPC::sub_un; SwapOps = false; break;
+    case PPC::PRED_NU: SubIdx = PPC::sub_un; SwapOps = true; break;
     }
 
     BuildMI(*BB, MI, dl, TII->get(OpCode), MI->getOperand(0).getReg())
-      .addReg(MI->getOperand(TrueOpNo).getReg())
-      .addReg(MI->getOperand(FalseOpNo).getReg())
-      .addImm(SelectPred).addReg(MI->getOperand(1).getReg());
+      .addReg(MI->getOperand(SwapOps? 3 : 2).getReg())
+      .addReg(MI->getOperand(SwapOps? 2 : 3).getReg())
+      .addReg(MI->getOperand(1).getReg(), 0, SubIdx);
   } else if (MI->getOpcode() == PPC::SELECT_CC_I4 ||
              MI->getOpcode() == PPC::SELECT_CC_I8 ||
              MI->getOpcode() == PPC::SELECT_CC_F4 ||
@@ -6136,7 +6397,7 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     unsigned TmpDestReg = RegInfo.createVirtualRegister(RC);
     unsigned Ptr1Reg;
     unsigned TmpReg = RegInfo.createVirtualRegister(RC);
-    unsigned ZeroReg = is64bit ? PPC::X0 : PPC::R0;
+    unsigned ZeroReg = is64bit ? PPC::ZERO8 : PPC::ZERO;
     //  thisMBB:
     //   ...
     //   fallthrough --> loopMBB
@@ -6239,6 +6500,30 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     BB = exitMBB;
     BuildMI(*BB, BB->begin(), dl, TII->get(PPC::SRW),dest).addReg(TmpReg)
       .addReg(ShiftReg);
+  } else if (MI->getOpcode() == PPC::FADDrtz) {
+    // This pseudo performs an FADD with rounding mode temporarily forced
+    // to round-to-zero.  We emit this via custom inserter since the FPSCR
+    // is not modeled at the SelectionDAG level.
+    unsigned Dest = MI->getOperand(0).getReg();
+    unsigned Src1 = MI->getOperand(1).getReg();
+    unsigned Src2 = MI->getOperand(2).getReg();
+    DebugLoc dl   = MI->getDebugLoc();
+
+    MachineRegisterInfo &RegInfo = F->getRegInfo();
+    unsigned MFFSReg = RegInfo.createVirtualRegister(&PPC::F8RCRegClass);
+
+    // Save FPSCR value.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MFFS), MFFSReg);
+
+    // Set rounding mode to round-to-zero.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSB1)).addImm(31);
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSB0)).addImm(30);
+
+    // Perform addition.
+    BuildMI(*BB, MI, dl, TII->get(PPC::FADD), Dest).addReg(Src1).addReg(Src2);
+
+    // Restore FPSCR value.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSF)).addImm(1).addReg(MFFSReg);
   } else {
     llvm_unreachable("Unexpected instr type to insert");
   }
@@ -6335,7 +6620,10 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
         N->getOperand(1).getOpcode() == ISD::BSWAP &&
         N->getOperand(1).getNode()->hasOneUse() &&
         (N->getOperand(1).getValueType() == MVT::i32 ||
-         N->getOperand(1).getValueType() == MVT::i16)) {
+         N->getOperand(1).getValueType() == MVT::i16 ||
+         (TM.getSubtarget<PPCSubtarget>().hasLDBRX() &&
+          TM.getSubtarget<PPCSubtarget>().isPPC64() &&
+          N->getOperand(1).getValueType() == MVT::i64))) {
       SDValue BSwapOp = N->getOperand(1).getOperand(0);
       // Do an any-extend to 32-bits if this is a half-word input.
       if (BSwapOp.getValueType() == MVT::i16)
@@ -6356,7 +6644,10 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     // Turn BSWAP (LOAD) -> lhbrx/lwbrx.
     if (ISD::isNON_EXTLoad(N->getOperand(0).getNode()) &&
         N->getOperand(0).hasOneUse() &&
-        (N->getValueType(0) == MVT::i32 || N->getValueType(0) == MVT::i16)) {
+        (N->getValueType(0) == MVT::i32 || N->getValueType(0) == MVT::i16 ||
+         (TM.getSubtarget<PPCSubtarget>().hasLDBRX() &&
+          TM.getSubtarget<PPCSubtarget>().isPPC64() &&
+          N->getValueType(0) == MVT::i64))) {
       SDValue Load = N->getOperand(0);
       LoadSDNode *LD = cast<LoadSDNode>(Load);
       // Create the byte-swapping load.
@@ -6367,8 +6658,9 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       };
       SDValue BSLoad =
         DAG.getMemIntrinsicNode(PPCISD::LBRX, dl,
-                                DAG.getVTList(MVT::i32, MVT::Other), Ops, 3,
-                                LD->getMemoryVT(), LD->getMemOperand());
+                                DAG.getVTList(N->getValueType(0) == MVT::i64 ?
+                                              MVT::i64 : MVT::i32, MVT::Other),
+                                Ops, 3, LD->getMemoryVT(), LD->getMemOperand());
 
       // If this is an i16 load, insert the truncate.
       SDValue ResVal = BSLoad;
@@ -6625,6 +6917,9 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
     // GCC RS6000 Constraint Letters
     switch (Constraint[0]) {
     case 'b':   // R1-R31
+      if (VT == MVT::i64 && PPCSubTarget.isPPC64())
+        return std::make_pair(0U, &PPC::G8RC_NOX0RegClass);
+      return std::make_pair(0U, &PPC::GPRC_NOR0RegClass);
     case 'r':   // R0-R31
       if (VT == MVT::i64 && PPCSubTarget.isPPC64())
         return std::make_pair(0U, &PPC::G8RCRegClass);
@@ -6809,13 +7104,16 @@ SDValue PPCTargetLowering::LowerFRAMEADDR(SDValue Op,
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MFI->setFrameAddressIsTaken(true);
-  bool is31 = (getTargetMachine().Options.DisableFramePointerElim(MF) ||
-               MFI->hasVarSizedObjects()) &&
-                  MFI->getStackSize() &&
-                  !MF.getFunction()->getAttributes().
-                    hasAttribute(AttributeSet::FunctionIndex, Attribute::Naked);
-  unsigned FrameReg = isPPC64 ? (is31 ? PPC::X31 : PPC::X1) :
-                                (is31 ? PPC::R31 : PPC::R1);
+
+  // Naked functions never have a frame pointer, and so we use r1. For all
+  // other functions, this decision must be delayed until during PEI.
+  unsigned FrameReg;
+  if (MF.getFunction()->getAttributes().hasAttribute(
+        AttributeSet::FunctionIndex, Attribute::Naked))
+    FrameReg = isPPC64 ? PPC::X1 : PPC::R1;
+  else
+    FrameReg = isPPC64 ? PPC::FP8 : PPC::FP;
+
   SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, FrameReg,
                                          PtrVT);
   while (Depth--)

@@ -779,14 +779,16 @@ void CodeGenSchedModels::collectProcItins() {
     for (unsigned i = 0, N = ItinRecords.size(); i < N; i++) {
       Record *ItinData = ItinRecords[i];
       Record *ItinDef = ItinData->getValueAsDef("TheClass");
-      SchedClassIter SCI = schedClassBegin(), SCE = schedClassEnd();
-      for( ; SCI != SCE; ++SCI) {
+      bool FoundClass = false;
+      for (SchedClassIter SCI = schedClassBegin(), SCE = schedClassEnd();
+           SCI != SCE; ++SCI) {
+        // Multiple SchedClasses may share an itinerary. Update all of them.
         if (SCI->ItinClassDef == ItinDef) {
           ProcModel.ItinDefList[SCI->Index] = ItinData;
-          break;
+          FoundClass = true;
         }
       }
-      if (SCI == SCE) {
+      if (!FoundClass) {
         DEBUG(dbgs() << ProcModel.ItinsDef->getName()
               << " missing class for itinerary " << ItinDef->getName() << '\n');
       }
@@ -1306,7 +1308,7 @@ void CodeGenSchedModels::inferFromRW(const IdxVec &OperWrites,
                                      const IdxVec &OperReads,
                                      unsigned FromClassIdx,
                                      const IdxVec &ProcIndices) {
-  DEBUG(dbgs() << "INFER RW: ");
+  DEBUG(dbgs() << "INFER RW proc("; dumpIdxVec(ProcIndices); dbgs() << ") ");
 
   // Create a seed transition with an empty PredTerm and the expanded sequences
   // of SchedWrites for the current SchedClass.
@@ -1648,6 +1650,13 @@ void CodeGenSchedClass::dump(const CodeGenSchedModels* SchedModels) const {
     }
   }
   dbgs() << "\n  ProcIdx: "; dumpIdxVec(ProcIndices); dbgs() << '\n';
+  if (!Transitions.empty()) {
+    dbgs() << "\n Transitions for Proc ";
+    for (std::vector<CodeGenSchedTransition>::const_iterator
+           TI = Transitions.begin(), TE = Transitions.end(); TI != TE; ++TI) {
+      dumpIdxVec(TI->ProcIndices);
+    }
+  }
 }
 
 void PredTransitions::dump() const {

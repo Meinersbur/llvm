@@ -44,6 +44,7 @@ public:
   /// Code Generation virtual methods...
   const uint16_t *getCalleeSavedRegs(const MachineFunction* MF = 0) const;
   const uint32_t *getCallPreservedMask(CallingConv::ID CC) const;
+  const uint32_t *getNoPreservedMask() const;
 
   BitVector getReservedRegs(const MachineFunction &MF) const;
 
@@ -60,12 +61,16 @@ public:
     return true;
   }
 
-  void lowerDynamicAlloc(MachineBasicBlock::iterator II,
-                         int SPAdj, RegScavenger *RS) const;
-  void lowerCRSpilling(MachineBasicBlock::iterator II, unsigned FrameIndex,
-                       int SPAdj, RegScavenger *RS) const;
-  void lowerCRRestore(MachineBasicBlock::iterator II, unsigned FrameIndex,
-                       int SPAdj, RegScavenger *RS) const;
+  void lowerDynamicAlloc(MachineBasicBlock::iterator II) const;
+  void lowerCRSpilling(MachineBasicBlock::iterator II,
+                       unsigned FrameIndex) const;
+  void lowerCRRestore(MachineBasicBlock::iterator II,
+                      unsigned FrameIndex) const;
+  void lowerVRSAVESpilling(MachineBasicBlock::iterator II,
+                           unsigned FrameIndex) const;
+  void lowerVRSAVERestore(MachineBasicBlock::iterator II,
+                          unsigned FrameIndex) const;
+
   bool hasReservedSpillSlot(const MachineFunction &MF, unsigned Reg,
 			    int &FrameIdx) const;
   void eliminateFrameIndex(MachineBasicBlock::iterator II,

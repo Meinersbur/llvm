@@ -58,9 +58,14 @@ private:
   X86Operand *ParseIntelOperand();
   X86Operand *ParseIntelOffsetOfOperator(SMLoc StartLoc);
   X86Operand *ParseIntelOperator(SMLoc StartLoc, unsigned OpKind);
-  X86Operand *ParseIntelMemOperand(unsigned SegReg, SMLoc StartLoc);
-  X86Operand *ParseIntelBracExpression(unsigned SegReg, unsigned Size);
+  X86Operand *ParseIntelMemOperand(unsigned SegReg, uint64_t ImmDisp,
+                                   SMLoc StartLoc);
+  X86Operand *ParseIntelBracExpression(unsigned SegReg, uint64_t ImmDisp,
+                                       unsigned Size);
   X86Operand *ParseMemOperand(unsigned SegReg, SMLoc StartLoc);
+
+  X86Operand *CreateMemForInlineAsm(const MCExpr *Disp, SMLoc Start, SMLoc End,
+                                    SMLoc SizeDirLoc, unsigned Size);
 
   bool ParseIntelDotOperator(const MCExpr *Disp, const MCExpr **NewDisp,
                              SmallString<64> &Err);
@@ -181,7 +186,6 @@ struct X86Operand : public MCParsedAsmOperand {
 
   struct ImmOp {
     const MCExpr *Val;
-    bool NeedAsmRewrite;
   };
 
   struct MemOp {
@@ -191,7 +195,6 @@ struct X86Operand : public MCParsedAsmOperand {
     unsigned IndexReg;
     unsigned Scale;
     unsigned Size;
-    bool NeedSizeDir;
   };
 
   union {
@@ -234,11 +237,6 @@ struct X86Operand : public MCParsedAsmOperand {
   const MCExpr *getImm() const {
     assert(Kind == Immediate && "Invalid access!");
     return Imm.Val;
-  }
-
-  bool needAsmRewrite() const {
-    assert(Kind == Immediate && "Invalid access!");
-    return Imm.NeedAsmRewrite;
   }
 
   const MCExpr *getMemDisp() const {
@@ -337,22 +335,12 @@ struct X86Operand : public MCParsedAsmOperand {
     return isImmSExti64i32Value(CE->getValue());
   }
 
-  unsigned getMemSize() const {
-    assert(Kind == Memory && "Invalid access!");
-    return Mem.Size;
-  }
-
   bool isOffsetOf() const {
     return OffsetOfLoc.getPointer();
   }
 
   bool needAddressOf() const {
     return AddressOf;
-  }
-
-  bool needSizeDirective() const {
-    assert(Kind == Memory && "Invalid access!");
-    return Mem.NeedSizeDir;
   }
 
   bool isMem() const { return Kind == Memory; }
@@ -490,17 +478,15 @@ struct X86Operand : public MCParsedAsmOperand {
     return Res;
   }
 
-  static X86Operand *CreateImm(const MCExpr *Val, SMLoc StartLoc, SMLoc EndLoc,
-                               bool NeedRewrite = true){
+  static X86Operand *CreateImm(const MCExpr *Val, SMLoc StartLoc, SMLoc EndLoc){
     X86Operand *Res = new X86Operand(Immediate, StartLoc, EndLoc);
     Res->Imm.Val = Val;
-    Res->Imm.NeedAsmRewrite = NeedRewrite;
     return Res;
   }
 
   /// Create an absolute memory operand.
   static X86Operand *CreateMem(const MCExpr *Disp, SMLoc StartLoc, SMLoc EndLoc,
-                               unsigned Size = 0, bool NeedSizeDir = false) {
+                               unsigned Size = 0) {
     X86Operand *Res = new X86Operand(Memory, StartLoc, EndLoc);
     Res->Mem.SegReg   = 0;
     Res->Mem.Disp     = Disp;
@@ -508,7 +494,6 @@ struct X86Operand : public MCParsedAsmOperand {
     Res->Mem.IndexReg = 0;
     Res->Mem.Scale    = 1;
     Res->Mem.Size     = Size;
-    Res->Mem.NeedSizeDir = NeedSizeDir;
     Res->AddressOf = false;
     return Res;
   }
@@ -517,7 +502,7 @@ struct X86Operand : public MCParsedAsmOperand {
   static X86Operand *CreateMem(unsigned SegReg, const MCExpr *Disp,
                                unsigned BaseReg, unsigned IndexReg,
                                unsigned Scale, SMLoc StartLoc, SMLoc EndLoc,
-                               unsigned Size = 0, bool NeedSizeDir = false) {
+                               unsigned Size = 0) {
     // We should never just have a displacement, that should be parsed as an
     // absolute memory operand.
     assert((SegReg || BaseReg || IndexReg) && "Invalid memory operand!");
@@ -532,7 +517,6 @@ struct X86Operand : public MCParsedAsmOperand {
     Res->Mem.IndexReg = IndexReg;
     Res->Mem.Scale    = Scale;
     Res->Mem.Size     = Size;
-    Res->Mem.NeedSizeDir = NeedSizeDir;
     Res->AddressOf = false;
     return Res;
   }
@@ -716,8 +700,8 @@ class IntelBracExprStateMachine {
   bool isPlus;
 
 public:
-  IntelBracExprStateMachine(MCAsmParser &parser) :
-    State(IBES_START), BaseReg(0), IndexReg(0), Scale(1), Disp(0),
+  IntelBracExprStateMachine(MCAsmParser &parser, int64_t disp) :
+    State(IBES_START), BaseReg(0), IndexReg(0), Scale(1), Disp(disp),
     TmpReg(0), TmpInteger(0), isPlus(true) {}
 
   unsigned getBaseReg() { return BaseReg; }
@@ -895,7 +879,47 @@ public:
   }
 };
 
-X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg, 
+X86Operand *X86AsmParser::CreateMemForInlineAsm(const MCExpr *Disp, SMLoc Start,
+                                                SMLoc End, SMLoc SizeDirLoc,
+                                                unsigned Size) {
+  bool NeedSizeDir = false;
+  bool IsVarDecl = false;
+  if (const MCSymbolRefExpr *SymRef = dyn_cast<MCSymbolRefExpr>(Disp)) {
+    const MCSymbol &Sym = SymRef->getSymbol();
+    // FIXME: The SemaLookup will fail if the name is anything other then an
+    // identifier.
+    // FIXME: Pass a valid SMLoc.
+    unsigned tLength, tSize, tType;
+    SemaCallback->LookupInlineAsmIdentifier(Sym.getName(), NULL, tLength,
+                                            tSize, tType, IsVarDecl);
+    if (!Size) {
+      Size = tType * 8; // Size is in terms of bits in this context.
+      NeedSizeDir = Size > 0;
+    }
+  }
+
+  // If this is not a VarDecl then assume it is a FuncDecl or some other label
+  // reference.  We need an 'r' constraint here, so we need to create register
+  // operand to ensure proper matching.  Just pick a GPR based on the size of
+  // a pointer.
+  if (!IsVarDecl) {
+    unsigned RegNo = is64BitMode() ? X86::RBX : X86::EBX;
+    return X86Operand::CreateReg(RegNo, Start, End, /*AddressOf=*/true);
+  }
+
+  if (NeedSizeDir)
+    InstInfo->AsmRewrites->push_back(AsmRewrite(AOK_SizeDirective, SizeDirLoc,
+                                                /*Len*/0, Size));  
+
+  // When parsing inline assembly we set the base register to a non-zero value
+  // as we don't know the actual value at this time.  This is necessary to
+  // get the matching correct in some cases.
+  return X86Operand::CreateMem(/*SegReg*/0, Disp, /*BaseReg*/1, /*IndexReg*/0,
+                               /*Scale*/1, Start, End, Size);
+}
+
+X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg,
+                                                   uint64_t ImmDisp,
                                                    unsigned Size) {
   const AsmToken &Tok = Parser.getTok();
   SMLoc Start = Tok.getLoc(), End = Tok.getEndLoc();
@@ -907,7 +931,7 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg,
 
   unsigned TmpReg = 0;
 
-  // Try to handle '[' 'symbol' ']'
+  // Try to handle '[' 'Symbol' ']'
   if (getLexer().is(AsmToken::Identifier)) {
     if (ParseRegister(TmpReg, Start, End)) {
       const MCExpr *Disp;
@@ -916,16 +940,27 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg,
 
       if (getLexer().isNot(AsmToken::RBrac))
         return ErrorOperand(Parser.getTok().getLoc(), "Expected ']' token!");
+
+      // FIXME: We don't handle 'ImmDisp' '[' 'Symbol' ']'.
+      if (ImmDisp)
+        return ErrorOperand(Start, "Unsupported immediate displacement!");
+
       // Adjust the EndLoc due to the ']'.
       End = SMLoc::getFromPointer(Parser.getTok().getEndLoc().getPointer()-1);
       Parser.Lex();
-      return X86Operand::CreateMem(Disp, Start, End, Size);
+      if (!isParsingInlineAsm())
+        return X86Operand::CreateMem(Disp, Start, End, Size);
+
+      // We want the size directive before the '['.
+      SMLoc SizeDirLoc = SMLoc::getFromPointer(Start.getPointer()-1);
+      return CreateMemForInlineAsm(Disp, Start, End, SizeDirLoc, Size);
     }
   }
 
-  // Parse [ BaseReg + Scale*IndexReg + Disp ].
+  // Parse [ BaseReg + Scale*IndexReg + Disp ].  We may have already parsed an
+  // immediate displacement before the bracketed expression.
   bool Done = false;
-  IntelBracExprStateMachine SM(Parser);
+  IntelBracExprStateMachine SM(Parser, ImmDisp);
 
   // If we parsed a register, then the end loc has already been set and
   // the identifier has already been lexed.  We also need to update the
@@ -1012,7 +1047,9 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg,
 }
 
 /// ParseIntelMemOperand - Parse intel style memory operand.
-X86Operand *X86AsmParser::ParseIntelMemOperand(unsigned SegReg, SMLoc Start) {
+X86Operand *X86AsmParser::ParseIntelMemOperand(unsigned SegReg,
+                                               uint64_t ImmDisp,
+                                               SMLoc Start) {
   const AsmToken &Tok = Parser.getTok();
   SMLoc End;
 
@@ -1024,8 +1061,21 @@ X86Operand *X86AsmParser::ParseIntelMemOperand(unsigned SegReg, SMLoc Start) {
     Parser.Lex();
   }
 
+  // Parse ImmDisp [ BaseReg + Scale*IndexReg + Disp ].
+  if (getLexer().is(AsmToken::Integer)) {
+    const AsmToken &IntTok = Parser.getTok();
+    if (isParsingInlineAsm())
+      InstInfo->AsmRewrites->push_back(AsmRewrite(AOK_ImmPrefix,
+                                                  IntTok.getLoc()));
+    uint64_t ImmDisp = IntTok.getIntVal();
+    Parser.Lex(); // Eat the integer.
+    if (getLexer().isNot(AsmToken::LBrac))
+      return ErrorOperand(Start, "Expected '[' token!");
+    return ParseIntelBracExpression(SegReg, ImmDisp, Size);
+  }
+
   if (getLexer().is(AsmToken::LBrac))
-    return ParseIntelBracExpression(SegReg, Size);
+    return ParseIntelBracExpression(SegReg, ImmDisp, Size);
 
   if (!ParseRegister(SegReg, Start, End)) {
     // Handel SegReg : [ ... ]
@@ -1034,47 +1084,16 @@ X86Operand *X86AsmParser::ParseIntelMemOperand(unsigned SegReg, SMLoc Start) {
     Parser.Lex(); // Eat :
     if (getLexer().isNot(AsmToken::LBrac))
       return ErrorOperand(Start, "Expected '[' token!");
-    return ParseIntelBracExpression(SegReg, Size);
+    return ParseIntelBracExpression(SegReg, ImmDisp, Size);
   }
 
   const MCExpr *Disp = MCConstantExpr::Create(0, getParser().getContext());
   if (getParser().parseExpression(Disp, End))
     return 0;
 
-  bool NeedSizeDir = false;
-  bool IsVarDecl = false;
-  if (isParsingInlineAsm()) {
-    if (const MCSymbolRefExpr *SymRef = dyn_cast<MCSymbolRefExpr>(Disp)) {
-      const MCSymbol &Sym = SymRef->getSymbol();
-      // FIXME: The SemaLookup will fail if the name is anything other then an
-      // identifier.
-      // FIXME: Pass a valid SMLoc.
-      unsigned tLength, tSize, tType;
-      SemaCallback->LookupInlineAsmIdentifier(Sym.getName(), NULL, tLength,
-                                              tSize, tType, IsVarDecl);
-      if (!Size)
-        Size = tType * 8; // Size is in terms of bits in this context.
-      NeedSizeDir = Size > 0;
-    }
-  }
   if (!isParsingInlineAsm())
     return X86Operand::CreateMem(Disp, Start, End, Size);
-  else {
-    // If this is not a VarDecl then assume it is a FuncDecl or some other label
-    // reference.  We need an 'r' constraint here, so we need to create register
-    // operand to ensure proper matching.  Just pick a GPR based on the size of
-    // a pointer.
-    if (!IsVarDecl) {
-      unsigned RegNo = is64BitMode() ? X86::RBX : X86::EBX;
-      return X86Operand::CreateReg(RegNo, Start, End, /*AddressOf=*/true);
-    }
-
-    // When parsing inline assembly we set the base register to a non-zero value
-    // as we don't know the actual value at this time.  This is necessary to
-    // get the matching correct in some cases.
-    return X86Operand::CreateMem(/*SegReg*/0, Disp, /*BaseReg*/1, /*IndexReg*/0,
-                                 /*Scale*/1, Start, End, Size, NeedSizeDir);
-  }
+  return CreateMemForInlineAsm(Disp, Start, End, Start, Size);
 }
 
 /// Parse the '.' operator.
@@ -1202,7 +1221,7 @@ X86Operand *X86AsmParser::ParseIntelOperator(SMLoc Start, unsigned OpKind) {
   InstInfo->AsmRewrites->push_back(AsmRewrite(AOK_Imm, TypeLoc, Len, CVal));
 
   const MCExpr *Imm = MCConstantExpr::Create(CVal, getContext());
-  return X86Operand::CreateImm(Imm, Start, End, /*NeedAsmRewrite*/false);
+  return X86Operand::CreateImm(Imm, Start, End);
 }
 
 X86Operand *X86AsmParser::ParseIntelOperand() {
@@ -1225,8 +1244,24 @@ X86Operand *X86AsmParser::ParseIntelOperand() {
   if (getLexer().is(AsmToken::Integer) || getLexer().is(AsmToken::Real) ||
       getLexer().is(AsmToken::Minus)) {
     const MCExpr *Val;
+    bool isInteger = getLexer().is(AsmToken::Integer);
     if (!getParser().parseExpression(Val, End)) {
-      return X86Operand::CreateImm(Val, Start, End);
+      if (isParsingInlineAsm())
+        InstInfo->AsmRewrites->push_back(AsmRewrite(AOK_ImmPrefix, Start));
+      // Immediate.
+      if (getLexer().isNot(AsmToken::LBrac))
+        return X86Operand::CreateImm(Val, Start, End);
+
+      // Only positive immediates are valid.
+      if (!isInteger) {
+        Error(Parser.getTok().getLoc(), "expected a positive immediate "
+              "displacement before bracketed expr.");
+        return 0;
+      }
+
+      // Parse ImmDisp [ BaseReg + Scale*IndexReg + Disp ].
+      if (uint64_t ImmDisp = dyn_cast<MCConstantExpr>(Val)->getValue())
+        return ParseIntelMemOperand(/*SegReg=*/0, ImmDisp, Start);
     }
   }
 
@@ -1239,11 +1274,11 @@ X86Operand *X86AsmParser::ParseIntelOperand() {
       return X86Operand::CreateReg(RegNo, Start, End);
 
     getParser().Lex(); // Eat the colon.
-    return ParseIntelMemOperand(RegNo, Start);
+    return ParseIntelMemOperand(/*SegReg=*/RegNo, /*Disp=*/0, Start);
   }
 
   // Memory operand.
-  return ParseIntelMemOperand(0, Start);
+  return ParseIntelMemOperand(/*SegReg=*/0, /*Disp=*/0, Start);
 }
 
 X86Operand *X86AsmParser::ParseATTOperand() {
@@ -1266,7 +1301,6 @@ X86Operand *X86AsmParser::ParseATTOperand() {
     // of a memory reference, otherwise this is a normal register reference.
     if (getLexer().isNot(AsmToken::Colon))
       return X86Operand::CreateReg(RegNo, Start, End);
-
 
     getParser().Lex(); // Eat the colon.
     return ParseMemOperand(RegNo, Start);

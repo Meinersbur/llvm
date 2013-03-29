@@ -78,7 +78,10 @@ protected:
   bool HasQPX;
   bool HasFSQRT;
   bool HasSTFIWX;
+  bool HasFPRND;
   bool HasISEL;
+  bool HasPOPCNTD;
+  bool HasLDBRX;
   bool IsBookE;
   bool HasLazyResolverStubs;
   bool IsJITCodeModel;
@@ -155,10 +158,13 @@ public:
   // Specific obvious features.
   bool hasFSQRT() const { return HasFSQRT; }
   bool hasSTFIWX() const { return HasSTFIWX; }
+  bool hasFPRND() const { return HasFPRND; }
   bool hasAltivec() const { return HasAltivec; }
   bool hasQPX() const { return HasQPX; }
   bool hasMFOCRF() const { return HasMFOCRF; }
   bool hasISEL() const { return HasISEL; }
+  bool hasPOPCNTD() const { return HasPOPCNTD; }
+  bool hasLDBRX() const { return HasLDBRX; }
   bool isBookE() const { return IsBookE; }
 
   const Triple &getTargetTriple() const { return TargetTriple; }

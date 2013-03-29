@@ -16,6 +16,7 @@
 #define LLVM_TARGET_POWERPC_PPC32ISELLOWERING_H
 
 #include "PPC.h"
+#include "PPCRegisterInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Target/TargetLowering.h"
@@ -95,12 +96,9 @@ namespace llvm {
       EXTSW_32,
 
       /// CALL - A direct function call.
-      /// CALL_NOP_SVR4 is a call with the special  NOP which follows 64-bit
+      /// CALL_NOP is a call with the special NOP which follows 64-bit
       /// SVR4 calls.
-      CALL_Darwin, CALL_SVR4, CALL_NOP_SVR4,
-
-      /// NOP - Special NOP which follows 64-bit SVR4 calls.
-      NOP,
+      CALL, CALL_NOP,
 
       /// CHAIN,FLAG = MTCTR(VAL, CHAIN[, INFLAG]) - Directly corresponds to a
       /// MTCTR instruction.
@@ -108,7 +106,7 @@ namespace llvm {
 
       /// CHAIN,FLAG = BCTRL(CHAIN, INFLAG) - Directly corresponds to a
       /// BCTRL instruction.
-      BCTRL_Darwin, BCTRL_SVR4,
+      BCTRL,
 
       /// Return with a flag operand, matched by 'blr'
       RET_FLAG,
@@ -118,6 +116,12 @@ namespace llvm {
       /// CRREG into the resultant GPR.  Bits corresponding to other CR regs
       /// are undefined.
       MFCR,
+
+      // EH_SJLJ_SETJMP - SjLj exception handling setjmp.
+      EH_SJLJ_SETJMP,
+
+      // EH_SJLJ_LONGJMP - SjLj exception handling longjmp.
+      EH_SJLJ_LONGJMP,
 
       /// RESVEC = VCMP(LHS, RHS, OPC) - Represents one of the altivec VCMP*
       /// instructions.  For lack of better number, we use the opcode number
@@ -138,26 +142,13 @@ namespace llvm {
       /// an optional input flag argument.
       COND_BRANCH,
 
-      // The following 5 instructions are used only as part of the
-      // long double-to-int conversion sequence.
-
-      /// OUTFLAG = MFFS F8RC - This moves the FPSCR (not modelled) into the
-      /// register.
-      MFFS,
-
-      /// OUTFLAG = MTFSB0 INFLAG - This clears a bit in the FPSCR.
-      MTFSB0,
-
-      /// OUTFLAG = MTFSB1 INFLAG - This sets a bit in the FPSCR.
-      MTFSB1,
-
-      /// F8RC, OUTFLAG = FADDRTZ F8RC, F8RC, INFLAG - This is an FADD done with
-      /// rounding towards zero.  It has flags added so it won't move past the
-      /// FPSCR-setting instructions.
+      /// F8RC = FADDRTZ F8RC, F8RC - This is an FADD done with rounding
+      /// towards zero.  Used only as part of the long double-to-int
+      /// conversion sequence.
       FADDRTZ,
 
-      /// MTFSF = F8RC, INFLAG - This moves the register into the FPSCR.
-      MTFSF,
+      /// F8RC = MFFS - This moves the FPSCR (not modeled) into the register.
+      MFFS,
 
       /// LARX = This corresponds to PPC l{w|d}arx instrcution: load and
       /// reserve indexed. This is used to implement atomic operations.
@@ -321,6 +312,7 @@ namespace llvm {
 
   class PPCTargetLowering : public TargetLowering {
     const PPCSubtarget &PPCSubTarget;
+    const PPCRegisterInfo *PPCRegInfo;
 
   public:
     explicit PPCTargetLowering(PPCTargetMachine &TM);
@@ -394,6 +386,12 @@ namespace llvm {
     MachineBasicBlock *EmitPartwordAtomicBinary(MachineInstr *MI,
                                                 MachineBasicBlock *MBB,
                                             bool is8bit, unsigned Opcode) const;
+
+    MachineBasicBlock *emitEHSjLjSetJmp(MachineInstr *MI,
+                                        MachineBasicBlock *MBB) const;
+
+    MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr *MI,
+                                         MachineBasicBlock *MBB) const;
 
     ConstraintType getConstraintType(const std::string &Constraint) const;
 
@@ -608,6 +606,9 @@ namespace llvm {
                      const SmallVectorImpl<ISD::InputArg> &Ins,
                      DebugLoc dl, SelectionDAG &DAG,
                      SmallVectorImpl<SDValue> &InVals) const;
+
+    SDValue lowerEH_SJLJ_SETJMP(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
   };
 }
 
