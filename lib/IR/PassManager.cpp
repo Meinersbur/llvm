@@ -25,7 +25,6 @@
 #include "llvm/Support/PassNameParser.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Analysis/RegionPass.h"
 #include <algorithm>
 #include <map>
 using namespace llvm;
@@ -107,63 +106,6 @@ static bool ShouldPrintAfterPass(const PassInfo *PI) {
   return PrintAfterAll || ShouldPrintBeforeOrAfterPass(PI, PrintAfter);
 }
 
-// BEGIN Molly
-template<typename PassType, typename UnitType>
-class PassResults {
-private:
-  PassResults() LLVM_DELETED_FUNCTION;
-  PassResults(const RegionPassResults&) LLVM_DELETED_FUNCTION;
-
-  //AnalysisID AID;
-  PassType *RepresentivePass;
-  DenseMap<UnitType*, PassType*> Results;
-
-protected:
-    explicit PassResults(PassType *RepresentivePass) : RepresentivePass(RepresentivePass) { 
-      assert(RepresentivePass);
-    }
-
-public:
-  ~PassResults() {
-    for (auto it = Results.begin(), end = Results.end(); it!=end; ++it) {
-      auto pass = it->second;
-      delete pass;
-    }
-  }
-
-  PassType *getAnalyisFor(UnitType *region) {
-    auto it = Results.find(region);
-    if (it != Results.end())
-      return it->second;
-
-    // Analysis does not exist?
-    return NULL;
-  }
-
-  PassType *getRepresentivePass() {
-    return RepresentivePass; 
-  }
-  void setAnalysisFor(UnitType *region, PassType *pass) { assert(Results.find(region) == Results.end());
-    assert(region); 
-    assert(pass);
-    Results[region] = pass;
-  }
-}; // PassResults
-
-
-class RegionPass;
-class RegionPassResults : public PassResults<RegionPass, Region> {
-public:
-  explicit RegionPassResults(RegionPass *RepresentivePass): PassResults(RepresentivePass) {}
-}; // class RegionPassResults
-
-class FunctionPassResults : public PassResults<FunctionPass, Function> {
-public:
-  explicit FunctionPassResults(FunctionPass *RepresentivePass): PassResults(RepresentivePass) {}
-}; // class FunctionPassResults
-
-// END Molly
-
 } // End of llvm namespace
 
 /// isPassDebuggingExecutionsOrMore - Return true if -debug-pass=Executions
@@ -172,11 +114,7 @@ bool PMDataManager::isPassDebuggingExecutionsOrMore() const {
   return PassDebugging >= Executions;
 }
 
-// BEGIN Molly
- bool PMDataManager::needToRememberPass(Pass *pass) {
-   return getTopLevelManager()->needToRememberPass(pass);
- }
-// END Molly
+
 
 
 void PassManagerPrettyStackEntry::print(raw_ostream &OS) const {
@@ -560,57 +498,6 @@ PMTopLevelManager::PMTopLevelManager(PMDataManager *PMDM) {
   activeStack.push(PMDM);
 }
 
-// BEGIN Molly
-static PMDataManager *getParentPassManager(Pass *P) {
-  auto Resolver = P->getResolver();
-  auto Manager = P->getAsPMDataManager();
-  if (!Resolver) {
-    // Assert it's the top level manager
-    assert(Manager);
-    return NULL;
-  }
-  auto Result = &Resolver->getPMDataManager();
-  assert(Result);
-  return Result;
-}
-
-
-static PMDataManager *getParentPassManager(PMDataManager *PM) {
-  return getParentPassManager(PM->getAsPass());
-}
-
-
-void PMTopLevelManager::setLastUserOf(Pass* AnalysisPass, Pass *P) {
-  LastUser[AnalysisPass] = P;
-  if (P == AnalysisPass)
-    return;
-
-  if (AnalysisPass->getAsImmutablePass())
-    return; // No need to remember ImmutablePasses, there is just one of them anyways
-
-  auto AnalysisInfo = PassRegistry::getPassRegistry()->getPassInfo(AnalysisPass->getPassID());
-  if (AnalysisInfo && !AnalysisInfo->isAnalysis())
-    return; // Do not remember passes which are not analyses
-
-  // See if the pass is also a child of the analyses' PassManager
-  // If so, we do not need to remember the analysis for all items
-  auto AnalysisParentManager = getParentPassManager(AnalysisPass);
-  auto PassParentManager = getParentPassManager(P);
-  while (PassParentManager) {
-    if (PassParentManager == AnalysisParentManager)
-      break;
-    PassParentManager = getParentPassManager(PassParentManager);
-  }
-
-  if (PassParentManager) 
-    return; // The PassManager needs just one copy of the analysis
-
-  // More than just the current item needs to be remembered
-  RememberPasses.insert(AnalysisPass);
-}
-// END Molly
-
-
 /// Set pass P as the last user of the given analysis passes.
 void
 PMTopLevelManager::setLastUser(ArrayRef<Pass*> AnalysisPasses, Pass *P) {
@@ -618,89 +505,13 @@ PMTopLevelManager::setLastUser(ArrayRef<Pass*> AnalysisPasses, Pass *P) {
   if (P->getResolver())
     PDepth = P->getResolver()->getPMDataManager().getDepth();
 
-// BEGIN Molly
-  SmallVector<Pass *, 12> LastUses;
-  SmallVector<Pass *, 12> LastPMUses;
-
-  DenseSet<PMDataManager*> Ancestors;
-  auto PassParentManager = getParentPassManager(P);
-  while (PassParentManager) {
-    Ancestors.insert(PassParentManager);
-    PassParentManager = getParentPassManager(PassParentManager);
-  }
-
-  // Compute transitive hull (less problematic than recursive invocation)
-  // TODO: Transitive hull not directly needed, back to official version call setLastUser directly
-  SmallVector<Pass *, 12> Worklist;
-  Worklist.append(AnalysisPasses.begin(), AnalysisPasses.end());
-  Worklist.push_back(P); // The pass uses itself; to be deterministic whether it belongs to it, we always add it
-  SmallPtrSet<Pass *, 12> TransitiveHull;
-  while (!Worklist.empty()) {
-    auto AP = Worklist.pop_back_val();
-    if (TransitiveHull.count(AP))
-      continue;
-    TransitiveHull.insert(AP);
-
-    AnalysisUsage *AnUsage = findAnalysisUsage(AP);
-    auto &IDs = AnUsage->getRequiredTransitiveSet();
-    for (AnalysisUsage::VectorType::const_iterator I = IDs.begin(), E = IDs.end(); I != E; ++I) {
-      auto requiredAnalysis = *I;
-      Pass *AnalysisPass = findAnalysisPass(requiredAnalysis);
-      assert(AnalysisPass && "The analysis prerequisite should have been added to the PassManager");
-      Worklist.push_back(AnalysisPass);
-    }
-  }
-
-  for (auto LUI = TransitiveHull.begin(), LUE = TransitiveHull.end(); LUI!=LUE; ++LUI) {
-    auto AnalysisPass = *LUI;
-    setLastUserOf(AnalysisPass, P);
-
-#if 0
-    while (ParentManager && Ancestors.find(ParentManager->getAsPass()) != Ancestors.end()) {
-      ParentManager->setRememberAnalysis(AnalysisPass);
-      ParentManager = getParentPassManager(ParentManager);
-    }
-
-
-    AnalysisResolver *AR = AnalysisPass->getResolver();
-    assert(AR);
-    unsigned APDepth = AR->getPMDataManager().getDepth();
-    if (PDepth == APDepth)
-      LastUses.push_back(AnalysisPass);
-    else if (PDepth > APDepth)
-      LastPMUses.push_back(AnalysisPass);
-
-    // Search for common ancestor
-    SmallVector<PMDataManager *, 4> PathDown;
-    auto ParentManager = getParentPassManager(AnalysisPass);
-    while (ParentManager && Ancestors.find(ParentManager->getAsPass()) != Ancestors.end()) {
-      PathDown.push_back(ParentManager);
-      ParentManager->setRememberAnalysis(APAnalysisPass;
-      ParentManager = getParentPassManager(ParentManager);
-    }
-    assert(ParentPass && "No common ancestor???");
-
-    SmallVector<PMDataManager *, 4> PathUp;
-    auto CommonAncestor = ParentManager;
-    ParentManager = getParentPassManager(P);
-    while (ParentManager && ParentManager != CommonAncestor) {
-      PathDown.push_back(ParentManager);
-      ParentManager = getParentPassManager(ParentManager);
-    }
-#endif
-  }
-  //assert(LastUses.size() == TransitiveHull.size()-1);
-
-  return;
-// END Molly
-
   for (SmallVectorImpl<Pass *>::const_iterator I = AnalysisPasses.begin(),
-         E = AnalysisPasses.end(); I != E; ++I) { 
-    Pass *AP = *I; // AP required by P
+         E = AnalysisPasses.end(); I != E; ++I) {
+    Pass *AP = *I;
     LastUser[AP] = P;
 
-    if (P == AP) // P requires itself
-      continue; 
+    if (P == AP)
+      continue;
 
     // Update the last users of passes that are required transitive by AP.
     AnalysisUsage *AnUsage = findAnalysisUsage(AP);
@@ -825,7 +636,6 @@ void PMTopLevelManager::schedulePass(Pass *P) {
 
         assert(PI && "Expected required passes to be initialized");
         AnalysisPass = PI->createPass();
-
         if (P->getPotentialPassManagerType () ==
             AnalysisPass->getPotentialPassManagerType())
           // Schedule analysis pass that is managed by the same pass manager.
@@ -913,12 +723,6 @@ Pass *PMTopLevelManager::findAnalysisPass(AnalysisID AID) {
     }
   }
 
-// BEGIN Molly
-  auto it = IDToLastAnalysis.find(AID);
-  if (it != IDToLastAnalysis.end())
-    return it->second;
-// END Molly
-
   return 0;
 }
 
@@ -967,7 +771,7 @@ void PMTopLevelManager::initializeAllAnalysisInfo() {
          E = PassManagers.end(); I != E; ++I)
     (*I)->initializeAnalysisInfo();
 
-  // Initialize other pass managers
+  // Initailize other pass managers
   for (SmallVectorImpl<PMDataManager *>::iterator
        I = IndirectPassManagers.begin(), E = IndirectPassManagers.end();
        I != E; ++I)
@@ -985,18 +789,6 @@ void PMTopLevelManager::initializeAllAnalysisInfo() {
       InversedLastUser[DMI->second] = L;
     }
   }
-
-  // BEGIN Molly
-  IDToLastAnalysis.clear();
-  for (auto it = AvailableFunctionResults.begin(), end = AvailableFunctionResults.end(); it!=end;++it) {
-    delete it->second;
-  }
-  AvailableFunctionResults.clear();
-  for (auto it = AvailableRegionResults.begin(), end = AvailableRegionResults.end(); it!=end;++it) {
-    delete it->second;
-  }
-  AvailableRegionResults.clear();
-  // END Molly
 }
 
 /// Destructor
@@ -1012,164 +804,7 @@ PMTopLevelManager::~PMTopLevelManager() {
   for (DenseMap<Pass *, AnalysisUsage *>::iterator DMI = AnUsageMap.begin(),
          DME = AnUsageMap.end(); DMI != DME; ++DMI)
     delete DMI->second;
-
-  // BEGIN Molly
-  for (auto it = AvailableFunctionResults.begin(), end = AvailableFunctionResults.end(); it!=end;++it) {
-    delete it->second;
-  }
-  for (auto it = AvailableRegionResults.begin(), end = AvailableRegionResults.end(); it!=end; ++it) {
-    delete it->second;
-  }
-  // END Molly
 }
-
-
-// BEGIN Molly
-bool PMTopLevelManager::needToRememberPass(Pass *pass) {
-  return RememberPasses.count(pass);
-}
-
-
-void PMTopLevelManager::registerAvailableAnalysis(Pass *P) {
-  AnalysisID PI = P->getPassID();
-  IDToLastAnalysis[PI] = P;
-  const PassInfo *PInf = PassRegistry::getPassRegistry()->getPassInfo(PI);
-  if (PInf == 0) return;
-  const std::vector<const PassInfo*> &II = PInf->getInterfacesImplemented();
-  for (unsigned i = 0, e = II.size(); i != e; ++i) 
-    if (IDToLastAnalysis.find(II[i]->getTypeInfo()) == IDToLastAnalysis.end())
-      IDToLastAnalysis[II[i]->getTypeInfo()] = P;
-}
-
-
-static const std::vector<const PassInfo*> &getPassInterfaces(Pass *P) {
-    auto ID = P->getPassID();
-    auto Info = PassRegistry::getPassRegistry()->getPassInfo(ID);
-    auto &Intfs = Info->getInterfacesImplemented();
-    return Intfs;
-}
-
-
-FunctionPass *PMTopLevelManager::getAnalysis(AnalysisID PI, Function &F) {
-  auto itAPass = IDToLastAnalysis.find(PI);
-  if (itAPass == IDToLastAnalysis.end())
-    return NULL;
-  auto AnalysisPass = itAPass->second;
-
-  auto itResults = AvailableFunctionResults.find(AnalysisPass);
-  if (itResults == AvailableFunctionResults.end())
-    return NULL;
-  auto Results = itResults->second;
-
-  return Results->getAnalyisFor(&F);
-}
-
-
-RegionPass *PMTopLevelManager::getAnalysis(AnalysisID PI, Region &R) {
-  auto itAPass = IDToLastAnalysis.find(PI);
-  if (itAPass == IDToLastAnalysis.end())
-    return NULL;
-  auto AnalysisPass = itAPass->second;
-
-  auto itResults = AvailableRegionResults.find(AnalysisPass);
-  if (itResults == AvailableRegionResults.end())
-    return NULL;
-  auto Results = itResults->second;
-
-  return Results->getAnalyisFor(&R);
-}
-
-
-void PMTopLevelManager::rememberAnalysis(FunctionPass *Representative, FunctionPass *P, Function &F) {
-   auto &Results = AvailableFunctionResults[Representative];
-   if (!Results) {
-     Results = new FunctionPassResults(Representative); // no results for this pass yet, create it
-   }
-   assert(!Results->getAnalyisFor(&F));
-   Results->setAnalysisFor(&F, P);
-
-   //registerAvailableAnalysis(Representative);
-}
-
-
- void PMTopLevelManager::rememberAnalysis(RegionPass *Representative, RegionPass *P, Region &R) { //TODO: Ensure that also transitive requirements are remembered
-   auto &Results = AvailableRegionResults[Representative];
-   if (!Results) {
-     Results = new RegionPassResults(Representative); // no results for this pass yet, create it
-   }
-   assert(!Results->getAnalyisFor(&R));
-   Results->setAnalysisFor(&R, P);
-
-   //registerAvailableAnalysis(Representative);
-}
-
-
- void PMTopLevelManager::removeNotPreservedAnalysis(Pass *P) {
-   AnalysisUsage *AnUsage = findAnalysisUsage(P);
-   if (AnUsage->getPreservesAll())
-     return;
-
-   DenseMap<Pass*, int> Refcount;
-   const AnalysisUsage::VectorType &PreservedSet = AnUsage->getPreservedSet(); 
-   if (PreservedSet.empty()) IDToLastAnalysis.clear(); 
-   else {
-     for (auto itAvail = IDToLastAnalysis.begin(), endAvail = IDToLastAnalysis.end(); itAvail!=endAvail; ++itAvail) {
-       if (std::find(PreservedSet.begin(), PreservedSet.end(), itAvail->first) == PreservedSet.end()) {
-         IDToLastAnalysis.erase(itAvail);
-       } else {
-         Refcount[itAvail->second] += 1;
-       }
-     }
-   }
-
-   for (auto itFunc = AvailableFunctionResults.begin(), endFunc = AvailableFunctionResults.end(); itFunc!=endFunc;++itFunc) {
-     if (Refcount.find(itFunc->first) != Refcount.end())
-       continue;
-
-     delete itFunc->second;
-     AvailableFunctionResults.erase(itFunc);
-   }
-   for (auto itRegion = AvailableRegionResults.begin(), endRegion = AvailableRegionResults.end(); itRegion!=endRegion; ++itRegion) {
-     if (Refcount.find(itRegion->first) != Refcount.end())
-       continue;
-
-     delete itRegion->second;
-     AvailableRegionResults.erase(itRegion);
-   }
- }
-
-
- void PMTopLevelManager::removeDeadPasses(ArrayRef<Pass*> Passes, Pass *LastPass) {
-   for (auto it = Passes.begin(), end = Passes.end(); it!=end; ++it) {
-     auto Pass = *it;
-     assert(LastUser[Pass] == LastPass);
-
-     switch(Pass->getPassKind()) {
-     case PT_Function:
-       {
-         auto itFuncResults = AvailableFunctionResults.find(Pass);
-         if (itFuncResults != AvailableFunctionResults.end()) {
-           delete itFuncResults->second;
-           AvailableFunctionResults.erase(itFuncResults);
-         }
-       }
-       break;
-     case PT_Region:
-       {
-         auto itResults = AvailableRegionResults.find(Pass);
-         if (itResults != AvailableRegionResults.end()) {
-           delete itResults->second;
-           AvailableRegionResults.erase(itResults);
-         }
-         break;
-       }
-     default:
-       // Not yet supporter kind an therefore nothing to remove
-       break;
-     }
-   }
- }
-// END Molly
 
 //===----------------------------------------------------------------------===//
 // PMDataManager implementation
@@ -1189,11 +824,6 @@ void PMDataManager::recordAvailableAnalysis(Pass *P) {
   const std::vector<const PassInfo*> &II = PInf->getInterfacesImplemented();
   for (unsigned i = 0, e = II.size(); i != e; ++i)
     AvailableAnalysis[II[i]->getTypeInfo()] = P;
-
-// BEGIN Molly
-  auto TLM = getTopLevelManager();
-  TLM->registerAvailableAnalysis(P);
-// END Molly
 }
 
 // Return true if P preserves high level analysis used by other
@@ -1244,9 +874,9 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
     return;
 
   const AnalysisUsage::VectorType &PreservedSet = AnUsage->getPreservedSet();
-  for (DenseMap<AnalysisID, Pass*>::iterator I = AvailableAnalysis.begin(),
+  for (std::map<AnalysisID, Pass*>::iterator I = AvailableAnalysis.begin(),
          E = AvailableAnalysis.end(); I != E; ) {
-    DenseMap<AnalysisID, Pass*>::iterator Info = I++;
+    std::map<AnalysisID, Pass*>::iterator Info = I++;
     if (Info->second->getAsImmutablePass() == 0 &&
         std::find(PreservedSet.begin(), PreservedSet.end(), Info->first) ==
         PreservedSet.end()) {
@@ -1267,10 +897,10 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
     if (!InheritedAnalysis[Index])
       continue;
 
-    for (DenseMap<AnalysisID, Pass*>::iterator
+    for (std::map<AnalysisID, Pass*>::iterator
            I = InheritedAnalysis[Index]->begin(),
            E = InheritedAnalysis[Index]->end(); I != E; ) {
-      DenseMap<AnalysisID, Pass *>::iterator Info = I++;
+      std::map<AnalysisID, Pass *>::iterator Info = I++;
       if (Info->second->getAsImmutablePass() == 0 &&
           std::find(PreservedSet.begin(), PreservedSet.end(), Info->first) ==
              PreservedSet.end()) {
@@ -1284,10 +914,6 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
       }
     }
   }
-
-// BEGIN Molly
-  getTopLevelManager()->removeNotPreservedAnalysis(P);
-// END Molly
 }
 
 /// Remove analysis passes that are not used any longer
@@ -1311,10 +937,6 @@ void PMDataManager::removeDeadPasses(Pass *P, StringRef Msg,
   for (SmallVectorImpl<Pass *>::iterator I = DeadPasses.begin(),
          E = DeadPasses.end(); I != E; ++I)
     freePass(*I, Msg, DBG_STR);
-
-// BEGIN Molly
-  getTopLevelManager()->removeDeadPasses(DeadPasses, P);
-// END Molly
 }
 
 void PMDataManager::freePass(Pass *P, StringRef Msg,
@@ -1338,7 +960,7 @@ void PMDataManager::freePass(Pass *P, StringRef Msg,
     // listed as the available implementation.
     const std::vector<const PassInfo*> &II = PInf->getInterfacesImplemented();
     for (unsigned i = 0, e = II.size(); i != e; ++i) {
-      DenseMap<AnalysisID, Pass*>::iterator Pos =
+      std::map<AnalysisID, Pass*>::iterator Pos =
         AvailableAnalysis.find(II[i]->getTypeInfo());
       if (Pos != AvailableAnalysis.end() && Pos->second == P)
         AvailableAnalysis.erase(Pos);
@@ -1381,20 +1003,6 @@ void PMDataManager::add(Pass *P, bool ProcessAnalysis) {
     assert(PRequired->getResolver() && "Analysis Resolver is not set");
     PMDataManager &DM = PRequired->getResolver()->getPMDataManager();
     RDepth = DM.getDepth();
-
-    // BEGIN Molly
-    LastUses.push_back(PRequired);
-    if (&DM == this) {
-      assert(PDepth == RDepth);
-      // This analysis is private to the passes in this PassManager 
-    } else if (PDepth > RDepth) {
-      // Let the parent claim responsibility of last use
-      TransferLastUses.push_back(PRequired);
-      // Keep track of higher level analysis used by this manager.
-      HigherLevelAnalysis.push_back(PRequired);
-    }
-    continue;
-    // END Molly
 
     if (PDepth == RDepth)
       LastUses.push_back(PRequired);
@@ -1492,7 +1100,7 @@ void PMDataManager::initializeAnalysisImpl(Pass *P) {
 Pass *PMDataManager::findAnalysisPass(AnalysisID AID, bool SearchParent) {
 
   // Check if AvailableAnalysis map has one entry.
-  DenseMap<AnalysisID, Pass*>::const_iterator I = AvailableAnalysis.find(AID);
+  std::map<AnalysisID, Pass*>::const_iterator I =  AvailableAnalysis.find(AID);
 
   if (I != AvailableAnalysis.end())
     return I->second;
@@ -1662,21 +1270,8 @@ Pass *AnalysisResolver::getAnalysisIfAvailable(AnalysisID ID, bool dir) const {
 
 Pass *AnalysisResolver::findImplPass(Pass *P, AnalysisID AnalysisPI,
                                      Function &F) {
-// BEGIN Molly
-  auto result = PM.getTopLevelManager()->getAnalysis(AnalysisPI, F);
-  if (result)
-    return result;
-// END Molly
   return PM.getOnTheFlyPass(P, AnalysisPI, F);
 }
-
-
-// BEGIN Molly
-RegionPass *AnalysisResolver::findImplPass(Pass *Requester, AnalysisID PI, Region &R) {
-  return PM.getTopLevelManager()->getAnalysis(PI, R);
-}
-// END Molly
-
 
 //===----------------------------------------------------------------------===//
 // BBPassManager implementation
@@ -1923,19 +1518,6 @@ bool FPPassManager::runOnFunction(Function &F) {
     FunctionPass *FP = getContainedPass(Index);
     bool LocalChanged = false;
 
-// BEGIN Molly
-    FunctionPass *RealPass = FP;
-    bool rememberPass = false;
-    if (needToRememberPass(FP)) {
-      rememberPass = true;
-      // Create an on-the-fly pass that we don't have to clear for the next function
-      auto ID = FP->getPassID();
-      const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(ID);
-      RealPass = static_cast<FunctionPass*>(PI->createPass());
-      LocalChanged |= RealPass->doInitialization(*F.getParent());
-    }
-// END Molly
-
     dumpPassInfo(FP, EXECUTION_MSG, ON_FUNCTION_MSG, F.getName());
     dumpRequiredSet(FP);
 
@@ -1945,7 +1527,7 @@ bool FPPassManager::runOnFunction(Function &F) {
       PassManagerPrettyStackEntry X(FP, F);
       TimeRegion PassTimer(getPassTimer(FP));
 
-      LocalChanged |= RealPass->runOnFunction(F);
+      LocalChanged |= FP->runOnFunction(F);
     }
 
     Changed |= LocalChanged;
@@ -1956,27 +1538,10 @@ bool FPPassManager::runOnFunction(Function &F) {
     verifyPreservedAnalysis(FP);
     removeNotPreservedAnalysis(FP);
     recordAvailableAnalysis(FP);
-// BEGIN Molly
-    if (rememberPass) {
-      Changed |= RealPass->doFinalization(*F.getParent());
-      addAnalysisToRemember(FP, &F, RealPass);
-    } 
-// END Molly
     removeDeadPasses(FP, F.getName(), ON_FUNCTION_MSG);
   }
   return Changed;
 }
-
-
-// BEGIN Molly
-void FPPassManager::addAnalysisToRemember(FunctionPass *representive, Function *F, FunctionPass *pass) {
- auto AR = getResolver();
- assert(AR && "Must be added to a PassManager");
- auto TLM = AR->getPMDataManager().getTopLevelManager();
- TLM->rememberAnalysis(representive, pass, *F);
-}
-// END Molly
-
 
 bool FPPassManager::runOnModule(Module &M) {
   bool Changed = false;

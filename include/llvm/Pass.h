@@ -45,7 +45,6 @@ class AnalysisResolver;
 class PMDataManager;
 class raw_ostream;
 class StringRef;
-class Region;
 
 // AnalysisID - Use the PassInfo to identify a pass...
 typedef const void* AnalysisID;
@@ -81,7 +80,6 @@ enum PassKind {
 /// constrained passes described below.
 ///
 class Pass {
-  bool OwnsResolver;
   AnalysisResolver *Resolver;  // Used to resolve analysis
   const void *PassID;
   PassKind Kind;
@@ -89,7 +87,7 @@ class Pass {
   Pass(const Pass &) LLVM_DELETED_FUNCTION;
 
 public:
-  explicit Pass(PassKind K, char &pid) : OwnsResolver(false), Resolver(0), PassID(&pid), Kind(K) { }
+  explicit Pass(PassKind K, char &pid) : Resolver(0), PassID(&pid), Kind(K) { }
   virtual ~Pass();
 
 
@@ -142,7 +140,7 @@ public:
   virtual PassManagerType getPotentialPassManagerType() const;
 
   // Access AnalysisResolver
-  void setResolver(AnalysisResolver *AR, bool takeOwnership = true);
+  void setResolver(AnalysisResolver *AR);
   AnalysisResolver *getResolver() const { return Resolver; }
 
   /// getAnalysisUsage - This function should be overriden by passes that need
@@ -226,17 +224,6 @@ public:
 
   template<typename AnalysisType>
   AnalysisType &getAnalysisID(AnalysisID PI, Function &F);
-
-  // BEGIN Molly
-  template<typename AnalysisType>
-  AnalysisType &getAnalysis(Region &R);
-
-  template<typename AnalysisType>
-  AnalysisType &getAnalysisID(AnalysisID PI, Region &R);
-
-private:
-  Pass *findRegionPassResult(AnalysisID PI, Region &R);
-  // END Molly
 };
 
 

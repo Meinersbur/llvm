@@ -19,7 +19,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PassNameParser.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Analysis/RegionPass.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -28,9 +27,7 @@ using namespace llvm;
 
 // Force out-of-line virtual method.
 Pass::~Pass() {
-  if (OwnsResolver)
-    delete Resolver;
-  Resolver = NULL;
+  delete Resolver;
 }
 
 // Force out-of-line virtual method.
@@ -48,13 +45,6 @@ PassManagerType ModulePass::getPotentialPassManagerType() const {
 bool Pass::mustPreserveAnalysisID(char &AID) const {
   return Resolver->getAnalysisIfAvailable(&AID, true) != 0;
 }
-
-// BEGIN Molly
-Pass *Pass::findRegionPassResult(AnalysisID PI, Region &R) {
-  Pass *ResultPass = Resolver->findImplPass(static_cast<RegionPass*>(this), PI, R);
-  return ResultPass;
-}
-// END Molly
 
 // dumpPassStructure - Implement the -debug-pass=Structure option
 void Pass::dumpPassStructure(unsigned Offset) {
@@ -106,10 +96,9 @@ PMDataManager *Pass::getAsPMDataManager() {
   return 0;
 }
 
-void Pass::setResolver(AnalysisResolver *AR, bool takeOwnership) {
+void Pass::setResolver(AnalysisResolver *AR) {
   assert(!Resolver && "Resolver is already set");
   Resolver = AR;
-  OwnsResolver = takeOwnership;
 }
 
 // print - Print out the internal state of the pass.  This is called by Analyze

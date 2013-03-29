@@ -19,7 +19,6 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Pass.h"
-#include "llvm/ADT/DenseSet.h"
 #include <map>
 #include <vector>
 
@@ -99,11 +98,6 @@ namespace llvm {
   class Value;
   class Timer;
   class PMDataManager;
-// BEGIN Molly
-  class RegionPass;
-  class RegionPassResults;
-  class FunctionPassResults;
-// END Molly
 
 // enums for debugging strings
 enum PassDebuggingString {
@@ -191,11 +185,6 @@ public:
   void schedulePass(Pass *P);
 
   /// Set pass P as the last user of the given analysis passes.
-// BEGIN Molly
-private:
-  void setLastUserOf(Pass* AnalysisPass, Pass *P);
-public:
-// END Molly
   void setLastUser(ArrayRef<Pass*> AnalysisPasses, Pass *P);
 
   /// Collect passes whose last user is P
@@ -262,25 +251,8 @@ private:
   SmallVector<ImmutablePass *, 8> ImmutablePasses;
 
   DenseMap<Pass *, AnalysisUsage *> AnUsageMap;
-
-  // BEGIN Molly
-public:
-  SmallPtrSet<Pass*, 12> RememberPasses;
-  bool needToRememberPass(Pass *);
-
-  DenseMap<AnalysisID, Pass*> IDToLastAnalysis; //TDODO: Rename AvailableAnalyses
-  void registerAvailableAnalysis(Pass *P);
-
-  DenseMap<Pass*, RegionPassResults*> AvailableRegionResults;
-  DenseMap<Pass*, FunctionPassResults*> AvailableFunctionResults;
-  RegionPass *getAnalysis(AnalysisID, Region &);
-  FunctionPass *getAnalysis(AnalysisID, Function &);
-  void rememberAnalysis(RegionPass *Representative, RegionPass *P, Region &R);
-  void rememberAnalysis(FunctionPass *, FunctionPass *, Function &);
-  void removeNotPreservedAnalysis(Pass *P);
-  void removeDeadPasses(ArrayRef<Pass*> Passes, Pass *LastPass);
-  // END Molly
 };
+
 
 
 //===----------------------------------------------------------------------===//
@@ -380,7 +352,7 @@ public:
     return PMT_Unknown;
   }
 
-  DenseMap<AnalysisID, Pass*> *getAvailableAnalysis() {
+  std::map<AnalysisID, Pass*> *getAvailableAnalysis() {
     return &AvailableAnalysis;
   }
 
@@ -403,7 +375,8 @@ protected:
   // Collection of Analysis provided by Parent pass manager and
   // used by current pass manager. At at time there can not be more
   // then PMT_Last active pass mangers.
-  DenseMap<AnalysisID, Pass *> *InheritedAnalysis[PMT_Last];
+  std::map<AnalysisID, Pass *> *InheritedAnalysis[PMT_Last];
+
 
   /// isPassDebuggingExecutionsOrMore - Return true if -debug-pass=Executions
   /// or higher is specified.
@@ -417,18 +390,13 @@ private:
   // pass. If a pass requires an analysis which is not available then
   // the required analysis pass is scheduled to run before the pass itself is
   // scheduled to run.
-  DenseMap<AnalysisID, Pass*> AvailableAnalysis;
+  std::map<AnalysisID, Pass*> AvailableAnalysis;
 
   // Collection of higher level analysis used by the pass managed by
   // this manager.
   SmallVector<Pass *, 8> HigherLevelAnalysis;
 
   unsigned Depth;
-
-  // BEGIN Molly
-  public: 
-    bool needToRememberPass(Pass *pass);
-  // END Molly
 };
 
 //===----------------------------------------------------------------------===//
@@ -494,10 +462,6 @@ public:
   virtual PassManagerType getPassManagerType() const {
     return PMT_FunctionPassManager;
   }
-
-// BEGIN Molly
-  void addAnalysisToRemember(FunctionPass *Representative, Function *, FunctionPass *Pass);
-// END Molly
 };
 
 Timer *getPassTimer(Pass *);
