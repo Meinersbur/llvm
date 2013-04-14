@@ -643,8 +643,9 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
 
   SmallVector<Type*, 8> ArgTys;
   while (!TableRef.empty()) {
-    if (TableRef.front().Kind == IITDescriptor::Vararg) { TableRef = TableRef.slice(1);
-      ArgTys.append(Tys.begin()+varargStart, Tys.end());
+    if (TableRef.front().Kind == IITDescriptor::Vararg) { 
+      TableRef = TableRef.slice(1);
+      ArgTys.append(Tys.begin() + varargStart, Tys.end());
       continue;
     } 
     ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context, varargStart));
