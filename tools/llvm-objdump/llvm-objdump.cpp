@@ -191,6 +191,14 @@ bool llvm::RelocAddressLess(RelocationRef a, RelocationRef b) {
   return a_addr < b_addr;
 }
 
+StringRef
+getSectionFinalSegmentName(const MachOObjectFileBase *MachO, DataRefImpl DR) {
+  if (const MachOObjectFileLE *O = dyn_cast<MachOObjectFileLE>(MachO))
+    return O->getSectionFinalSegmentName(DR);
+  const MachOObjectFileBE *O = dyn_cast<MachOObjectFileBE>(MachO);
+  return O->getSectionFinalSegmentName(DR);
+}
+
 static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
   const Target *TheTarget = getTarget(Obj);
   // getTarget() will have already issued a diagnostic if necessary, so
@@ -228,6 +236,7 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
       if (!error(i->containsSymbol(*si, contains)) && contains) {
         uint64_t Address;
         if (error(si->getAddress(Address))) break;
+        if (Address == UnknownAddressOrSize) continue;
         Address -= SectionAddr;
 
         StringRef Name;
@@ -254,10 +263,10 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
     std::sort(Rels.begin(), Rels.end(), RelocAddressLess);
 
     StringRef SegmentName = "";
-    if (const MachOObjectFile *MachO = dyn_cast<const MachOObjectFile>(Obj)) {
+    if (const MachOObjectFileBase *MachO =
+        dyn_cast<const MachOObjectFileBase>(Obj)) {
       DataRefImpl DR = i->getRawDataRefImpl();
-      if (error(MachO->getSectionFinalSegmentName(DR, SegmentName)))
-        break;
+      SegmentName = getSectionFinalSegmentName(MachO, DR);
     }
     StringRef name;
     if (error(i->getName(name))) break;
@@ -591,11 +600,10 @@ static void PrintSymbolTable(const ObjectFile *o) {
       else if (Section == o->end_sections())
         outs() << "*UND*";
       else {
-        if (const MachOObjectFile *MachO = dyn_cast<const MachOObjectFile>(o)) {
-          StringRef SegmentName;
+        if (const MachOObjectFileBase *MachO =
+            dyn_cast<const MachOObjectFileBase>(o)) {
           DataRefImpl DR = Section->getRawDataRefImpl();
-          if (error(MachO->getSectionFinalSegmentName(DR, SegmentName)))
-            SegmentName = "";
+          StringRef SegmentName = getSectionFinalSegmentName(MachO, DR);
           outs() << SegmentName << ",";
         }
         StringRef SectionName;

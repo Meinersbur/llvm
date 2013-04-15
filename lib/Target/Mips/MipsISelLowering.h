@@ -68,6 +68,16 @@ namespace llvm {
 
       EH_RETURN,
 
+      // Node used to extract integer from accumulator.
+      ExtractLOHI,
+
+      // Node used to insert integers to accumulator.
+      InsertLOHI,
+
+      // Mult nodes.
+      Mult,
+      Multu,
+
       // MAdd/Sub nodes
       MAdd,
       MAddu,
@@ -77,6 +87,8 @@ namespace llvm {
       // DivRem(u)
       DivRem,
       DivRemU,
+      DivRem16,
+      DivRemU16,
 
       BuildPairF64,
       ExtractElementF64,
@@ -333,8 +345,6 @@ namespace llvm {
                                  bool IsSRA) const;
     SDValue lowerLOAD(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerSTORE(SDValue Op, SelectionDAG &DAG) const;
-    SDValue lowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
-    SDValue lowerINTRINSIC_W_CHAIN(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerADD(SDValue Op, SelectionDAG &DAG) const;
 
     /// isEligibleForTailCallOptimization - Check whether the call is eligible
