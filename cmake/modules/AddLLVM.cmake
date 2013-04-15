@@ -2,6 +2,129 @@ include(LLVMParseArguments)
 include(LLVMProcessSources)
 include(LLVM-Config)
 
+option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables MSVC to link dynamically)" OFF)
+
+if (BUILD_OBJECT_LIBS)
+
+
+function(resolve_indirect _varname)
+  set(_libs ${ARGN})
+message("Search indirect: ${_libs}")
+  set(${_varname} PARENT_SCOPE)
+  set(_done)
+  list(LENGTH _libs _len)
+  while( _len GREATER 0 )
+    list(GET _libs 0 _front)
+    list(REMOVE_AT _libs 0)
+    
+    get_target_property(${_front} _libdeps "INDIRECT_DEPS")
+    list(APPEND _done ${_front})
+#message("Found indirect: ${_libdeps}")
+    
+    foreach ( _libdep in LISTS _libdeps )
+      list(FIND _done ${_libdep} _found)
+      if (NOT _found)
+        list(APPEND ${_varname} ${_libdep})
+        list(APPEND _libs ${_libdep})
+      endif ()
+    endforeach ()
+    list(LENGTH _libs _len)
+  endwhile ()
+message("Search indirect: ${${_varname}}")
+endfunction ()
+
+
+function(resolve_libs _lib_objects_name _lib_static_name _link_libs _link_components _indirect )
+  explicit_map_components_to_libraries(_resolved_components ${_link_components})
+message("_resolved_components: ${_resolved_components}")
+
+  set(_indirect_libs)
+  if (_indirect)
+    resolve_indirect(_indirect_libs ${_link_libs} ${_resolved_components})
+  endif ()
+
+  set(${_lib_objects_name} PARENT_SCOPE)
+  set(${_lib_static_name} PARENT_SCOPE)
+  foreach(_lib IN LISTS _link_libs _resolved_components _indirect_libs)
+    get_target_property(_target_type ${_lib} "TYPE")
+    
+    if (_target_type STREQUAL "OBJECT_LIBRARY")
+message("_OBJECT_LIBRARY: ${_lib}")
+      list(APPEND ${_lib_objects_name} $<TARGET_OBJECTS:${_lib}>)
+    else ()
+message("${_target_type}: ${_lib}")
+       list(APPEND ${_lib_static_name} ${_lib})
+    endif ()
+  endforeach ()
+  set(${_lib_objects_name} ${${_lib_objects_name}} PARENT_SCOPE)
+  set(${_lib_static_name} ${${_lib_static_name}} PARENT_SCOPE)
+endfunction()
+
+
+
+
+function(add_llvm_library name)
+  parse_arguments(PARM "LINK_LIBS" "EXCLUDE_FROM_ALL;MODULE;SHARED;STATIC" ${ARGN})
+#message("DEFARG: ${PARM_DEFAULT_ARGS}")
+  llvm_process_sources( ALL_FILES ${PARM_DEFAULT_ARGS} )
+  
+  if (PARM_MODULE)
+    resolve_libs( _lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" TRUE )
+    add_library( ${name} MODULE ${ALL_FILES} ${_lib_objects} )
+  elseif (PARM_SHARED)
+    resolve_libs( _lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" TRUE )
+    add_library( ${name} SHARED ${ALL_FILES} ${_lib_objects} )
+    target_link_libraries(${name} ${_lib_static})
+  elseif (BUILD_OBJECT_LIBS)
+message("${name}: libs=${PARM_LINK_LIBS} comps=${LLVM_LINK_COMPONENTS}")
+    resolve_libs( _lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" FALSE )
+message("${name}: obj=${_lib_objects} stat=${_lib_static}")
+#message("OBJECTLIB: ${name}=${ALL_FILES}")
+    add_library( ${name} OBJECT ${ALL_FILES} )
+    set_property(TARGET ${name} PROPERTY "INDIRECT_DEPS" ${_lib_objects} ${_lib_static})
+    message("Set indirect: ${name}->${_lib_objects} ${_lib_static}")
+  elseif (PARM_STATIC)
+    resolve_libs( _lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" TRUE )
+    add_library( ${name} STATIC ${ALL_FILES} )
+    target_link_libraries(${name} ${_lib_static})
+  else()
+    # STATIC OR SHARED
+    resolve_libs( _lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" TRUE )
+    add_library( ${name} STATIC ${ALL_FILES} )
+    target_link_libraries(${name} ${_lib_static})
+  endif()
+
+  if( LLVM_COMMON_DEPENDS )
+    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
+  endif( LLVM_COMMON_DEPENDS )
+
+  set_property( GLOBAL APPEND PROPERTY LLVM_LIBS ${name} )
+  set_target_properties(${name} PROPERTIES FOLDER "Libraries")
+endfunction(add_llvm_library name)
+
+macro (add_llvm_executable name)
+  parse_arguments(PARM "LINK_LIBS" "EXCLUDE_FROM_ALL" ${ARGN})
+  llvm_process_sources( ALL_FILES ${PARM_DEFAULT_ARGS} )
+  
+  resolve_libs(_lib_objects _lib_static "${PARM_LINK_LIBS}" "${LLVM_LINK_COMPONENTS}" TRUE)
+
+  if (PARM_EXCLUDE_FROM_ALL OR EXCLUDE_FROM_ALL)
+    add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES} ${_lib_objects})
+  else ()
+    add_executable(${name} ${ALL_FILES} ${_lib_objects})
+  endif ()
+  set(EXCLUDE_FROM_ALL OFF)
+  #llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
+  if( LLVM_COMMON_DEPENDS )
+    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
+  endif( LLVM_COMMON_DEPENDS )
+  target_link_libraries(${name} ${_lib_static})
+endmacro (add_llvm_executable)
+
+
+else (BUILD_OBJECT_LIBS)
+
+
 macro(add_llvm_library name)
   llvm_process_sources( ALL_FILES ${ARGN} )
   add_library( ${name} ${ALL_FILES} )
@@ -35,6 +158,28 @@ macro(add_llvm_library name)
   get_property(lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
   target_link_libraries(${name} ${lib_deps})
 endmacro(add_llvm_library name)
+
+macro(add_llvm_executable name)
+  parse_arguments(PARM "LINK_LIBS" "EXCLUDE_FROM_ALL" ${ARGN})
+  llvm_process_sources( ALL_FILES ${PARM_DEFAULT_ARGS} )
+  if( PARM_EXCLUDE_FROM_ALL OR EXCLUDE_FROM_ALL )
+    add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES})
+  else()
+    add_executable(${name} ${ALL_FILES})
+  endif()
+  set(EXCLUDE_FROM_ALL OFF)
+  llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
+  if( LLVM_COMMON_DEPENDS )
+    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
+  endif( LLVM_COMMON_DEPENDS )
+  link_system_libs( ${name} )
+  target_link_libraries(${name} ${PARM_LINK_LIBS})
+endmacro(add_llvm_executable name)
+
+
+endif (BUILD_OBJECT_LIBS)
+
+
 
 macro(add_llvm_loadable_module name)
   if( NOT LLVM_ON_UNIX OR CYGWIN )
@@ -73,22 +218,6 @@ ${name} ignored.")
 
   set_target_properties(${name} PROPERTIES FOLDER "Loadable modules")
 endmacro(add_llvm_loadable_module name)
-
-
-macro(add_llvm_executable name)
-  llvm_process_sources( ALL_FILES ${ARGN} )
-  if( EXCLUDE_FROM_ALL )
-    add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES})
-  else()
-    add_executable(${name} ${ALL_FILES})
-  endif()
-  set(EXCLUDE_FROM_ALL OFF)
-  llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
-  if( LLVM_COMMON_DEPENDS )
-    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
-  endif( LLVM_COMMON_DEPENDS )
-  link_system_libs( ${name} )
-endmacro(add_llvm_executable name)
 
 
 macro(add_llvm_tool name)

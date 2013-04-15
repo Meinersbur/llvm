@@ -1,11 +1,13 @@
-add_llvm_utility(not
-  not.cpp
-  )
 
-target_link_libraries(not LLVMSupport)
+set(not_LIBS LLVMSupport)
 if( MINGW )
-  target_link_libraries(not imagehlp psapi)
+  list(APPEND not_LIBS imagehlp psapi)
 endif( MINGW )
 if( LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD )
-  target_link_libraries(not pthread)
+  list(APPEND not_LIBS pthread)
 endif()
+
+add_llvm_utility(not
+  not.cpp
+  LINK_LIBS ${not_LIBS}
+  )

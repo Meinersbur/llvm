@@ -1,11 +1,13 @@
-add_llvm_utility(FileUpdate
-  FileUpdate.cpp
-  )
 
-target_link_libraries(FileUpdate LLVMSupport)
+set(FileUpdate_LIBS LLVMSupport)
 if( MINGW )
-  target_link_libraries(FileUpdate imagehlp psapi)
+  list(APPEND FileUpdate_LIBS imagehlp psapi)
 endif( MINGW )
 if( LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD )
-  target_link_libraries(FileUpdate pthread)
+  list(APPEND FileUpdate_LIBS pthread)
 endif()
+
+add_llvm_utility(FileUpdate
+  FileUpdate.cpp
+  LINK_LIBS ${FileUpdate_LIBS}
+  )

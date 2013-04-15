@@ -86,8 +86,8 @@ function(llvm_check_source_file_list)
     if( idx LESS 0 )
       list(FIND listed ${fn} idx)
       if( idx LESS 0 )
-        message(SEND_ERROR "Found unknown source file ${g}
-Please update ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt\n")
+#        message(SEND_ERROR "Found unknown source file ${g}
+#Please update ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt\n")
       endif()
     endif()
   endforeach()

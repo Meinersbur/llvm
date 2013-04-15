@@ -1,3 +1,35 @@
+
+set(includes 
+  Unix/Host.inc
+  Unix/Memory.inc
+  Unix/Mutex.inc
+  Unix/Path.inc
+  Unix/PathV2.inc
+  Unix/Process.inc
+  Unix/Program.inc
+  Unix/RWMutex.inc
+  Unix/Signals.inc
+  Unix/system_error.inc
+  Unix/ThreadLocal.inc
+  Unix/TimeValue.inc
+  Unix/Watchdog.inc
+  Windows/DynamicLibrary.inc
+  Windows/Host.inc
+  Windows/Memory.inc
+  Windows/Mutex.inc
+  Windows/Path.inc
+  Windows/PathV2.inc
+  Windows/Process.inc
+  Windows/Program.inc
+  Windows/RWMutex.inc
+  Windows/Signals.inc
+  Windows/system_error.inc
+  Windows/ThreadLocal.inc
+  Windows/TimeValue.inc
+  Windows/Watchdog.inc
+)
+set_source_files_properties(${includes} PROPERTIES HEADER_FILE_ONLY ON)
+
 add_llvm_library(LLVMSupport
   APFloat.cpp
   APInt.cpp
@@ -84,31 +116,5 @@ add_llvm_library(LLVMSupport
   TimeValue.cpp
   Valgrind.cpp
   Watchdog.cpp
-  Unix/Host.inc
-  Unix/Memory.inc
-  Unix/Mutex.inc
-  Unix/Path.inc
-  Unix/PathV2.inc
-  Unix/Process.inc
-  Unix/Program.inc
-  Unix/RWMutex.inc
-  Unix/Signals.inc
-  Unix/system_error.inc
-  Unix/ThreadLocal.inc
-  Unix/TimeValue.inc
-  Unix/Watchdog.inc
-  Windows/DynamicLibrary.inc
-  Windows/Host.inc
-  Windows/Memory.inc
-  Windows/Mutex.inc
-  Windows/Path.inc
-  Windows/PathV2.inc
-  Windows/Process.inc
-  Windows/Program.inc
-  Windows/RWMutex.inc
-  Windows/Signals.inc
-  Windows/system_error.inc
-  Windows/ThreadLocal.inc
-  Windows/TimeValue.inc
-  Windows/Watchdog.inc
+  ${includes}
   )

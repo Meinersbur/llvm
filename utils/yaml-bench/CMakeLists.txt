@@ -1,5 +1,4 @@
 add_llvm_utility(yaml-bench
   YAMLBench.cpp
+  LINK_LIBS LLVMSupport
   )
-
-target_link_libraries(yaml-bench LLVMSupport)
