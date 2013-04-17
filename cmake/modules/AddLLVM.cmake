@@ -6,7 +6,6 @@ option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables M
 
 
 macro(new_llvm_target name)
-message("new_llvm_target(${name} ${ARGN})")
   parse_arguments(PARM "LINK_LIBS;LINK_LIBS2;LINK_COMPONENTS;TARGET_DEPENDS;EXTERNAL_LIBS;SOURCES;SOURCES2" "EXCLUDE_FROM_ALL;MODULE;SHARED;STATIC;EXE" ${ARGN})
   list(APPEND PARM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS})
   
@@ -56,7 +55,6 @@ message("new_llvm_target(${name} ${ARGN})")
   # Search inherited dependencies
   set(_inherited_external_libs)
   set(_inherited_objlibs)
-  #set(_inherited_target_depends)
   set(_inherited_link_libs)
   
   set(_searchlist ${PARM_LINK_LIBS} ${_resolved_components})
@@ -123,7 +121,6 @@ message("new_llvm_target(${name} ${ARGN})")
   endif ()
 
   if (PARM_TARGET_DEPENDS)
-message("add_dependencies(${name} ${PARM_TARGET_DEPENDS})")
     add_dependencies(${name} ${PARM_TARGET_DEPENDS})
   endif ()
 
@@ -131,11 +128,7 @@ message("add_dependencies(${name} ${PARM_TARGET_DEPENDS})")
     # Cannot link something to OBJECT libraries; must forward link dependencies ourselves
     set_property(TARGET ${name} PROPERTY "INDIRECT_LINK_LIBS" ${PARM_LINK_LIBS} ${_resolved_components})
     set_property(TARGET ${name} PROPERTY "INDIRECT_EXTERNAL_LIBS" ${PARM_EXTERNAL_LIBS})
-    #set_property(TARGET ${name} PROPERTY "INDIRECT_TARGET_DEPENDS" ${PARM_TARGET_DEPENDS})
   else ()
-    #if (PARM_TARGET_DEPENDS OR _inherited_target_depends)
-      #add_dependencies(${name} ${_inherited_target_depends} ${PARM_TARGET_DEPENDS})
-    #endif ()
     target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})
   endif ()
 endmacro(new_llvm_target name)
