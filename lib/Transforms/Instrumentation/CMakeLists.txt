@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMInstrumentation
   AddressSanitizer.cpp
   BlackList.cpp
@@ -11,5 +13,3 @@ add_llvm_library(LLVMInstrumentation
   ProfilingUtils.cpp
   ThreadSanitizer.cpp
   )
-
-add_dependencies(LLVMInstrumentation intrinsics_gen)

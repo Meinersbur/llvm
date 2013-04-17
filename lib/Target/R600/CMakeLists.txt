@@ -11,6 +11,8 @@ tablegen(LLVM AMDGPUGenDFAPacketizer.inc -gen-dfa-packetizer)
 tablegen(LLVM AMDGPUGenAsmWriter.inc -gen-asm-writer)
 add_public_tablegen_target(AMDGPUCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(R600CodeGen
   AMDIL7XXDevice.cpp
   AMDILCFGStructurizer.cpp
@@ -51,8 +53,6 @@ add_llvm_target(R600CodeGen
   SIMachineFunctionInfo.cpp
   SIRegisterInfo.cpp
   )
-
-add_dependencies(LLVMR600CodeGen intrinsics_gen)
 
 add_subdirectory(InstPrinter)
 add_subdirectory(TargetInfo)

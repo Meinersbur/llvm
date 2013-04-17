@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMInstCombine
   InstructionCombining.cpp
   InstCombineAddSub.cpp
@@ -13,5 +15,3 @@ add_llvm_library(LLVMInstCombine
   InstCombineSimplifyDemanded.cpp
   InstCombineVectorOps.cpp
   )
-
-add_dependencies(LLVMInstCombine intrinsics_gen)

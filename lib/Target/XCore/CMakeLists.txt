@@ -9,6 +9,8 @@ tablegen(LLVM XCoreGenCallingConv.inc -gen-callingconv)
 tablegen(LLVM XCoreGenSubtargetInfo.inc -gen-subtarget)
 add_public_tablegen_target(XCoreCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(XCoreCodeGen
   XCoreAsmPrinter.cpp
   XCoreFrameLowering.cpp
@@ -23,8 +25,6 @@ add_llvm_target(XCoreCodeGen
   XCoreTargetObjectFile.cpp
   XCoreSelectionDAGInfo.cpp
   )
-
-add_dependencies(LLVMXCoreCodeGen intrinsics_gen)
 
 add_subdirectory(Disassembler)
 add_subdirectory(InstPrinter)

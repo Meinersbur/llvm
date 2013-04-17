@@ -13,6 +13,8 @@ tablegen(LLVM MipsGenAsmMatcher.inc -gen-asm-matcher)
 tablegen(LLVM MipsGenMCPseudoLowering.inc -gen-pseudo-lowering)
 add_public_tablegen_target(MipsCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(MipsCodeGen
   Mips16FrameLowering.cpp
   Mips16InstrInfo.cpp
@@ -45,8 +47,6 @@ add_llvm_target(MipsCodeGen
   MipsTargetObjectFile.cpp
   MipsSelectionDAGInfo.cpp
   )
-
-add_dependencies(LLVMMipsCodeGen intrinsics_gen)
 
 add_subdirectory(InstPrinter)
 add_subdirectory(Disassembler)

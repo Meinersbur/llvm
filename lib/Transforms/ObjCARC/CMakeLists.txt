@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMObjCARCOpts
   ObjCARC.cpp
   ObjCARCOpts.cpp
@@ -9,5 +11,3 @@ add_llvm_library(LLVMObjCARCOpts
   DependencyAnalysis.cpp
   ProvenanceAnalysis.cpp
   )
-
-add_dependencies(LLVMObjCARCOpts intrinsics_gen)

@@ -25,9 +25,9 @@ set(NVPTXCodeGen_sources
   NVVMReflect.cpp
   )
 
-add_llvm_target(NVPTXCodeGen ${NVPTXCodeGen_sources})
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
 
-add_dependencies(LLVMNVPTXCodeGen intrinsics_gen)
+add_llvm_target(NVPTXCodeGen ${NVPTXCodeGen_sources})
 
 add_subdirectory(TargetInfo)
 add_subdirectory(InstPrinter)

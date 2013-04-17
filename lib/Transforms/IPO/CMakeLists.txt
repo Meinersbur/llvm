@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMipo
   ArgumentPromotion.cpp
   BarrierNoopPass.cpp
@@ -21,5 +23,3 @@ add_llvm_library(LLVMipo
   StripDeadPrototypes.cpp
   StripSymbols.cpp
   )
-
-add_dependencies(LLVMipo intrinsics_gen)

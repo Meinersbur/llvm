@@ -8,6 +8,8 @@ tablegen(LLVM SparcGenSubtargetInfo.inc -gen-subtarget)
 tablegen(LLVM SparcGenCallingConv.inc -gen-callingconv)
 add_public_tablegen_target(SparcCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(SparcCodeGen
   DelaySlotFiller.cpp
   FPMover.cpp
@@ -22,8 +24,6 @@ add_llvm_target(SparcCodeGen
   SparcTargetMachine.cpp
   SparcSelectionDAGInfo.cpp
   )
-
-add_dependencies(LLVMSparcCodeGen intrinsics_gen)
 
 add_subdirectory(TargetInfo)
 add_subdirectory(MCTargetDesc)

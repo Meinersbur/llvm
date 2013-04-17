@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMipa
   CallGraph.cpp
   CallGraphSCCPass.cpp
@@ -7,5 +9,3 @@ add_llvm_library(LLVMipa
   IPA.cpp
   InlineCost.cpp
   )
-
-add_dependencies(LLVMipa intrinsics_gen)

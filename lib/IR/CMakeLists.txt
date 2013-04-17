@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMCore
   AsmWriter.cpp
   Attributes.cpp
@@ -47,5 +49,3 @@ set_property(
   PROPERTY COMPILE_FLAGS "/Og-"
   )
 endif()
-
-add_dependencies(LLVMCore intrinsics_gen)

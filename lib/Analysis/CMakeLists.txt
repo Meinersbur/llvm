@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMAnalysis
   AliasAnalysis.cpp
   AliasAnalysisCounter.cpp
@@ -59,7 +61,5 @@ add_llvm_library(LLVMAnalysis
   TypeBasedAliasAnalysis.cpp
   ValueTracking.cpp
   )
-
-add_dependencies(LLVMAnalysis intrinsics_gen)
 
 add_subdirectory(IPA)

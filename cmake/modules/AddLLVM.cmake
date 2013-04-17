@@ -8,24 +8,23 @@ option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables M
 macro(new_llvm_target name)
 message("new_llvm_target(${name} ${ARGN})")
   parse_arguments(PARM "LINK_LIBS;LINK_LIBS2;LINK_COMPONENTS;TARGET_DEPENDS;EXTERNAL_LIBS;SOURCES;SOURCES2" "EXCLUDE_FROM_ALL;MODULE;SHARED;STATIC;EXE" ${ARGN})
-message("LLVM_LINK_COMPONENTS=${LLVM_LINK_COMPONENTS}")
   list(APPEND PARM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS})
-message("LLVM_COMMON_DEPENDS=${LLVM_COMMON_DEPENDS}")
-  list(APPEND PARM_TARGET_DEPENDS ${LLVM_COMMON_DEPENDS})
+  
+  list(APPEND PARM_TARGET_DEPENDS ${LLVM_COMMON_DEPENDS} ${LLVM_NEXT_DEPENDS})
+  set(LLVM_NEXT_DEPENDS)
+  
+  get_property(_lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
+  list(APPEND PARM_LINK_LIBS ${PARM_LINK_LIBS2} ${LLVM_LINK_LIBS} ${_lib_deps})
+  set(LLVM_LINK_LIBS)
+  
   list(APPEND PARM_SOURCES ${PARM_DEFAULT_ARGS} ${PARM_SOURCES2})
-  list(APPEND PARM_LINK_LIBS ${PARM_LINK_LIBS2})
+  
   if (EXCLUDE_FROM_ALL)
     set(PARM_EXCLUDE_FROM_ALL TRUE)
     set(EXCLUDE_FROM_ALL FALSE)
   endif ()
+  
 
-  get_property(_lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
-  list(APPEND PARM_LINK_LIBS ${_lib_deps})
-  
-message("PARM_LINK_COMPONENTS=${PARM_LINK_COMPONENTS}")
-message("PARM_TARGET_DEPENDS=${PARM_TARGET_DEPENDS}")
-message("PARM_LINK_LIBS=${PARM_LINK_LIBS}")
-  
   # Decide what to build
   set(_isexe FALSE)
   set(_isobjlib FALSE)
@@ -46,10 +45,8 @@ message("PARM_LINK_LIBS=${PARM_LINK_LIBS}")
     set(_libtype)
   endif()
   
-#message("PARM_SOURCES ${PARM_SOURCES}")
   llvm_process_sources( ALL_FILES ${PARM_SOURCES} )
-#message("ALL_FILES ${ALL_FILES}")
-  
+
   explicit_map_components_to_libraries(_resolved_components ${PARM_LINK_COMPONENTS})
   set(_syslibs)
   if (NOT _isobjlib)
@@ -59,12 +56,10 @@ message("PARM_LINK_LIBS=${PARM_LINK_LIBS}")
   # Search inherited dependencies
   set(_inherited_external_libs)
   set(_inherited_objlibs)
-  set(_inherited_deps)
+  #set(_inherited_target_depends)
   set(_inherited_link_libs)
   
-message("set(_searchlist ${PARM_LINK_LIBS} ## ${_resolved_components})")
   set(_searchlist ${PARM_LINK_LIBS} ${_resolved_components})
-message("Searchlist: ${_searchlist}")
   set(_worklist ${_searchlist})
   set(_done)
   list(LENGTH _worklist _len)
@@ -74,7 +69,6 @@ message("Searchlist: ${_searchlist}")
     list(FIND _done "${_lib}" _found)
     if (_found EQUAL -1)
       list(APPEND _done ${_lib})
-#message("Processing: ${_lib}")
 
       get_target_property(_target_type ${_lib} "TYPE")
       if (_target_type STREQUAL "OBJECT_LIBRARY")
@@ -92,8 +86,8 @@ message("Searchlist: ${_searchlist}")
       endif ()
       
       # For add_dependencies(${name} ${deps})
-      get_target_property(_deps ${_lib} "INDIRECT_TARGET_DEPENDS") 
-      list(APPEND _inherited_deps ${_deps})
+      #get_target_property(_deps ${_lib} "INDIRECT_TARGET_DEPENDS") 
+      #list(APPEND _inherited_target_depends ${_deps})
       
       get_target_property(_libdeps ${_lib} "INDIRECT_LINK_LIBS")
       if (_libdeps)
@@ -104,12 +98,10 @@ message("Searchlist: ${_searchlist}")
   endwhile ()
 
   # Add the target
-message("_inherited_objlibs: ${_inherited_objlibs}")
   if (_isexe)
     if (PARM_EXCLUDE_FROM_ALL)
       add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES} ${_inherited_objlibs})
     else ()
-#message("add_executable(${name} ${ALL_FILES} ${_inherited_objlibs})")
       add_executable(${name} ${ALL_FILES} ${_inherited_objlibs})
     endif ()
   else ()
@@ -126,20 +118,24 @@ message("_inherited_objlibs: ${_inherited_objlibs}")
           LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
           ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
           RUNTIME DESTINATION bin)
-        endif ()
+      endif ()
     endif ()
+  endif ()
+
+  if (PARM_TARGET_DEPENDS)
+message("add_dependencies(${name} ${PARM_TARGET_DEPENDS})")
+    add_dependencies(${name} ${PARM_TARGET_DEPENDS})
   endif ()
 
   if (_isobjlib)
     # Cannot link something to OBJECT libraries; must forward link dependencies ourselves
     set_property(TARGET ${name} PROPERTY "INDIRECT_LINK_LIBS" ${PARM_LINK_LIBS} ${_resolved_components})
     set_property(TARGET ${name} PROPERTY "INDIRECT_EXTERNAL_LIBS" ${PARM_EXTERNAL_LIBS})
-    set_property(TARGET ${name} PROPERTY "INDIRECT_TARGET_DEPENDS" ${PARM_TARGET_DEPENDS})
+    #set_property(TARGET ${name} PROPERTY "INDIRECT_TARGET_DEPENDS" ${PARM_TARGET_DEPENDS})
   else ()
-    if (PARM_TARGET_DEPENDS OR _inherited_deps)
-      add_dependencies(${name} ${_inherited_deps} ${PARM_TARGET_DEPENDS})
-    endif ()
-message("target_link_libraries(${name}: ${_inherited_link_libs} ## ${_inherited_external_libs} ## ${PARM_EXTERNAL_LIBS} ## ${_syslibs})")
+    #if (PARM_TARGET_DEPENDS OR _inherited_target_depends)
+      #add_dependencies(${name} ${_inherited_target_depends} ${PARM_TARGET_DEPENDS})
+    #endif ()
     target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})
   endif ()
 endmacro(new_llvm_target name)
@@ -267,12 +263,7 @@ function(add_unittest test_suite test_name)
     set(EXCLUDE_FROM_ALL ON)
   endif()
 
-  add_llvm_executable(${test_name} ${ARGN})
-  target_link_libraries(${test_name}
-    gtest
-    gtest_main
-    LLVMSupport # gtest needs it for raw_ostream.
-    )
+  add_llvm_executable(${test_name} ${ARGN} LINK_LIBS2 gtest gtest_main LLVMSupport)
 
   add_dependencies(${test_suite} ${test_name})
   get_target_property(test_suite_folder ${test_suite} FOLDER)

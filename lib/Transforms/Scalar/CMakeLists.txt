@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMScalarOpts
   ADCE.cpp
   BasicBlockPlacement.cpp
@@ -32,5 +34,3 @@ add_llvm_library(LLVMScalarOpts
   Sink.cpp
   TailRecursionElimination.cpp
   )
-
-add_dependencies(LLVMScalarOpts intrinsics_gen)

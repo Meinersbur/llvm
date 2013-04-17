@@ -10,6 +10,8 @@ tablegen(LLVM PPCGenCallingConv.inc -gen-callingconv)
 tablegen(LLVM PPCGenSubtargetInfo.inc -gen-subtarget)
 add_public_tablegen_target(PowerPCCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(PowerPCCodeGen
   PPCAsmPrinter.cpp
   PPCBranchSelector.cpp
@@ -29,8 +31,6 @@ add_llvm_target(PowerPCCodeGen
   PPCTargetTransformInfo.cpp
   PPCSelectionDAGInfo.cpp
   )
-
-add_dependencies(LLVMPowerPCCodeGen intrinsics_gen)
 
 add_subdirectory(InstPrinter)
 add_subdirectory(TargetInfo)

@@ -1,3 +1,5 @@
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_library(LLVMVectorize
   BBVectorize.cpp
   Vectorize.cpp
@@ -5,5 +7,3 @@ add_llvm_library(LLVMVectorize
   SLPVectorizer.cpp
   VecUtils.cpp
   )
-
-add_dependencies(LLVMVectorize intrinsics_gen)

@@ -11,6 +11,8 @@ tablegen(LLVM MBlazeGenSubtargetInfo.inc -gen-subtarget)
 tablegen(LLVM MBlazeGenIntrinsics.inc -gen-tgt-intrinsic)
 add_public_tablegen_target(MBlazeCommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(MBlazeCodeGen
   MBlazeDelaySlotFiller.cpp
   MBlazeInstrInfo.cpp
@@ -27,8 +29,6 @@ add_llvm_target(MBlazeCodeGen
   MBlazeAsmPrinter.cpp
   MBlazeMCInstLower.cpp
   )
-
-add_dependencies(LLVMMBlazeCodeGen intrinsics_gen)
 
 add_subdirectory(AsmParser)
 add_subdirectory(Disassembler)

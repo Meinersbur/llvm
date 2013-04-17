@@ -8,6 +8,8 @@ tablegen(LLVM MSP430GenCallingConv.inc -gen-callingconv)
 tablegen(LLVM MSP430GenSubtargetInfo.inc -gen-subtarget)
 add_public_tablegen_target(MSP430CommonTableGen)
 
+set(LLVM_NEXT_DEPENDS intrinsics_gen)
+
 add_llvm_target(MSP430CodeGen
   MSP430BranchSelector.cpp
   MSP430ISelDAGToDAG.cpp
@@ -22,8 +24,6 @@ add_llvm_target(MSP430CodeGen
   MSP430AsmPrinter.cpp
   MSP430MCInstLower.cpp
   )
-
-add_dependencies(LLVMMSP430CodeGen intrinsics_gen)
 
 add_subdirectory(InstPrinter)
 add_subdirectory(TargetInfo)
