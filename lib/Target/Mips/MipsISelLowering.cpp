@@ -197,6 +197,9 @@ const char *MipsTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case MipsISD::MADDU_DSP:         return "MipsISD::MADDU_DSP";
   case MipsISD::MSUB_DSP:          return "MipsISD::MSUB_DSP";
   case MipsISD::MSUBU_DSP:         return "MipsISD::MSUBU_DSP";
+  case MipsISD::SHLL_DSP:          return "MipsISD::SHLL_DSP";
+  case MipsISD::SHRA_DSP:          return "MipsISD::SHRA_DSP";
+  case MipsISD::SHRL_DSP:          return "MipsISD::SHRL_DSP";
   default:                         return NULL;
   }
 }
@@ -445,7 +448,7 @@ static SDValue performDivRemCombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
-static Mips::CondCode FPCondCCodeToFCC(ISD::CondCode CC) {
+static Mips::CondCode condCodeToFCC(ISD::CondCode CC) {
   switch (CC) {
   default: llvm_unreachable("Unknown fp condition code!");
   case ISD::SETEQ:
@@ -504,7 +507,7 @@ static SDValue createFPCmp(SelectionDAG &DAG, const SDValue &Op) {
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
 
   return DAG.getNode(MipsISD::FPCmp, DL, MVT::Glue, LHS, RHS,
-                     DAG.getConstant(FPCondCCodeToFCC(CC), MVT::i32));
+                     DAG.getConstant(condCodeToFCC(CC), MVT::i32));
 }
 
 // Creates and returns a CMovFPT/F node.

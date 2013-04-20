@@ -1446,7 +1446,8 @@ void LLVMAddFunctionAttr(LLVMValueRef Fn, LLVMAttribute PA) {
 void LLVMAddTargetDependentFunctionAttr(LLVMValueRef Fn, const char *A,
                                         const char *V) {
   Function *Func = unwrap<Function>(Fn);
-  int Idx = AttributeSet::FunctionIndex;
+  AttributeSet::AttrIndex Idx =
+    AttributeSet::AttrIndex(AttributeSet::FunctionIndex);
   AttrBuilder B;
 
   B.addAttribute(A, V);
@@ -2455,7 +2456,7 @@ LLVMMemoryBufferRef LLVMCreateMemoryBufferWithMemoryRangeCopy(
       StringRef(BufferName)));
 }
 
-const char* LLVMGetBufferStart(LLVMMemoryBufferRef MemBuf) {
+const char *LLVMGetBufferStart(LLVMMemoryBufferRef MemBuf) {
   return unwrap(MemBuf)->getBufferStart();
 }
 
