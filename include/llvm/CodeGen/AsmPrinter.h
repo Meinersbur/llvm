@@ -25,6 +25,7 @@ namespace llvm {
   class BlockAddress;
   class GCStrategy;
   class Constant;
+  class ConstantArray;
   class GCMetadataPrinter;
   class GlobalValue;
   class GlobalVariable;
@@ -133,6 +134,9 @@ namespace llvm {
 
     /// getDataLayout - Return information about data layout.
     const DataLayout &getDataLayout() const;
+
+    /// getTargetTriple - Return the target triple string.
+    StringRef getTargetTriple() const;
 
     /// getCurrentSection() - Return the current section we are emitting to.
     const MCSection *getCurrentSection() const;
@@ -480,8 +484,9 @@ namespace llvm {
     void EmitJumpTableEntry(const MachineJumpTableInfo *MJTI,
                             const MachineBasicBlock *MBB,
                             unsigned uid) const;
-    void EmitLLVMUsedList(const Constant *List);
+    void EmitLLVMUsedList(const ConstantArray *InitList);
     void EmitXXStructorList(const Constant *List, bool isCtor);
+    void EmitTLSInitFuncs(const ConstantArray *InitList);
     GCMetadataPrinter *GetOrCreateGCPrinter(GCStrategy *C);
   };
 }

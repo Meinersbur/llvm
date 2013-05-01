@@ -178,7 +178,7 @@ public:
 
   unsigned getAlignment() const;
   unsigned getStackAlignment() const;
-  std::string getAsString(bool TargetIndependent, bool InAttrGrp) const;
+  std::string getAsString(bool InAttrGrp) const;
 
   typedef SmallVectorImpl<Attribute>::iterator       iterator;
   typedef SmallVectorImpl<Attribute>::const_iterator const_iterator;
@@ -228,7 +228,7 @@ public:
   /// is the index of the return, parameter, or function object that the
   /// attributes are applied to, not the index into the AttrNodes list where the
   /// attributes reside.
-  uint64_t getSlotIndex(unsigned Slot) const {
+  unsigned getSlotIndex(unsigned Slot) const {
     return AttrNodes[Slot].first;
   }
 
@@ -270,7 +270,7 @@ public:
   }
 
   // FIXME: This atrocity is temporary.
-  uint64_t Raw(uint64_t Index) const;
+  uint64_t Raw(unsigned Index) const;
 };
 
 } // end llvm namespace

@@ -449,6 +449,30 @@ void Verifier::visitGlobalVariable(GlobalVariable &GV) {
     }
   }
 
+  if (GV.hasName() && (GV.getName() == "llvm.used" ||
+                       GV.getName() == "llvm.compiler_used")) {
+    Assert1(!GV.hasInitializer() || GV.hasAppendingLinkage(),
+            "invalid linkage for intrinsic global variable", &GV);
+    Type *GVType = GV.getType()->getElementType();
+    if (ArrayType *ATy = dyn_cast<ArrayType>(GVType)) {
+      PointerType *PTy = dyn_cast<PointerType>(ATy->getElementType());
+      Assert1(PTy, "wrong type for intrinsic global variable", &GV);
+      if (GV.hasInitializer()) {
+        Constant *Init = GV.getInitializer();
+        ConstantArray *InitArray = dyn_cast<ConstantArray>(Init);
+        Assert1(InitArray, "wrong initalizer for intrinsic global variable",
+                Init);
+        for (unsigned i = 0, e = InitArray->getNumOperands(); i != e; ++i) {
+          Value *V = Init->getOperand(i)->stripPointerCasts();
+          // stripPointerCasts strips aliases, so we only need to check for
+          // variables and functions.
+          Assert1(isa<GlobalVariable>(V) || isa<Function>(V),
+                  "invalid llvm.used member", V);
+        }
+      }
+    }
+  }
+
   visitGlobalValue(GV);
 }
 
@@ -715,6 +739,10 @@ void Verifier::VerifyParameterAttrs(AttributeSet Attrs, unsigned Idx, Type *Ty,
             (Attrs.hasAttribute(Idx, Attribute::Nest) &&
              Attrs.hasAttribute(Idx, Attribute::InReg))), "Attributes "
           "'byval, nest, and inreg' are incompatible!", V);
+
+  Assert1(!(Attrs.hasAttribute(Idx, Attribute::StructRet) &&
+            Attrs.hasAttribute(Idx, Attribute::Returned)), "Attributes "
+          "'sret and returned' are incompatible!", V);
 
   Assert1(!(Attrs.hasAttribute(Idx, Attribute::ZExt) &&
             Attrs.hasAttribute(Idx, Attribute::SExt)), "Attributes "

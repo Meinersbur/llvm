@@ -345,7 +345,9 @@ void MachODumper::printRelocation(const MachOObjectFile *Obj,
   if (error(RelI->getOffset(Offset))) return;
   if (error(RelI->getTypeName(RelocName))) return;
   if (error(RelI->getSymbol(Symbol))) return;
-  if (error(Symbol.getName(SymbolName))) return;
+  if (symbol_iterator(Symbol) != Obj->end_symbols() &&
+      error(Symbol.getName(SymbolName)))
+    return;
 
   DataRefImpl DR = RelI->getRawDataRefImpl();
   macho::RelocationEntry RE = Obj->getRelocation(DR);
@@ -406,12 +408,11 @@ void MachODumper::printSymbol(symbol_iterator SymI) {
   MachOSymbol Symbol;
   getSymbol(Obj, SymI->getRawDataRefImpl(), Symbol);
 
-  StringRef SectionName;
+  StringRef SectionName = "";
   section_iterator SecI(Obj->end_sections());
-  if (error(SymI->getSection(SecI)) ||
-      SecI == Obj->end_sections() ||
-      error(SecI->getName(SectionName)))
-    SectionName = "";
+  if (!error(SymI->getSection(SecI)) &&
+      SecI != Obj->end_sections())
+      error(SecI->getName(SectionName));
 
   DictScope D(W, "Symbol");
   W.printNumber("Name", SymbolName, Symbol.StringIndex);

@@ -483,16 +483,13 @@ unsigned AttributeSetNode::getStackAlignment() const {
   return 0;
 }
 
-std::string AttributeSetNode::getAsString(bool TargetIndependent,
-                                          bool InAttrGrp) const {
+std::string AttributeSetNode::getAsString(bool InAttrGrp) const {
   std::string Str;
   for (SmallVectorImpl<Attribute>::const_iterator I = AttrList.begin(),
          E = AttrList.end(); I != E; ++I) {
-    if (TargetIndependent || !I->isStringAttribute()) {
-      if (I != AttrList.begin())
-        Str += ' ';
-      Str += I->getAsString(InAttrGrp);
-    }
+    if (I != AttrList.begin())
+      Str += ' ';
+    Str += I->getAsString(InAttrGrp);
   }
   return Str;
 }
@@ -501,7 +498,7 @@ std::string AttributeSetNode::getAsString(bool TargetIndependent,
 // AttributeSetImpl Definition
 //===----------------------------------------------------------------------===//
 
-uint64_t AttributeSetImpl::Raw(uint64_t Index) const {
+uint64_t AttributeSetImpl::Raw(unsigned Index) const {
   for (unsigned I = 0, E = getNumAttributes(); I != E; ++I) {
     if (getSlotIndex(I) != Index) continue;
     const AttributeSetNode *ASN = AttrNodes[I].second;
@@ -848,11 +845,10 @@ unsigned AttributeSet::getStackAlignment(unsigned Index) const {
   return ASN ? ASN->getStackAlignment() : 0;
 }
 
-std::string AttributeSet::getAsString(unsigned Index, bool TargetIndependent,
+std::string AttributeSet::getAsString(unsigned Index,
                                       bool InAttrGrp) const {
   AttributeSetNode *ASN = getAttributes(Index);
-  return ASN ? ASN->getAsString(TargetIndependent, InAttrGrp) :
-    std::string("");
+  return ASN ? ASN->getAsString(InAttrGrp) : std::string("");
 }
 
 /// \brief The attributes for the specified index are returned.
@@ -890,7 +886,7 @@ unsigned AttributeSet::getNumSlots() const {
   return pImpl ? pImpl->getNumAttributes() : 0;
 }
 
-uint64_t AttributeSet::getSlotIndex(unsigned Slot) const {
+unsigned AttributeSet::getSlotIndex(unsigned Slot) const {
   assert(pImpl && Slot < pImpl->getNumAttributes() &&
          "Slot # out of range!");
   return pImpl->getSlotIndex(Slot);

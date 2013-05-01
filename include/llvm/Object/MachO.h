@@ -39,6 +39,7 @@ public:
   virtual error_code getSymbolName(DataRefImpl Symb, StringRef &Res) const;
   virtual error_code getSymbolAddress(DataRefImpl Symb, uint64_t &Res) const;
   virtual error_code getSymbolFileOffset(DataRefImpl Symb, uint64_t &Res) const;
+  virtual error_code getSymbolAlignment(DataRefImpl Symb, uint32_t &Res) const;
   virtual error_code getSymbolSize(DataRefImpl Symb, uint64_t &Res) const;
   virtual error_code getSymbolType(DataRefImpl Symb,
                                    SymbolRef::Type &Res) const;
@@ -84,6 +85,9 @@ public:
   virtual error_code getLibraryNext(DataRefImpl LibData, LibraryRef &Res) const;
   virtual error_code getLibraryPath(DataRefImpl LibData, StringRef &Res) const;
 
+  // TODO: Would be useful to have an iterator based version
+  // of the load command interface too.
+
   virtual symbol_iterator begin_symbols() const;
   virtual symbol_iterator end_symbols() const;
 
@@ -102,6 +106,9 @@ public:
   virtual unsigned getArch() const;
 
   virtual StringRef getLoadName() const;
+
+  relocation_iterator getSectionRelBegin(unsigned Index) const;
+  relocation_iterator getSectionRelEnd(unsigned Index) const;
 
   // In a MachO file, sections have a segment name. This is used in the .o
   // files. They have a single segment, but this field specifies which segment
@@ -123,6 +130,7 @@ public:
   unsigned getAnyRelocationPCRel(const macho::RelocationEntry &RE) const;
   unsigned getAnyRelocationLength(const macho::RelocationEntry &RE) const;
   unsigned getAnyRelocationType(const macho::RelocationEntry &RE) const;
+  SectionRef getRelocationSection(const macho::RelocationEntry &RE) const;
 
   // Walk load commands.
   LoadCommandInfo getFirstLoadCommandInfo() const;
@@ -131,14 +139,32 @@ public:
   // MachO specific structures.
   macho::Section getSection(DataRefImpl DRI) const;
   macho::Section64 getSection64(DataRefImpl DRI) const;
+  macho::Section getSection(const LoadCommandInfo &L, unsigned Index) const;
+  macho::Section64 getSection64(const LoadCommandInfo &L, unsigned Index) const;
   macho::SymbolTableEntry getSymbolTableEntry(DataRefImpl DRI) const;
   macho::Symbol64TableEntry getSymbol64TableEntry(DataRefImpl DRI) const;
+
   macho::LinkeditDataLoadCommand
   getLinkeditDataLoadCommand(const LoadCommandInfo &L) const;
+  macho::SegmentLoadCommand
+  getSegmentLoadCommand(const LoadCommandInfo &L) const;
+  macho::Segment64LoadCommand
+  getSegment64LoadCommand(const LoadCommandInfo &L) const;
+  macho::LinkerOptionsLoadCommand
+  getLinkerOptionsLoadCommand(const LoadCommandInfo &L) const;
+
   macho::RelocationEntry getRelocation(DataRefImpl Rel) const;
   macho::Header getHeader() const;
+  macho::Header64Ext getHeader64Ext() const;
+  macho::IndirectSymbolTableEntry
+  getIndirectSymbolTableEntry(const macho::DysymtabLoadCommand &DLC,
+                              unsigned Index) const;
+  macho::DataInCodeTableEntry getDataInCodeTableEntry(uint32_t DataOffset,
+                                                      unsigned Index) const;
   macho::SymtabLoadCommand getSymtabLoadCommand() const;
+  macho::DysymtabLoadCommand getDysymtabLoadCommand() const;
 
+  StringRef getStringTableData() const;
   bool is64Bit() const;
   void ReadULEB128s(uint64_t Index, SmallVectorImpl<uint64_t> &Out) const;
 
@@ -150,6 +176,7 @@ private:
   typedef SmallVector<const char*, 1> SectionList;
   SectionList Sections;
   const char *SymtabLoadCmd;
+  const char *DysymtabLoadCmd;
 };
 
 }

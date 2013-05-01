@@ -1984,7 +1984,6 @@ static bool IsUsedIn(const MCSymbol *Sym, const MCExpr *Value) {
   case MCExpr::Binary: {
     const MCBinaryExpr *BE = static_cast<const MCBinaryExpr*>(Value);
     return IsUsedIn(Sym, BE->getLHS()) || IsUsedIn(Sym, BE->getRHS());
-    break;
   }
   case MCExpr::Target:
   case MCExpr::Constant:
@@ -2637,12 +2636,10 @@ bool AsmParser::ParseDirectiveLoc() {
             Flags |= DWARF2_FLAG_IS_STMT;
           else
             return Error(Loc, "is_stmt value not 0 or 1");
-        }
-        else {
+        } else {
           return Error(Loc, "is_stmt value not the constant value of 0 or 1");
         }
-      }
-      else if (Name == "isa") {
+      } else if (Name == "isa") {
         Loc = getTok().getLoc();
         const MCExpr *Value;
         if (parseExpression(Value))
@@ -2653,16 +2650,13 @@ bool AsmParser::ParseDirectiveLoc() {
           if (Value < 0)
             return Error(Loc, "isa number less than zero");
           Isa = Value;
-        }
-        else {
+        } else {
           return Error(Loc, "isa number not a constant value");
         }
-      }
-      else if (Name == "discriminator") {
+      } else if (Name == "discriminator") {
         if (parseAbsoluteExpression(Discriminator))
           return true;
-      }
-      else {
+      } else {
         return Error(Loc, "unknown sub-directive in '.loc' directive");
       }
 
@@ -3621,18 +3615,17 @@ bool AsmParser::ParseDirectiveIfdef(SMLoc DirectiveLoc, bool expect_defined) {
 bool AsmParser::ParseDirectiveElseIf(SMLoc DirectiveLoc) {
   if (TheCondState.TheCond != AsmCond::IfCond &&
       TheCondState.TheCond != AsmCond::ElseIfCond)
-      Error(DirectiveLoc, "Encountered a .elseif that doesn't follow a .if or "
-                          " an .elseif");
+    Error(DirectiveLoc, "Encountered a .elseif that doesn't follow a .if or "
+                        " an .elseif");
   TheCondState.TheCond = AsmCond::ElseIfCond;
 
   bool LastIgnoreState = false;
   if (!TheCondStack.empty())
-      LastIgnoreState = TheCondStack.back().Ignore;
+    LastIgnoreState = TheCondStack.back().Ignore;
   if (LastIgnoreState || TheCondState.CondMet) {
     TheCondState.Ignore = true;
     eatToEndOfStatement();
-  }
-  else {
+  } else {
     int64_t ExprValue;
     if (parseAbsoluteExpression(ExprValue))
       return true;
@@ -3658,8 +3651,8 @@ bool AsmParser::ParseDirectiveElse(SMLoc DirectiveLoc) {
 
   if (TheCondState.TheCond != AsmCond::IfCond &&
       TheCondState.TheCond != AsmCond::ElseIfCond)
-      Error(DirectiveLoc, "Encountered a .else that doesn't follow a .if or an "
-                          ".elseif");
+    Error(DirectiveLoc, "Encountered a .else that doesn't follow a .if or an "
+                        ".elseif");
   TheCondState.TheCond = AsmCond::ElseCond;
   bool LastIgnoreState = false;
   if (!TheCondStack.empty())
@@ -4122,15 +4115,11 @@ AsmParser::parseMSInlineAsm(void *AsmLoc, std::string &AsmString,
       }
 
       // Expr/Input or Output.
-      bool IsVarDecl;
-      unsigned Length, Size, Type;
       StringRef SymName = Operand->getSymName();
       if (SymName.empty())
         continue;
 
-      void *OpDecl = SI.LookupInlineAsmIdentifier(SymName, AsmLoc,
-                                                  Length, Size, Type,
-                                                  IsVarDecl);
+      void *OpDecl = Operand->getOpDecl();
       if (!OpDecl)
         continue;
 

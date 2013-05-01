@@ -1368,8 +1368,11 @@ Value *isSafeToSpeculateStore(Instruction *I, BasicBlock *BrBB,
   if (!StoreToHoist)
     return 0;
 
+  // Volatile or atomic.
+  if (!StoreToHoist->isSimple())
+    return 0;
+
   Value *StorePtr = StoreToHoist->getPointerOperand();
-  StoreInst *PreviousStore = 0;
 
   // Look for a store to the same pointer in BrBB.
   unsigned MaxNumInstToLookAt = 10;
@@ -1381,14 +1384,13 @@ Value *isSafeToSpeculateStore(Instruction *I, BasicBlock *BrBB,
     if (CurI->mayHaveSideEffects() && !isa<StoreInst>(CurI))
       return 0;
 
+    StoreInst *SI = dyn_cast<StoreInst>(CurI);
     // Found the previous store make sure it stores to the same location.
-    if ((PreviousStore = dyn_cast<StoreInst>(CurI))) {
-      if (PreviousStore->getPointerOperand() == StorePtr)
-        // Found the previous store, return its value operand.
-        return PreviousStore->getValueOperand();
-      else
-        return 0; // Unknown store.
-    }
+    if (SI && SI->getPointerOperand() == StorePtr)
+      // Found the previous store, return its value operand.
+      return SI->getValueOperand();
+    else if (SI)
+      return 0; // Unknown store.
   }
 
   return 0;

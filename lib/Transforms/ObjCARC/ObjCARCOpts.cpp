@@ -303,6 +303,16 @@ STATISTIC(NumRets,        "Number of return value forwarding "
                           "retain+autoreleaes eliminated");
 STATISTIC(NumRRs,         "Number of retain+release paths eliminated");
 STATISTIC(NumPeeps,       "Number of calls peephole-optimized");
+STATISTIC(NumRetainsBeforeOpt,
+          "Number of retains before optimization.");
+STATISTIC(NumReleasesBeforeOpt,
+          "Number of releases before optimization.");
+#ifndef NDEBUG
+STATISTIC(NumRetainsAfterOpt,
+          "Number of retains after optimization.");
+STATISTIC(NumReleasesAfterOpt,
+          "Number of releases after optimization.");
+#endif
 
 namespace {
   /// \enum Sequence
@@ -472,6 +482,7 @@ namespace {
     }
 
     void ResetSequenceProgress(Sequence NewSeq) {
+      DEBUG(dbgs() << "Resetting sequence progress.\n");
       SetSeq(NewSeq);
       Partial = false;
       RRI.clear();
@@ -988,9 +999,6 @@ namespace {
     /// them. These are initialized lazily to avoid cluttering up the Module
     /// with unused declarations.
 
-    /// Declaration for ObjC runtime function
-    /// objc_retainAutoreleasedReturnValue.
-    Constant *RetainRVCallee;
     /// Declaration for ObjC runtime function objc_autoreleaseReturnValue.
     Constant *AutoreleaseRVCallee;
     /// Declaration for ObjC runtime function objc_release.
@@ -1024,7 +1032,6 @@ namespace {
     unsigned ARCAnnotationProvenanceSourceMDKind;
 #endif // ARC_ANNOATIONS
 
-    Constant *getRetainRVCallee(Module *M);
     Constant *getAutoreleaseRVCallee(Module *M);
     Constant *getReleaseCallee(Module *M);
     Constant *getRetainCallee(Module *M);
@@ -1033,7 +1040,6 @@ namespace {
 
     bool IsRetainBlockOptimizable(const Instruction *Inst);
 
-    void OptimizeRetainCall(Function &F, Instruction *Retain);
     bool OptimizeRetainRVCall(Function &F, Instruction *RetainRV);
     void OptimizeAutoreleaseRVCall(Function &F, Instruction *AutoreleaseRV,
                                    InstructionClass &Class);
@@ -1092,6 +1098,10 @@ namespace {
 
     void OptimizeReturns(Function &F);
 
+#ifndef NDEBUG
+    void GatherStatistics(Function &F, bool AfterOptimization = false);
+#endif
+
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual bool doInitialization(Module &M);
     virtual bool runOnFunction(Function &F);
@@ -1137,22 +1147,6 @@ bool ObjCARCOpt::IsRetainBlockOptimizable(const Instruction *Inst) {
 
   // Otherwise, it's not needed.
   return true;
-}
-
-Constant *ObjCARCOpt::getRetainRVCallee(Module *M) {
-  if (!RetainRVCallee) {
-    LLVMContext &C = M->getContext();
-    Type *I8X = PointerType::getUnqual(Type::getInt8Ty(C));
-    Type *Params[] = { I8X };
-    FunctionType *FTy = FunctionType::get(I8X, Params, /*isVarArg=*/false);
-    AttributeSet Attribute =
-      AttributeSet().addAttribute(M->getContext(), AttributeSet::FunctionIndex,
-                                  Attribute::NoUnwind);
-    RetainRVCallee =
-      M->getOrInsertFunction("objc_retainAutoreleasedReturnValue", FTy,
-                             Attribute);
-  }
-  return RetainRVCallee;
 }
 
 Constant *ObjCARCOpt::getAutoreleaseRVCallee(Module *M) {
@@ -1232,35 +1226,6 @@ Constant *ObjCARCOpt::getAutoreleaseCallee(Module *M) {
         Attribute);
   }
   return AutoreleaseCallee;
-}
-
-/// Turn objc_retain into objc_retainAutoreleasedReturnValue if the operand is a
-/// return value.
-void
-ObjCARCOpt::OptimizeRetainCall(Function &F, Instruction *Retain) {
-  ImmutableCallSite CS(GetObjCArg(Retain));
-  const Instruction *Call = CS.getInstruction();
-  if (!Call) return;
-  if (Call->getParent() != Retain->getParent()) return;
-
-  // Check that the call is next to the retain.
-  BasicBlock::const_iterator I = Call;
-  ++I;
-  while (IsNoopInstruction(I)) ++I;
-  if (&*I != Retain)
-    return;
-
-  // Turn it to an objc_retainAutoreleasedReturnValue..
-  Changed = true;
-  ++NumPeeps;
-
-  DEBUG(dbgs() << "Transforming objc_retain => "
-                  "objc_retainAutoreleasedReturnValue since the operand is a "
-                  "return value.\nOld: "<< *Retain << "\n");
-
-  cast<CallInst>(Retain)->setCalledFunction(getRetainRVCallee(F.getParent()));
-
-  DEBUG(dbgs() << "New: " << *Retain << "\n");
 }
 
 /// Turn objc_retainAutoreleasedReturnValue into objc_retain if the operand is
@@ -1382,12 +1347,17 @@ ObjCARCOpt::OptimizeRetainBlockCall(Function &F, Instruction *Inst,
   if (!IsRetainBlockOptimizable(Inst))
     return false;
 
+  Changed = true;
+  ++NumPeeps;
+
+  DEBUG(dbgs() << "Strength reduced retainBlock => retain.\n");
+  DEBUG(dbgs() << "Old: " << *Inst << "\n");
   CallInst *RetainBlock = cast<CallInst>(Inst);
   RetainBlock->setCalledFunction(getRetainCallee(F.getParent()));
   // Remove copy_on_escape metadata.
   RetainBlock->setMetadata(CopyOnEscapeMDKind, 0);
   Class = IC_Retain;
-
+  DEBUG(dbgs() << "New: " << *Inst << "\n");
   return true;
 }
 
@@ -1468,13 +1438,13 @@ void ObjCARCOpt::OptimizeIndividualCalls(Function &F) {
       break;
     }
     case IC_RetainBlock:
-      // If we strength reduce an objc_retainBlock to amn objc_retain, continue
+      // If we strength reduce an objc_retainBlock to an objc_retain, continue
       // onto the objc_retain peephole optimizations. Otherwise break.
       if (!OptimizeRetainBlockCall(F, Inst, Class))
         break;
       // FALLTHROUGH
     case IC_Retain:
-      OptimizeRetainCall(F, Inst);
+      ++NumRetainsBeforeOpt;
       break;
     case IC_RetainRV:
       if (OptimizeRetainRVCall(F, Inst))
@@ -1482,6 +1452,9 @@ void ObjCARCOpt::OptimizeIndividualCalls(Function &F) {
       break;
     case IC_AutoreleaseRV:
       OptimizeAutoreleaseRVCall(F, Inst, Class);
+      break;
+    case IC_Release:
+      ++NumReleasesBeforeOpt;
       break;
     }
 
@@ -2383,7 +2356,7 @@ void ObjCARCOpt::MoveCalls(Value *Arg,
     Call->setDoesNotThrow();
     Call->setTailCall();
 
-    DEBUG(dbgs() << "Inserting new Release: " << *Call << "\n"
+    DEBUG(dbgs() << "Inserting new Retain: " << *Call << "\n"
                     "At insertion point: " << *InsertPt << "\n");
   }
   for (SmallPtrSet<Instruction *, 2>::const_iterator
@@ -2576,6 +2549,12 @@ ObjCARCOpt::ConnectTDBUTraversals(DenseMap<const BasicBlock *, BBState>
   if (OldDelta != 0)
     return false;
 
+#ifdef ARC_ANNOTATIONS
+  // Do not move calls if ARC annotations are requested.
+  if (EnableARCAnnotations)
+    return false;
+#endif // ARC_ANNOTATIONS
+
   Changed = true;
   assert(OldCount != 0 && "Unreachable code?");
   NumRRs += OldCount - NewCount;
@@ -2637,12 +2616,6 @@ ObjCARCOpt::PerformCodePlacement(DenseMap<const BasicBlock *, BBState>
                             NewReleases, DeadInsts, RetainsToMove,
                             ReleasesToMove, Arg, KnownSafe,
                             AnyPairsCompletelyEliminated);
-
-#ifdef ARC_ANNOTATIONS
-    // Do not move calls if ARC annotations are requested. If we were to move
-    // calls in this case, we would not be able
-    PerformMoveCalls = PerformMoveCalls && !EnableARCAnnotations;
-#endif // ARC_ANNOTATIONS
 
     if (PerformMoveCalls) {
       // Ok, everything checks out and we're all set. Let's move/delete some
@@ -2957,43 +2930,72 @@ void ObjCARCOpt::OptimizeReturns(Function &F) {
 
     const Value *Arg = StripPointerCastsAndObjCCalls(Ret->getOperand(0));
 
-    // Look for an ``autorelease'' instruction that is a predecssor of Ret and
+    // Look for an ``autorelease'' instruction that is a predecessor of Ret and
     // dependent on Arg such that there are no instructions dependent on Arg
     // that need a positive ref count in between the autorelease and Ret.
     CallInst *Autorelease =
       FindPredecessorAutoreleaseWithSafePath(Arg, BB, Ret,
                                              DependingInstructions, Visited,
                                              PA);
-    if (Autorelease) {
-      DependingInstructions.clear();
-      Visited.clear();
-
-      CallInst *Retain =
-        FindPredecessorRetainWithSafePath(Arg, BB, Autorelease,
-                                          DependingInstructions, Visited, PA);
-      if (Retain) {
-        DependingInstructions.clear();
-        Visited.clear();
-
-        // Check that there is nothing that can affect the reference count
-        // between the retain and the call.  Note that Retain need not be in BB.
-        if (HasSafePathToPredecessorCall(Arg, Retain, DependingInstructions,
-                                         Visited, PA)) {
-          // If so, we can zap the retain and autorelease.
-          Changed = true;
-          ++NumRets;
-          DEBUG(dbgs() << "Erasing: " << *Retain << "\nErasing: "
-                       << *Autorelease << "\n");
-          EraseInstruction(Retain);
-          EraseInstruction(Autorelease);
-        }
-      }
-    }
-
     DependingInstructions.clear();
     Visited.clear();
+
+    if (!Autorelease)
+      continue;
+
+    CallInst *Retain =
+      FindPredecessorRetainWithSafePath(Arg, BB, Autorelease,
+                                        DependingInstructions, Visited, PA);
+    DependingInstructions.clear();
+    Visited.clear();
+
+    if (!Retain)
+      continue;
+
+    // Check that there is nothing that can affect the reference count
+    // between the retain and the call.  Note that Retain need not be in BB.
+    bool HasSafePathToCall = HasSafePathToPredecessorCall(Arg, Retain,
+                                                          DependingInstructions,
+                                                          Visited, PA);
+    DependingInstructions.clear();
+    Visited.clear();
+
+    if (!HasSafePathToCall)
+      continue;
+
+    // If so, we can zap the retain and autorelease.
+    Changed = true;
+    ++NumRets;
+    DEBUG(dbgs() << "Erasing: " << *Retain << "\nErasing: "
+          << *Autorelease << "\n");
+    EraseInstruction(Retain);
+    EraseInstruction(Autorelease);
   }
 }
+
+#ifndef NDEBUG
+void
+ObjCARCOpt::GatherStatistics(Function &F, bool AfterOptimization) {
+  llvm::Statistic &NumRetains =
+    AfterOptimization? NumRetainsAfterOpt : NumRetainsBeforeOpt;
+  llvm::Statistic &NumReleases =
+    AfterOptimization? NumReleasesAfterOpt : NumReleasesBeforeOpt;
+
+  for (inst_iterator I = inst_begin(&F), E = inst_end(&F); I != E; ) {
+    Instruction *Inst = &*I++;
+    switch (GetBasicInstructionClass(Inst)) {
+    default:
+      break;
+    case IC_Retain:
+      ++NumRetains;
+      break;
+    case IC_Release:
+      ++NumReleases;
+      break;
+    }
+  }
+}
+#endif
 
 bool ObjCARCOpt::doInitialization(Module &M) {
   if (!EnableARCOpts)
@@ -3025,7 +3027,6 @@ bool ObjCARCOpt::doInitialization(Module &M) {
   // calls finalizers which can have arbitrary side effects.
 
   // These are initialized lazily.
-  RetainRVCallee = 0;
   AutoreleaseRVCallee = 0;
   ReleaseCallee = 0;
   RetainCallee = 0;
@@ -3054,7 +3055,7 @@ bool ObjCARCOpt::runOnFunction(Function &F) {
   // when compiling code that isn't ObjC, skip these if the relevant ObjC
   // library functions aren't declared.
 
-  // Preliminary optimizations. This also computs UsedInThisFunction.
+  // Preliminary optimizations. This also computes UsedInThisFunction.
   OptimizeIndividualCalls(F);
 
   // Optimizations for weak pointers.
@@ -3080,6 +3081,13 @@ bool ObjCARCOpt::runOnFunction(Function &F) {
   if (UsedInThisFunction & ((1 << IC_Autorelease) |
                             (1 << IC_AutoreleaseRV)))
     OptimizeReturns(F);
+
+  // Gather statistics after optimization.
+#ifndef NDEBUG
+  if (AreStatisticsEnabled()) {
+    GatherStatistics(F, true);
+  }
+#endif
 
   DEBUG(dbgs() << "\n");
 
