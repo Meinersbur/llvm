@@ -12,4 +12,6 @@ add_llvm_library(LLVMAsmPrinter
   ErlangGCPrinter.cpp
   OcamlGCPrinter.cpp
   Win64Exception.cpp
+TARGET_DEPENDS
+  intrinsics_gen
   )

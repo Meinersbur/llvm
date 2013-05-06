@@ -204,7 +204,8 @@ endmacro(add_llvm_tool name)
 
 
 macro(add_llvm_example name)
-#  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_EXAMPLES_BINARY_DIR})
+  set(_old_CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_EXAMPLES_BINARY_DIR})
   if( NOT LLVM_BUILD_EXAMPLES )
     set(EXCLUDE_FROM_ALL ON)
   endif()
@@ -213,6 +214,7 @@ macro(add_llvm_example name)
     install(TARGETS ${name} RUNTIME DESTINATION examples)
   endif()
   set_target_properties(${name} PROPERTIES FOLDER "Examples")
+   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${_old_CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endmacro(add_llvm_example name)
 
 
