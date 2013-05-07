@@ -70,6 +70,16 @@ Non-comprehensive list of changes in this release
   examples of the new syntax. The old syntax using register classes still
   works, but it will be removed in a future LLVM release.
 
+* MCJIT now supports exception handling. Support for it in the old jit will be
+  removed in the 3.4 release.
+
+* Command line options can now be grouped into categories which are shown in
+  the output of ``-help``. See :ref:`grouping options into categories`.
+
+* The appearance of command line options in ``-help`` that are inherited by
+  linking with libraries that use the LLVM Command line support library can now
+  be modified at runtime. See :ref:`cl::getRegisteredOptions`.
+
 * ... next change ...
 
 .. NOTE
@@ -137,6 +147,49 @@ The R600 backend was added in this release, it supports AMD GPUs
 graphics / compute drivers which are developed as part of the `Mesa3D
 <http://www.mesa3d.org>`_ project.
 
+SystemZ/s390x Backend
+---------------------
+
+LLVM and clang now support IBM's z/Architecture.  At present this support
+is restricted to GNU/Linux (GNU triplet s390x-linux-gnu) and requires
+z10 or greater.
+
+
+External Open Source Projects Using LLVM 3.3
+============================================
+
+An exciting aspect of LLVM is that it is used as an enabling technology for
+a lot of other language and tools projects. This section lists some of the
+projects that have already been updated to work with LLVM 3.3.
+
+
+Portable Computing Language (pocl)
+----------------------------------
+
+In addition to producing an easily portable open source OpenCL
+implementation, another major goal of `pocl <http://pocl.sourceforge.net/>`_ 
+is improving performance portability of OpenCL programs with
+compiler optimizations, reducing the need for target-dependent manual
+optimizations. An important part of pocl is a set of LLVM passes used to
+statically parallelize multiple work-items with the kernel compiler, even in
+the presence of work-group barriers. This enables static parallelization of
+the fine-grained static concurrency in the work groups in multiple ways.
+
+TTA-based Co-design Environment (TCE)
+-------------------------------------
+
+`TCE <http://tce.cs.tut.fi/>`_ is a toolset for designing new 
+processors based on the Transport triggered architecture (TTA). 
+The toolset provides a complete co-design flow from C/C++
+programs down to synthesizable VHDL/Verilog and parallel program binaries.
+Processor customization points include the register files, function units,
+supported operations, and the interconnection network.
+
+TCE uses Clang and LLVM for C/C++/OpenCL C language support, target independent
+optimizations and also for parts of code generation. It generates new
+LLVM-based code generators "on the fly" for the designed TTA processors and
+loads them in to the compiler backend as runtime libraries to avoid
+per-target recompilation of larger parts of the compiler chain.
 
 
 Additional Information

@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 //
 // This is the LLVM loop vectorizer. This pass modifies 'vectorizable' loops
-// and generates target-independent LLVM-IR. Legalization of the IR is done
-// in the codegen. However, the vectorizer uses (will use) the codegen
-// interfaces to generate IR that is likely to result in an optimal binary.
+// and generates target-independent LLVM-IR.
+// The vectorizer uses the TargetTransformInfo analysis to estimate the costs
+// of instructions in order to estimate the profitability of vectorization.
 //
 // The loop vectorizer combines consecutive loop iterations into a single
 // 'wide' iteration. After this transformation the index is incremented
@@ -216,7 +216,7 @@ private:
   /// This function adds 0, 1, 2 ... to each vector element, starting at zero.
   /// If Negate is set then negative numbers are added e.g. (0, -1, -2, ...).
   /// The sequence starts at StartIndex.
-  Value *getConsecutiveVector(Value* Val, unsigned StartIdx, bool Negate);
+  Value *getConsecutiveVector(Value* Val, int StartIdx, bool Negate);
 
   /// When we go over instructions in the basic block we rely on previous
   /// values within the current basic block or on loop invariant values.
@@ -335,7 +335,7 @@ public:
                             DominatorTree *DT, TargetTransformInfo* TTI,
                             AliasAnalysis *AA, TargetLibraryInfo *TLI)
       : TheLoop(L), SE(SE), DL(DL), DT(DT), TTI(TTI), AA(AA), TLI(TLI),
-        Induction(0) {}
+        Induction(0), HasFunNoNaNAttr(false) {}
 
   /// This enum represents the kinds of reductions that we support.
   enum ReductionKind {
@@ -347,7 +347,8 @@ public:
     RK_IntegerXor,  ///< Bitwise or logical XOR of numbers.
     RK_IntegerMinMax, ///< Min/max implemented in terms of select(cmp()).
     RK_FloatAdd,    ///< Sum of floats.
-    RK_FloatMult    ///< Product of floats.
+    RK_FloatMult,   ///< Product of floats.
+    RK_FloatMinMax  ///< Min/max implemented in terms of select(cmp()).
   };
 
   /// This enum represents the kinds of inductions that we support.
@@ -365,7 +366,9 @@ public:
     MRK_UIntMin,
     MRK_UIntMax,
     MRK_SIntMin,
-    MRK_SIntMax
+    MRK_SIntMax,
+    MRK_FloatMin,
+    MRK_FloatMax
   };
 
   /// This POD struct holds information about reduction variables.
@@ -498,8 +501,7 @@ public:
 
   /// This function returns the identity element (or neutral element) for
   /// the operation K.
-  static Constant *getReductionIdentity(ReductionKind K, Type *Tp,
-                                        MinMaxReductionKind MinMaxK);
+  static Constant *getReductionIdentity(ReductionKind K, Type *Tp);
 private:
   /// Check if a single basic block loop is vectorizable.
   /// At this point we know that this is a loop with a constant trip count
@@ -587,6 +589,8 @@ private:
   /// We need to check that all of the pointers in this list are disjoint
   /// at runtime.
   RuntimePointerCheck PtrRtCheck;
+  /// Can we assume the absence of NaNs.
+  bool HasFunNoNaNAttr;
 };
 
 /// LoopVectorizationCostModel - estimates the expected speedups due to
@@ -825,7 +829,7 @@ Value *InnerLoopVectorizer::getBroadcastInstrs(Value *V) {
   return Shuf;
 }
 
-Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, unsigned StartIdx,
+Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, int StartIdx,
                                                  bool Negate) {
   assert(Val->getType()->isVectorTy() && "Must be a vector");
   assert(Val->getType()->getScalarType()->isIntegerTy() &&
@@ -838,8 +842,8 @@ Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, unsigned StartIdx,
 
   // Create a vector of consecutive numbers from zero to VF.
   for (int i = 0; i < VLen; ++i) {
-    int Idx = Negate ? (-i): i;
-    Indices.push_back(ConstantInt::get(ITy, StartIdx + Idx));
+    int64_t Idx = Negate ? (-i) : i;
+    Indices.push_back(ConstantInt::get(ITy, StartIdx + Idx, Negate));
   }
 
   // Add the consecutive indices to the vector value.
@@ -1231,7 +1235,7 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
 
   // Mark the old scalar loop with metadata that tells us not to vectorize this
   // loop again if we run into it.
-  MDNode *MD = MDNode::get(OldBasicBlock->getContext(), ArrayRef<Value*>());
+  MDNode *MD = MDNode::get(OldBasicBlock->getContext(), None);
   OldBasicBlock->getTerminator()->setMetadata(AlreadyVectorizedMDName, MD);
 
   // Some loops have a single integer induction variable, while other loops
@@ -1501,8 +1505,7 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
 /// This function returns the identity element (or neutral element) for
 /// the operation K.
 Constant*
-LoopVectorizationLegality::getReductionIdentity(ReductionKind K, Type *Tp,
-                                                MinMaxReductionKind MinMaxK) {
+LoopVectorizationLegality::getReductionIdentity(ReductionKind K, Type *Tp) {
   switch (K) {
   case RK_IntegerXor:
   case RK_IntegerAdd:
@@ -1521,24 +1524,6 @@ LoopVectorizationLegality::getReductionIdentity(ReductionKind K, Type *Tp,
   case  RK_FloatAdd:
     // Adding zero to a number does not change it.
     return ConstantFP::get(Tp, 0.0L);
-  case  RK_IntegerMinMax:
-    switch(MinMaxK) {
-    default: llvm_unreachable("Unknown min/max predicate");
-    case MRK_UIntMin:
-      return ConstantInt::getAllOnesValue(Tp);
-    case MRK_UIntMax:
-      return ConstantInt::get(Tp, 0);
-    case MRK_SIntMin: {
-      unsigned BitWidth = Tp->getPrimitiveSizeInBits();
-      return ConstantInt::get(Tp->getContext(),
-                              APInt::getSignedMaxValue(BitWidth));
-    }
-    case LoopVectorizationLegality::MRK_SIntMax: {
-      unsigned BitWidth = Tp->getPrimitiveSizeInBits();
-      return ConstantInt::get(Tp->getContext(),
-                              APInt::getSignedMinValue(BitWidth));
-    }
-    }
   default:
     llvm_unreachable("Unknown reduction kind");
   }
@@ -1668,6 +1653,8 @@ getReductionBinOp(LoopVectorizationLegality::ReductionKind Kind) {
       return Instruction::FAdd;
     case LoopVectorizationLegality::RK_IntegerMinMax:
       return Instruction::ICmp;
+    case LoopVectorizationLegality::RK_FloatMinMax:
+      return Instruction::FCmp;
     default:
       llvm_unreachable("Unknown reduction operation");
   }
@@ -1692,8 +1679,21 @@ Value *createMinMaxOp(IRBuilder<> &Builder,
     break;
   case LoopVectorizationLegality::MRK_SIntMax:
     P = CmpInst::ICMP_SGT;
+    break;
+  case LoopVectorizationLegality::MRK_FloatMin:
+    P = CmpInst::FCMP_OLT;
+    break;
+  case LoopVectorizationLegality::MRK_FloatMax:
+    P = CmpInst::FCMP_OGT;
+    break;
   }
-  Value *Cmp = Builder.CreateICmp(P, Left, Right, "rdx.minmax.cmp");
+
+  Value *Cmp;
+  if (RK == LoopVectorizationLegality::MRK_FloatMin || RK == LoopVectorizationLegality::MRK_FloatMax)
+    Cmp = Builder.CreateFCmp(P, Left, Right, "rdx.minmax.cmp");
+  else
+    Cmp = Builder.CreateICmp(P, Left, Right, "rdx.minmax.cmp");
+
   Value *Select = Builder.CreateSelect(Cmp, Left, Right, "rdx.minmax.select");
   return Select;
 }
@@ -1761,16 +1761,24 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
 
     // Find the reduction identity variable. Zero for addition, or, xor,
     // one for multiplication, -1 for And.
-    Constant *Iden =
-      LoopVectorizationLegality::getReductionIdentity(RdxDesc.Kind,
-                                                      VecTy->getScalarType(),
-                                                      RdxDesc.MinMaxKind);
-    Constant *Identity = ConstantVector::getSplat(VF, Iden);
+    Value *Identity;
+    Value *VectorStart;
+    if (RdxDesc.Kind == LoopVectorizationLegality::RK_IntegerMinMax ||
+        RdxDesc.Kind == LoopVectorizationLegality::RK_FloatMinMax) {
+      // MinMax reduction have the start value as their identify.
+      VectorStart = Identity = Builder.CreateVectorSplat(VF, RdxDesc.StartValue,
+                                                         "minmax.ident");
+    } else {
+      Constant *Iden =
+        LoopVectorizationLegality::getReductionIdentity(RdxDesc.Kind,
+                                                        VecTy->getScalarType());
+      Identity = ConstantVector::getSplat(VF, Iden);
 
-    // This vector is the Identity vector where the first element is the
-    // incoming scalar reduction.
-    Value *VectorStart = Builder.CreateInsertElement(Identity,
-                                                     RdxDesc.StartValue, Zero);
+      // This vector is the Identity vector where the first element is the
+      // incoming scalar reduction.
+      VectorStart = Builder.CreateInsertElement(Identity,
+                                                RdxDesc.StartValue, Zero);
+    }
 
     // Fix the vector-loop phi.
     // We created the induction variable so we know that the
@@ -1814,7 +1822,7 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
     Value *ReducedPartRdx = RdxParts[0];
     unsigned Op = getReductionBinOp(RdxDesc.Kind);
     for (unsigned part = 1; part < UF; ++part) {
-      if (Op != Instruction::ICmp)
+      if (Op != Instruction::ICmp && Op != Instruction::FCmp)
         ReducedPartRdx = Builder.CreateBinOp((Instruction::BinaryOps)Op,
                                              RdxParts[part], ReducedPartRdx,
                                              "bin.rdx");
@@ -1845,7 +1853,7 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
                                     ConstantVector::get(ShuffleMask),
                                     "rdx.shuf");
 
-      if (Op != Instruction::ICmp)
+      if (Op != Instruction::ICmp && Op != Instruction::FCmp)
         TmpVec = Builder.CreateBinOp((Instruction::BinaryOps)Op, TmpVec, Shuf,
                                      "bin.rdx");
       else
@@ -1982,18 +1990,33 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
         // We know that all PHIs in non header blocks are converted into
         // selects, so we don't have to worry about the insertion order and we
         // can just use the builder.
-
         // At this point we generate the predication tree. There may be
         // duplications since this is a simple recursive scan, but future
         // optimizations will clean it up.
-        VectorParts Cond = createEdgeMask(P->getIncomingBlock(0),
-                                               P->getParent());
 
-        for (unsigned part = 0; part < UF; ++part) {
-        VectorParts &In0 = getVectorValue(P->getIncomingValue(0));
-        VectorParts &In1 = getVectorValue(P->getIncomingValue(1));
-          Entry[part] = Builder.CreateSelect(Cond[part], In0[part], In1[part],
-                                             "predphi");
+        unsigned NumIncoming = P->getNumIncomingValues();
+        assert(NumIncoming > 1 && "Invalid PHI");
+
+        // Generate a sequence of selects of the form:
+        // SELECT(Mask3, In3,
+        //      SELECT(Mask2, In2,
+        //                   ( ...)))
+        for (unsigned In = 0; In < NumIncoming; In++) {
+          VectorParts Cond = createEdgeMask(P->getIncomingBlock(In),
+                                            P->getParent());
+          VectorParts &In0 = getVectorValue(P->getIncomingValue(In));
+
+          for (unsigned part = 0; part < UF; ++part) {
+            // We don't need to 'select' the first PHI operand because it is
+            // the default value if all of the other masks don't match.
+            if (In == 0)
+              Entry[part] = In0[part];
+            else
+              // Select between the current value and the previous incoming edge
+              // based on the incoming mask.
+              Entry[part] = Builder.CreateSelect(Cond[part], In0[part],
+                                                 Entry[part], "predphi");
+          }
         }
         continue;
       }
@@ -2049,7 +2072,8 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
           // After broadcasting the induction variable we need to make the
           // vector consecutive by adding  ... -3, -2, -1, 0.
           for (unsigned part = 0; part < UF; ++part)
-            Entry[part] = getConsecutiveVector(Broadcasted, -VF * part, true);
+            Entry[part] = getConsecutiveVector(Broadcasted, -(int)VF * part,
+                                               true);
           continue;
         }
 
@@ -2273,12 +2297,6 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
     if (!isa<BranchInst>(BB->getTerminator()))
       return false;
 
-    // We must have at most two predecessors because we need to convert
-    // all PHIs to selects.
-    unsigned Preds = std::distance(pred_begin(BB), pred_end(BB));
-    if (Preds > 2)
-      return false;
-
     // We must be able to predicate all blocks that need to be predicated.
     if (blockNeedsPredication(BB) && !blockCanBePredicated(BB))
       return false;
@@ -2367,6 +2385,13 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
     return false;
   }
 
+  // Look for the attribute signaling the absence of NaNs.
+  Function &F = *Header->getParent();
+  if (F.hasFnAttribute("no-nans-fp-math"))
+    HasFunNoNaNAttr = F.getAttributes().getAttribute(
+      AttributeSet::FunctionIndex,
+      "no-nans-fp-math").getValueAsString() == "true";
+
   // For each block in the loop.
   for (Loop::block_iterator bb = TheLoop->block_begin(),
        be = TheLoop->block_end(); bb != be; ++bb) {
@@ -2376,12 +2401,6 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
          ++it) {
 
       if (PHINode *Phi = dyn_cast<PHINode>(it)) {
-        // This should not happen because the loop should be normalized.
-        if (Phi->getNumIncomingValues() != 2) {
-          DEBUG(dbgs() << "LV: Found an invalid PHI.\n");
-          return false;
-        }
-
         // Check that this PHI type is allowed.
         if (!Phi->getType()->isIntegerTy() &&
             !Phi->getType()->isFloatingPointTy() &&
@@ -2395,6 +2414,12 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
         // the PHIs in this block are induction or reduction variables.
         if (*bb != Header)
           continue;
+
+        // We only allow if-converted PHIs with more than two incoming values.
+        if (Phi->getNumIncomingValues() != 2) {
+          DEBUG(dbgs() << "LV: Found an invalid PHI.\n");
+          return false;
+        }
 
         // This is the value coming from the preheader.
         Value *StartValue = Phi->getIncomingValueForBlock(PreHeader);
@@ -2446,6 +2471,10 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
         }
         if (AddReductionVar(Phi, RK_FloatAdd)) {
           DEBUG(dbgs() << "LV: Found an FAdd reduction PHI."<< *Phi <<"\n");
+          continue;
+        }
+        if (AddReductionVar(Phi, RK_FloatMinMax)) {
+          DEBUG(dbgs() << "LV: Found an float MINMAX reduction PHI."<< *Phi <<"\n");
           continue;
         }
 
@@ -2776,8 +2805,8 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
                                         Inst,
                                         WriteObjects,
                                         MaxByteWidth)) {
-        DEBUG(dbgs() << "LV: Found a possible write-write reorder:"
-              << *UI <<"\n");
+        DEBUG(dbgs() << "LV: Found a possible write-write reorder:" << **UI
+                     << "\n");
         return false;
       }
 
@@ -2820,8 +2849,8 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
                                         Inst,
                                         WriteObjects,
                                         MaxByteWidth)) {
-        DEBUG(dbgs() << "LV: Found a possible read-write reorder:"
-              << *UI <<"\n");
+        DEBUG(dbgs() << "LV: Found a possible read-write reorder:" << **UI
+                     << "\n");
         return false;
       }
     }
@@ -2838,6 +2867,26 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
 
   DEBUG(dbgs() << "LV: We "<< (NeedRTCheck ? "" : "don't") <<
         " need a runtime memory check.\n");
+  return true;
+}
+
+static bool hasMultipleUsesOf(Instruction *I,
+                              SmallPtrSet<Instruction *, 8> &Insts) {
+  unsigned NumUses = 0;
+  for(User::op_iterator Use = I->op_begin(), E = I->op_end(); Use != E; ++Use) {
+    if (Insts.count(dyn_cast<Instruction>(*Use)))
+      ++NumUses;
+    if (NumUses > 1)
+      return true;
+  }
+
+  return false;
+}
+
+static bool areAllUsesIn(Instruction *I, SmallPtrSet<Instruction *, 8> &Set) {
+  for(User::op_iterator Use = I->op_begin(), E = I->op_end(); Use != E; ++Use)
+    if (!Set.count(dyn_cast<Instruction>(*Use)))
+      return false;
   return true;
 }
 
@@ -2859,129 +2908,160 @@ bool LoopVectorizationLegality::AddReductionVar(PHINode *Phi,
   // This includes users of the reduction, variables (which form a cycle
   // which ends in the phi node).
   Instruction *ExitInstruction = 0;
-  // Indicates that we found a binary operation in our scan.
-  bool FoundBinOp = false;
+  // Indicates that we found a reduction operation in our scan.
+  bool FoundReduxOp = false;
 
-  // Iter is our iterator. We start with the PHI node and scan for all of the
-  // users of this instruction. All users must be instructions that can be
-  // used as reduction variables (such as ADD). We may have a single
-  // out-of-block user. The cycle must end with the original PHI.
-  Instruction *Iter = Phi;
+  // We start with the PHI node and scan for all of the users of this
+  // instruction. All users must be instructions that can be used as reduction
+  // variables (such as ADD). We must have a single out-of-block user. The cycle
+  // must include the original PHI.
+  bool FoundStartPHI = false;
 
   // To recognize min/max patterns formed by a icmp select sequence, we store
   // the number of instruction we saw from the recognized min/max pattern,
-  // such that we don't stop when we see the phi has two uses (one by the select
-  // and one by the icmp) and to make sure we only see exactly the two
-  // instructions.
-  unsigned NumICmpSelectPatternInst = 0;
+  //  to make sure we only see exactly the two instructions.
+  unsigned NumCmpSelectPatternInst = 0;
   ReductionInstDesc ReduxDesc(false, 0);
 
-  // Avoid cycles in the chain.
   SmallPtrSet<Instruction *, 8> VisitedInsts;
-  while (VisitedInsts.insert(Iter)) {
-    // If the instruction has no users then this is a broken
-    // chain and can't be a reduction variable.
-    if (Iter->use_empty())
+  SmallVector<Instruction *, 8> Worklist;
+  Worklist.push_back(Phi);
+  VisitedInsts.insert(Phi);
+
+  // A value in the reduction can be used:
+  //  - By the reduction:
+  //      - Reduction operation:
+  //        - One use of reduction value (safe).
+  //        - Multiple use of reduction value (not safe).
+  //      - PHI:
+  //        - All uses of the PHI must be the reduction (safe).
+  //        - Otherwise, not safe.
+  //  - By one instruction outside of the loop (safe).
+  //  - By further instructions outside of the loop (not safe).
+  //  - By an instruction that is not part of the reduction (not safe).
+  //    This is either:
+  //      * An instruction type other than PHI or the reduction operation.
+  //      * A PHI in the header other than the initial PHI.
+  while (!Worklist.empty()) {
+    Instruction *Cur = Worklist.back();
+    Worklist.pop_back();
+
+    // No Users.
+    // If the instruction has no users then this is a broken chain and can't be
+    // a reduction variable.
+    if (Cur->use_empty())
       return false;
 
-    // Did we find a user inside this loop already ?
-    bool FoundInBlockUser = false;
-    // Did we reach the initial PHI node already ?
-    bool FoundStartPHI = false;
+    bool IsAPhi = isa<PHINode>(Cur);
 
-    // Is this a bin op ?
-    FoundBinOp |= !isa<PHINode>(Iter);
+    // A header PHI use other than the original PHI.
+    if (Cur != Phi && IsAPhi && Cur->getParent() == Phi->getParent())
+      return false;
 
-    // For each of the *users* of iter.
-    for (Value::use_iterator it = Iter->use_begin(), e = Iter->use_end();
-         it != e; ++it) {
-      Instruction *U = cast<Instruction>(*it);
-      // We already know that the PHI is a user.
-      if (U == Phi) {
-        FoundStartPHI = true;
-        continue;
-      }
+    // Reductions of instructions such as Div, and Sub is only possible if the
+    // LHS is the reduction variable.
+    if (!Cur->isCommutative() && !IsAPhi && !isa<SelectInst>(Cur) &&
+        !isa<ICmpInst>(Cur) && !isa<FCmpInst>(Cur) &&
+        !VisitedInsts.count(dyn_cast<Instruction>(Cur->getOperand(0))))
+      return false;
+
+    // Any reduction instruction must be of one of the allowed kinds.
+    ReduxDesc = isReductionInstr(Cur, Kind, ReduxDesc);
+    if (!ReduxDesc.IsReduction)
+      return false;
+
+    // A reduction operation must only have one use of the reduction value.
+    if (!IsAPhi && Kind != RK_IntegerMinMax && Kind != RK_FloatMinMax &&
+        hasMultipleUsesOf(Cur, VisitedInsts))
+      return false;
+
+    // All inputs to a PHI node must be a reduction value.
+    if(IsAPhi && Cur != Phi && !areAllUsesIn(Cur, VisitedInsts))
+      return false;
+
+    if (Kind == RK_IntegerMinMax && (isa<ICmpInst>(Cur) ||
+                                     isa<SelectInst>(Cur)))
+      ++NumCmpSelectPatternInst;
+    if (Kind == RK_FloatMinMax && (isa<FCmpInst>(Cur) ||
+                                   isa<SelectInst>(Cur)))
+      ++NumCmpSelectPatternInst;
+
+    // Check  whether we found a reduction operator.
+    FoundReduxOp |= !IsAPhi;
+
+    // Process users of current instruction. Push non PHI nodes after PHI nodes
+    // onto the stack. This way we are going to have seen all inputs to PHI
+    // nodes once we get to them.
+    SmallVector<Instruction *, 8> NonPHIs;
+    SmallVector<Instruction *, 8> PHIs;
+    for (Value::use_iterator UI = Cur->use_begin(), E = Cur->use_end(); UI != E;
+         ++UI) {
+      Instruction *Usr = cast<Instruction>(*UI);
 
       // Check if we found the exit user.
-      BasicBlock *Parent = U->getParent();
+      BasicBlock *Parent = Usr->getParent();
       if (!TheLoop->contains(Parent)) {
         // Exit if you find multiple outside users.
         if (ExitInstruction != 0)
           return false;
-        ExitInstruction = Iter;
+        ExitInstruction = Cur;
+        continue;
       }
 
-      // We allow in-loop PHINodes which are not the original reduction PHI
-      // node. If this PHI is the only user of Iter (happens in IF w/ no ELSE
-      // structure) then don't skip this PHI.
-      if (isa<PHINode>(Iter) && isa<PHINode>(U) &&
-          U->getParent() != TheLoop->getHeader() &&
-          TheLoop->contains(U) &&
-          Iter->hasNUsesOrMore(2))
-        continue;
-
-      // We can't have multiple inside users except for a combination of
-      // icmp/select both using the phi.
-      if (FoundInBlockUser && !NumICmpSelectPatternInst)
-        return false;
-      FoundInBlockUser = true;
-
-      // Any reduction instr must be of one of the allowed kinds.
-      ReduxDesc = isReductionInstr(U, Kind, ReduxDesc);
-      if (!ReduxDesc.IsReduction)
-        return false;
-
-      if (Kind == RK_IntegerMinMax && (isa<ICmpInst>(U) ||
-                                       isa<SelectInst>(U)))
-          ++NumICmpSelectPatternInst;
-
-      // Reductions of instructions such as Div, and Sub is only
-      // possible if the LHS is the reduction variable.
-      if (!U->isCommutative() && !isa<PHINode>(U) && !isa<SelectInst>(U) &&
-          !isa<ICmpInst>(U) && U->getOperand(0) != Iter)
-        return false;
-
-      Iter = ReduxDesc.PatternLastInst;
+      // Process instructions only once (termination).
+      if (VisitedInsts.insert(Usr)) {
+        if (isa<PHINode>(Usr))
+          PHIs.push_back(Usr);
+        else
+          NonPHIs.push_back(Usr);
+      }
+      // Remember that we completed the cycle.
+      if (Usr == Phi)
+        FoundStartPHI = true;
     }
-
-    // This means we have seen one but not the other instruction of the
-    // pattern or more than just a select and cmp.
-    if (Kind == RK_IntegerMinMax && NumICmpSelectPatternInst != 2)
-      return false;
-
-    // We found a reduction var if we have reached the original
-    // phi node and we only have a single instruction with out-of-loop
-    // users.
-    if (FoundStartPHI) {
-      // This instruction is allowed to have out-of-loop users.
-      AllowedExit.insert(ExitInstruction);
-
-      // Save the description of this reduction variable.
-      ReductionDescriptor RD(RdxStart, ExitInstruction, Kind,
-                             ReduxDesc.MinMaxKind);
-      Reductions[Phi] = RD;
-      // We've ended the cycle. This is a reduction variable if we have an
-      // outside user and it has a binary op.
-      return FoundBinOp && ExitInstruction;
-    }
+    Worklist.append(PHIs.begin(), PHIs.end());
+    Worklist.append(NonPHIs.begin(), NonPHIs.end());
   }
 
-  return false;
+  // This means we have seen one but not the other instruction of the
+  // pattern or more than just a select and cmp.
+  if ((Kind == RK_IntegerMinMax || Kind == RK_FloatMinMax) &&
+      NumCmpSelectPatternInst != 2)
+    return false;
+
+  if (!FoundStartPHI || !FoundReduxOp || !ExitInstruction)
+    return false;
+
+  // We found a reduction var if we have reached the original phi node and we
+  // only have a single instruction with out-of-loop users.
+
+  // This instruction is allowed to have out-of-loop users.
+  AllowedExit.insert(ExitInstruction);
+
+  // Save the description of this reduction variable.
+  ReductionDescriptor RD(RdxStart, ExitInstruction, Kind,
+                         ReduxDesc.MinMaxKind);
+  Reductions[Phi] = RD;
+  // We've ended the cycle. This is a reduction variable if we have an
+  // outside user and it has a binary op.
+
+  return true;
 }
 
 /// Returns true if the instruction is a Select(ICmp(X, Y), X, Y) instruction
 /// pattern corresponding to a min(X, Y) or max(X, Y).
 LoopVectorizationLegality::ReductionInstDesc
-LoopVectorizationLegality::isMinMaxSelectCmpPattern(Instruction *I, ReductionInstDesc &Prev) {
+LoopVectorizationLegality::isMinMaxSelectCmpPattern(Instruction *I,
+                                                    ReductionInstDesc &Prev) {
 
-  assert((isa<ICmpInst>(I) || isa<SelectInst>(I)) &&
+  assert((isa<ICmpInst>(I) || isa<FCmpInst>(I) || isa<SelectInst>(I)) &&
          "Expect a select instruction");
-  ICmpInst *Cmp = 0;
+  Instruction *Cmp = 0;
   SelectInst *Select = 0;
 
   // We must handle the select(cmp()) as a single instruction. Advance to the
   // select.
-  if ((Cmp = dyn_cast<ICmpInst>(I))) {
+  if ((Cmp = dyn_cast<ICmpInst>(I)) || (Cmp = dyn_cast<FCmpInst>(I))) {
     if (!Cmp->hasOneUse() || !(Select = dyn_cast<SelectInst>(*I->use_begin())))
       return ReductionInstDesc(false, I);
     return ReductionInstDesc(Select, Prev.MinMaxKind);
@@ -2990,13 +3070,14 @@ LoopVectorizationLegality::isMinMaxSelectCmpPattern(Instruction *I, ReductionIns
   // Only handle single use cases for now.
   if (!(Select = dyn_cast<SelectInst>(I)))
     return ReductionInstDesc(false, I);
-  if (!(Cmp = dyn_cast<ICmpInst>(I->getOperand(0))))
+  if (!(Cmp = dyn_cast<ICmpInst>(I->getOperand(0))) &&
+      !(Cmp = dyn_cast<FCmpInst>(I->getOperand(0))))
     return ReductionInstDesc(false, I);
   if (!Cmp->hasOneUse())
     return ReductionInstDesc(false, I);
 
-  Value *CmpLeft = Cmp->getOperand(0);
-  Value *CmpRight = Cmp->getOperand(1);
+  Value *CmpLeft;
+  Value *CmpRight;
 
   // Look for a min/max pattern.
   if (m_UMin(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
@@ -3007,6 +3088,14 @@ LoopVectorizationLegality::isMinMaxSelectCmpPattern(Instruction *I, ReductionIns
     return ReductionInstDesc(Select, MRK_SIntMax);
   else if (m_SMin(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
     return ReductionInstDesc(Select, MRK_SIntMin);
+  else if (m_OrdFMin(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
+    return ReductionInstDesc(Select, MRK_FloatMin);
+  else if (m_OrdFMax(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
+    return ReductionInstDesc(Select, MRK_FloatMax);
+  else if (m_UnordFMin(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
+    return ReductionInstDesc(Select, MRK_FloatMin);
+  else if (m_UnordFMax(m_Value(CmpLeft), m_Value(CmpRight)).match(Select))
+    return ReductionInstDesc(Select, MRK_FloatMax);
 
   return ReductionInstDesc(false, I);
 }
@@ -3021,7 +3110,8 @@ LoopVectorizationLegality::isReductionInstr(Instruction *I,
   default:
     return ReductionInstDesc(false, I);
   case Instruction::PHI:
-      if (FP && (Kind != RK_FloatMult && Kind != RK_FloatAdd))
+      if (FP && (Kind != RK_FloatMult && Kind != RK_FloatAdd &&
+                 Kind != RK_FloatMinMax))
         return ReductionInstDesc(false, I);
     return ReductionInstDesc(I, Prev.MinMaxKind);
   case Instruction::Sub:
@@ -3039,9 +3129,11 @@ LoopVectorizationLegality::isReductionInstr(Instruction *I,
     return ReductionInstDesc(Kind == RK_FloatMult && FastMath, I);
   case Instruction::FAdd:
     return ReductionInstDesc(Kind == RK_FloatAdd && FastMath, I);
+  case Instruction::FCmp:
   case Instruction::ICmp:
   case Instruction::Select:
-    if (Kind != RK_IntegerMinMax)
+    if (Kind != RK_IntegerMinMax &&
+        (!HasFunNoNaNAttr || Kind != RK_FloatMinMax))
       return ReductionInstDesc(false, I);
     return isMinMaxSelectCmpPattern(I, Prev);
   }

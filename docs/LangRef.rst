@@ -1854,11 +1854,11 @@ double, and there are three forms of long double. The 80-bit format used
 by x86 is represented as ``0xK`` followed by 20 hexadecimal digits. The
 128-bit format used by PowerPC (two adjacent doubles) is represented by
 ``0xM`` followed by 32 hexadecimal digits. The IEEE 128-bit format is
-represented by ``0xL`` followed by 32 hexadecimal digits; no currently
-supported target uses this format. Long doubles will only work if they
-match the long double format on your target. The IEEE 16-bit format
-(half precision) is represented by ``0xH`` followed by 4 hexadecimal
-digits. All hexadecimal formats are big-endian (sign bit at the left).
+represented by ``0xL`` followed by 32 hexadecimal digits. Long doubles
+will only work if they match the long double format on your target.
+The IEEE 16-bit format (half precision) is represented by ``0xH``
+followed by 4 hexadecimal digits. All hexadecimal formats are big-endian
+(sign bit at the left).
 
 There are no constants of type x86mmx.
 
@@ -4008,7 +4008,7 @@ Example:
       <result> = lshr i32 4, 1   ; yields {i32}:result = 2
       <result> = lshr i32 4, 2   ; yields {i32}:result = 1
       <result> = lshr i8  4, 3   ; yields {i8}:result = 0
-      <result> = lshr i8 -2, 1   ; yields {i8}:result = 0x7FFFFFFF
+      <result> = lshr i8 -2, 1   ; yields {i8}:result = 0x7F
       <result> = lshr i32 1, 32  ; undefined
       <result> = lshr <2 x i32> < i32 -2, i32 4>, < i32 1, i32 2>   ; yields: result=<2 x i32> < i32 0x7FFFFFFF, i32 1>
 

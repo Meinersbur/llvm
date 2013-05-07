@@ -25,6 +25,7 @@
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #define GET_INSTRINFO_CTOR
 #define GET_INSTRMAP_INFO
 #include "HexagonGenInstrInfo.inc"
@@ -625,110 +626,8 @@ bool HexagonInstrInfo::isExtended(const MachineInstr *MI) const {
   return  false;
 }
 
-bool HexagonInstrInfo::isNewValueJump(const MachineInstr *MI) const {
-  switch (MI->getOpcode()) {
-    default: return false;
-    // JMP_EQri
-    case Hexagon::JMP_EQriPt_nv_V4:
-    case Hexagon::JMP_EQriPnt_nv_V4:
-    case Hexagon::JMP_EQriNotPt_nv_V4:
-    case Hexagon::JMP_EQriNotPnt_nv_V4:
-    case Hexagon::JMP_EQriPt_ie_nv_V4:
-    case Hexagon::JMP_EQriPnt_ie_nv_V4:
-    case Hexagon::JMP_EQriNotPt_ie_nv_V4:
-    case Hexagon::JMP_EQriNotPnt_ie_nv_V4:
-
-    // JMP_EQri - with -1
-    case Hexagon::JMP_EQriPtneg_nv_V4:
-    case Hexagon::JMP_EQriPntneg_nv_V4:
-    case Hexagon::JMP_EQriNotPtneg_nv_V4:
-    case Hexagon::JMP_EQriNotPntneg_nv_V4:
-    case Hexagon::JMP_EQriPtneg_ie_nv_V4:
-    case Hexagon::JMP_EQriPntneg_ie_nv_V4:
-    case Hexagon::JMP_EQriNotPtneg_ie_nv_V4:
-    case Hexagon::JMP_EQriNotPntneg_ie_nv_V4:
-
-    // JMP_EQrr
-    case Hexagon::JMP_EQrrPt_nv_V4:
-    case Hexagon::JMP_EQrrPnt_nv_V4:
-    case Hexagon::JMP_EQrrNotPt_nv_V4:
-    case Hexagon::JMP_EQrrNotPnt_nv_V4:
-    case Hexagon::JMP_EQrrPt_ie_nv_V4:
-    case Hexagon::JMP_EQrrPnt_ie_nv_V4:
-    case Hexagon::JMP_EQrrNotPt_ie_nv_V4:
-    case Hexagon::JMP_EQrrNotPnt_ie_nv_V4:
-
-    // JMP_GTri
-    case Hexagon::JMP_GTriPt_nv_V4:
-    case Hexagon::JMP_GTriPnt_nv_V4:
-    case Hexagon::JMP_GTriNotPt_nv_V4:
-    case Hexagon::JMP_GTriNotPnt_nv_V4:
-    case Hexagon::JMP_GTriPt_ie_nv_V4:
-    case Hexagon::JMP_GTriPnt_ie_nv_V4:
-    case Hexagon::JMP_GTriNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTriNotPnt_ie_nv_V4:
-
-    // JMP_GTri - with -1
-    case Hexagon::JMP_GTriPtneg_nv_V4:
-    case Hexagon::JMP_GTriPntneg_nv_V4:
-    case Hexagon::JMP_GTriNotPtneg_nv_V4:
-    case Hexagon::JMP_GTriNotPntneg_nv_V4:
-    case Hexagon::JMP_GTriPtneg_ie_nv_V4:
-    case Hexagon::JMP_GTriPntneg_ie_nv_V4:
-    case Hexagon::JMP_GTriNotPtneg_ie_nv_V4:
-    case Hexagon::JMP_GTriNotPntneg_ie_nv_V4:
-
-    // JMP_GTrr
-    case Hexagon::JMP_GTrrPt_nv_V4:
-    case Hexagon::JMP_GTrrPnt_nv_V4:
-    case Hexagon::JMP_GTrrNotPt_nv_V4:
-    case Hexagon::JMP_GTrrNotPnt_nv_V4:
-    case Hexagon::JMP_GTrrPt_ie_nv_V4:
-    case Hexagon::JMP_GTrrPnt_ie_nv_V4:
-    case Hexagon::JMP_GTrrNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTrrNotPnt_ie_nv_V4:
-
-    // JMP_GTrrdn
-    case Hexagon::JMP_GTrrdnPt_nv_V4:
-    case Hexagon::JMP_GTrrdnPnt_nv_V4:
-    case Hexagon::JMP_GTrrdnNotPt_nv_V4:
-    case Hexagon::JMP_GTrrdnNotPnt_nv_V4:
-    case Hexagon::JMP_GTrrdnPt_ie_nv_V4:
-    case Hexagon::JMP_GTrrdnPnt_ie_nv_V4:
-    case Hexagon::JMP_GTrrdnNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTrrdnNotPnt_ie_nv_V4:
-
-    // JMP_GTUri
-    case Hexagon::JMP_GTUriPt_nv_V4:
-    case Hexagon::JMP_GTUriPnt_nv_V4:
-    case Hexagon::JMP_GTUriNotPt_nv_V4:
-    case Hexagon::JMP_GTUriNotPnt_nv_V4:
-    case Hexagon::JMP_GTUriPt_ie_nv_V4:
-    case Hexagon::JMP_GTUriPnt_ie_nv_V4:
-    case Hexagon::JMP_GTUriNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTUriNotPnt_ie_nv_V4:
-
-    // JMP_GTUrr
-    case Hexagon::JMP_GTUrrPt_nv_V4:
-    case Hexagon::JMP_GTUrrPnt_nv_V4:
-    case Hexagon::JMP_GTUrrNotPt_nv_V4:
-    case Hexagon::JMP_GTUrrNotPnt_nv_V4:
-    case Hexagon::JMP_GTUrrPt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrPnt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrNotPnt_ie_nv_V4:
-
-    // JMP_GTUrrdn
-    case Hexagon::JMP_GTUrrdnPt_nv_V4:
-    case Hexagon::JMP_GTUrrdnPnt_nv_V4:
-    case Hexagon::JMP_GTUrrdnNotPt_nv_V4:
-    case Hexagon::JMP_GTUrrdnNotPnt_nv_V4:
-    case Hexagon::JMP_GTUrrdnPt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrdnPnt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrdnNotPt_ie_nv_V4:
-    case Hexagon::JMP_GTUrrdnNotPnt_ie_nv_V4:
-      return true;
-  }
+bool HexagonInstrInfo::isBranch (const MachineInstr *MI) const {
+  return MI->getDesc().isBranch();
 }
 
 bool HexagonInstrInfo::isNewValueStore(const MachineInstr *MI) const {
@@ -1032,6 +931,12 @@ bool HexagonInstrInfo::isPredicable(MachineInstr *MI) const {
 //  cNotPt  ---> cNotPt_nv
 //  cPt     ---> cPt_nv
 unsigned HexagonInstrInfo::getInvertedPredicatedOpcode(const int Opc) const {
+  int InvPredOpcode;
+  InvPredOpcode = isPredicatedTrue(Opc) ? Hexagon::getFalsePredOpcode(Opc)
+                                        : Hexagon::getTruePredOpcode(Opc);
+  if (InvPredOpcode >= 0) // Valid instruction with the inverted predicate.
+    return InvPredOpcode;
+
   switch(Opc) {
     default: llvm_unreachable("Unexpected predicated instruction");
     case Hexagon::TFR_cPt:
@@ -1364,117 +1269,6 @@ unsigned HexagonInstrInfo::getInvertedPredicatedOpcode(const int Opc) const {
       return Hexagon::DEALLOC_RET_cNotPt_V4;
     case Hexagon::DEALLOC_RET_cNotPt_V4:
       return Hexagon::DEALLOC_RET_cPt_V4;
-
-   // New Value Jump.
-   // JMPEQ_ri - with -1.
-    case Hexagon::JMP_EQriPtneg_nv_V4:
-      return Hexagon::JMP_EQriNotPtneg_nv_V4;
-    case Hexagon::JMP_EQriNotPtneg_nv_V4:
-      return Hexagon::JMP_EQriPtneg_nv_V4;
-
-    case Hexagon::JMP_EQriPntneg_nv_V4:
-      return Hexagon::JMP_EQriNotPntneg_nv_V4;
-    case Hexagon::JMP_EQriNotPntneg_nv_V4:
-      return Hexagon::JMP_EQriPntneg_nv_V4;
-
-   // JMPEQ_ri.
-     case Hexagon::JMP_EQriPt_nv_V4:
-      return Hexagon::JMP_EQriNotPt_nv_V4;
-    case Hexagon::JMP_EQriNotPt_nv_V4:
-      return Hexagon::JMP_EQriPt_nv_V4;
-
-     case Hexagon::JMP_EQriPnt_nv_V4:
-      return Hexagon::JMP_EQriNotPnt_nv_V4;
-    case Hexagon::JMP_EQriNotPnt_nv_V4:
-      return Hexagon::JMP_EQriPnt_nv_V4;
-
-   // JMPEQ_rr.
-     case Hexagon::JMP_EQrrPt_nv_V4:
-      return Hexagon::JMP_EQrrNotPt_nv_V4;
-    case Hexagon::JMP_EQrrNotPt_nv_V4:
-      return Hexagon::JMP_EQrrPt_nv_V4;
-
-     case Hexagon::JMP_EQrrPnt_nv_V4:
-      return Hexagon::JMP_EQrrNotPnt_nv_V4;
-    case Hexagon::JMP_EQrrNotPnt_nv_V4:
-      return Hexagon::JMP_EQrrPnt_nv_V4;
-
-   // JMPGT_ri - with -1.
-    case Hexagon::JMP_GTriPtneg_nv_V4:
-      return Hexagon::JMP_GTriNotPtneg_nv_V4;
-    case Hexagon::JMP_GTriNotPtneg_nv_V4:
-      return Hexagon::JMP_GTriPtneg_nv_V4;
-
-    case Hexagon::JMP_GTriPntneg_nv_V4:
-      return Hexagon::JMP_GTriNotPntneg_nv_V4;
-    case Hexagon::JMP_GTriNotPntneg_nv_V4:
-      return Hexagon::JMP_GTriPntneg_nv_V4;
-
-   // JMPGT_ri.
-     case Hexagon::JMP_GTriPt_nv_V4:
-      return Hexagon::JMP_GTriNotPt_nv_V4;
-    case Hexagon::JMP_GTriNotPt_nv_V4:
-      return Hexagon::JMP_GTriPt_nv_V4;
-
-     case Hexagon::JMP_GTriPnt_nv_V4:
-      return Hexagon::JMP_GTriNotPnt_nv_V4;
-    case Hexagon::JMP_GTriNotPnt_nv_V4:
-      return Hexagon::JMP_GTriPnt_nv_V4;
-
-   // JMPGT_rr.
-     case Hexagon::JMP_GTrrPt_nv_V4:
-      return Hexagon::JMP_GTrrNotPt_nv_V4;
-    case Hexagon::JMP_GTrrNotPt_nv_V4:
-      return Hexagon::JMP_GTrrPt_nv_V4;
-
-     case Hexagon::JMP_GTrrPnt_nv_V4:
-      return Hexagon::JMP_GTrrNotPnt_nv_V4;
-    case Hexagon::JMP_GTrrNotPnt_nv_V4:
-      return Hexagon::JMP_GTrrPnt_nv_V4;
-
-   // JMPGT_rrdn.
-     case Hexagon::JMP_GTrrdnPt_nv_V4:
-      return Hexagon::JMP_GTrrdnNotPt_nv_V4;
-    case Hexagon::JMP_GTrrdnNotPt_nv_V4:
-      return Hexagon::JMP_GTrrdnPt_nv_V4;
-
-     case Hexagon::JMP_GTrrdnPnt_nv_V4:
-      return Hexagon::JMP_GTrrdnNotPnt_nv_V4;
-    case Hexagon::JMP_GTrrdnNotPnt_nv_V4:
-      return Hexagon::JMP_GTrrdnPnt_nv_V4;
-
-   // JMPGTU_ri.
-     case Hexagon::JMP_GTUriPt_nv_V4:
-      return Hexagon::JMP_GTUriNotPt_nv_V4;
-    case Hexagon::JMP_GTUriNotPt_nv_V4:
-      return Hexagon::JMP_GTUriPt_nv_V4;
-
-     case Hexagon::JMP_GTUriPnt_nv_V4:
-      return Hexagon::JMP_GTUriNotPnt_nv_V4;
-    case Hexagon::JMP_GTUriNotPnt_nv_V4:
-      return Hexagon::JMP_GTUriPnt_nv_V4;
-
-   // JMPGTU_rr.
-     case Hexagon::JMP_GTUrrPt_nv_V4:
-      return Hexagon::JMP_GTUrrNotPt_nv_V4;
-    case Hexagon::JMP_GTUrrNotPt_nv_V4:
-      return Hexagon::JMP_GTUrrPt_nv_V4;
-
-     case Hexagon::JMP_GTUrrPnt_nv_V4:
-      return Hexagon::JMP_GTUrrNotPnt_nv_V4;
-    case Hexagon::JMP_GTUrrNotPnt_nv_V4:
-      return Hexagon::JMP_GTUrrPnt_nv_V4;
-
-   // JMPGTU_rrdn.
-     case Hexagon::JMP_GTUrrdnPt_nv_V4:
-      return Hexagon::JMP_GTUrrdnNotPt_nv_V4;
-    case Hexagon::JMP_GTUrrdnNotPt_nv_V4:
-      return Hexagon::JMP_GTUrrdnPt_nv_V4;
-
-     case Hexagon::JMP_GTUrrdnPnt_nv_V4:
-      return Hexagon::JMP_GTUrrdnNotPnt_nv_V4;
-    case Hexagon::JMP_GTUrrdnNotPnt_nv_V4:
-      return Hexagon::JMP_GTUrrdnPnt_nv_V4;
   }
 }
 
@@ -1503,12 +1297,7 @@ getMatchingCondBranchOpcode(int Opc, bool invertPredicate) const {
   case Hexagon::JMP:
     return !invertPredicate ? Hexagon::JMP_t :
                               Hexagon::JMP_f;
-  case Hexagon::JMP_EQrrPt_nv_V4:
-    return !invertPredicate ? Hexagon::JMP_EQrrPt_nv_V4 :
-                              Hexagon::JMP_EQrrNotPt_nv_V4;
-  case Hexagon::JMP_EQriPt_nv_V4:
-    return !invertPredicate ? Hexagon::JMP_EQriPt_nv_V4 :
-                              Hexagon::JMP_EQriNotPt_nv_V4;
+
   case Hexagon::COMBINE_rr:
     return !invertPredicate ? Hexagon::COMBINE_rr_cPt :
                               Hexagon::COMBINE_rr_cNotPt;
@@ -1889,17 +1678,52 @@ isProfitableToIfCvt(MachineBasicBlock &TMBB,
   return true;
 }
 
-
+// Returns true if an instruction is predicated irrespective of the predicate
+// sense. For example, all of the following will return true.
+// if (p0) R1 = add(R2, R3)
+// if (!p0) R1 = add(R2, R3)
+// if (p0.new) R1 = add(R2, R3)
+// if (!p0.new) R1 = add(R2, R3)
 bool HexagonInstrInfo::isPredicated(const MachineInstr *MI) const {
   const uint64_t F = MI->getDesc().TSFlags;
 
   return ((F >> HexagonII::PredicatedPos) & HexagonII::PredicatedMask);
 }
 
+bool HexagonInstrInfo::isPredicated(unsigned Opcode) const {
+  const uint64_t F = get(Opcode).TSFlags;
+
+  return ((F >> HexagonII::PredicatedPos) & HexagonII::PredicatedMask);
+}
+
+bool HexagonInstrInfo::isPredicatedTrue(const MachineInstr *MI) const {
+  const uint64_t F = MI->getDesc().TSFlags;
+
+  assert(isPredicated(MI));
+  return (!((F >> HexagonII::PredicatedFalsePos) &
+            HexagonII::PredicatedFalseMask));
+}
+
+bool HexagonInstrInfo::isPredicatedTrue(unsigned Opcode) const {
+  const uint64_t F = get(Opcode).TSFlags;
+
+  // Make sure that the instruction is predicated.
+  assert((F>> HexagonII::PredicatedPos) & HexagonII::PredicatedMask);
+  return (!((F >> HexagonII::PredicatedFalsePos) &
+            HexagonII::PredicatedFalseMask));
+}
+
 bool HexagonInstrInfo::isPredicatedNew(const MachineInstr *MI) const {
   const uint64_t F = MI->getDesc().TSFlags;
 
   assert(isPredicated(MI));
+  return ((F >> HexagonII::PredicatedNewPos) & HexagonII::PredicatedNewMask);
+}
+
+bool HexagonInstrInfo::isPredicatedNew(unsigned Opcode) const {
+  const uint64_t F = get(Opcode).TSFlags;
+
+  assert(isPredicated(Opcode));
   return ((F >> HexagonII::PredicatedNewPos) & HexagonII::PredicatedNewMask);
 }
 
@@ -2371,6 +2195,18 @@ isConditionalStore (const MachineInstr* MI) const {
   }
 }
 
+
+bool HexagonInstrInfo::isNewValueJump(const MachineInstr *MI) const {
+  if (isNewValue(MI) && isBranch(MI))
+    return true;
+  return false;
+}
+
+bool HexagonInstrInfo::isNewValue(const MachineInstr* MI) const {
+  const uint64_t F = MI->getDesc().TSFlags;
+  return ((F >> HexagonII::NewValuePos) & HexagonII::NewValueMask);
+}
+
 // Returns true, if any one of the operands is a dot new
 // insn, whether it is predicated dot new or register dot new.
 bool HexagonInstrInfo::isDotNewInst (const MachineInstr* MI) const {
@@ -2472,6 +2308,34 @@ bool HexagonInstrInfo::isConstExtended(MachineInstr *MI) const {
   return (ImmValue < MinValue || ImmValue > MaxValue);
 }
 
+// Returns the opcode to use when converting MI, which is a conditional jump,
+// into a conditional instruction which uses the .new value of the predicate.
+// We also use branch probabilities to add a hint to the jump.
+int
+HexagonInstrInfo::getDotNewPredJumpOp(MachineInstr *MI,
+                                  const
+                                  MachineBranchProbabilityInfo *MBPI) const {
+
+  // We assume that block can have at most two successors.
+  bool taken = false;
+  MachineBasicBlock *Src = MI->getParent();
+  MachineOperand *BrTarget = &MI->getOperand(1);
+  MachineBasicBlock *Dst = BrTarget->getMBB();
+
+  const BranchProbability Prediction = MBPI->getEdgeProbability(Src, Dst);
+  if (Prediction >= BranchProbability(1,2))
+    taken = true;
+
+  switch (MI->getOpcode()) {
+  case Hexagon::JMP_t:
+    return taken ? Hexagon::JMP_tnew_t : Hexagon::JMP_tnew_nt;
+  case Hexagon::JMP_f:
+    return taken ? Hexagon::JMP_fnew_t : Hexagon::JMP_fnew_nt;
+
+  default:
+    llvm_unreachable("Unexpected jump instruction.");
+  }
+}
 // Returns true if a particular operand is extendable for an instruction.
 bool HexagonInstrInfo::isOperandExtended(const MachineInstr *MI,
                                          unsigned short OperandNum) const {

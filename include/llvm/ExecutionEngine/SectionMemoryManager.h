@@ -72,6 +72,8 @@ public:
   /// \returns true if an error occurred, false otherwise.
   virtual bool applyPermissions(std::string *ErrMsg = 0);
 
+  void registerEHFrames(StringRef SectionData);
+
   /// This method returns the address of the specified function. As such it is
   /// only useful for resolving library symbols, not code generated symbols.
   ///
@@ -152,18 +154,6 @@ public:
     return 0;
   }
   virtual void deallocateFunctionBody(void *Body) {
-    llvm_unreachable("Unexpected call!");
-  }
-  virtual uint8_t *startExceptionTable(const Function *F,
-                                       uintptr_t &ActualSize) {
-    llvm_unreachable("Unexpected call!");
-    return 0;
-  }
-  virtual void endExceptionTable(const Function *F, uint8_t *TableStart,
-                                 uint8_t *TableEnd, uint8_t *FrameRegister) {
-    llvm_unreachable("Unexpected call!");
-  }
-  virtual void deallocateExceptionTable(void *ET) {
     llvm_unreachable("Unexpected call!");
   }
 };
