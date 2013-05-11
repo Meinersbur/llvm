@@ -17,6 +17,7 @@ set(LLVM_NEXT_DEPENDS intrinsics_gen)
 
 add_llvm_target(MipsCodeGen
   Mips16FrameLowering.cpp
+  Mips16HardFloat.cpp
   Mips16InstrInfo.cpp
   Mips16ISelDAGToDAG.cpp
   Mips16ISelLowering.cpp
