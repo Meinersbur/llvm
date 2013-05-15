@@ -29,6 +29,7 @@ add_llvm_target(PowerPCCodeGen
   PPCRegisterInfo.cpp
   PPCSubtarget.cpp
   PPCTargetMachine.cpp
+  PPCTargetObjectFile.cpp
   PPCTargetTransformInfo.cpp
   PPCSelectionDAGInfo.cpp
   )

@@ -318,6 +318,93 @@ private:
   ValueMap WidenMap;
 };
 
+/// \brief Check if conditionally executed loads are hoistable.
+///
+/// This class has two functions: isHoistableLoad and canHoistAllLoads.
+/// isHoistableLoad should be called on all load instructions that are executed
+/// conditionally. After all conditional loads are processed, the client should
+/// call canHoistAllLoads to determine if all of the conditional executed loads
+/// have an unconditional memory access to the same memory address in the loop.
+class LoadHoisting {
+  typedef SmallPtrSet<Value *, 8> MemorySet;
+
+  Loop *TheLoop;
+  DominatorTree *DT;
+  MemorySet CondLoadAddrSet;
+
+public:
+  LoadHoisting(Loop *L, DominatorTree *D) : TheLoop(L), DT(D) {}
+
+  /// \brief Check if the instruction is a load with a identifiable address.
+  bool isHoistableLoad(Instruction *L);
+
+  /// \brief Check if all of the conditional loads are hoistable because there
+  /// exists an unconditional memory access to the same address in the loop.
+  bool canHoistAllLoads();
+};
+
+bool LoadHoisting::isHoistableLoad(Instruction *L) {
+  LoadInst *LI = dyn_cast<LoadInst>(L);
+  if (!LI)
+    return false;
+
+  CondLoadAddrSet.insert(LI->getPointerOperand());
+  return true;
+}
+
+static void addMemAccesses(BasicBlock *BB, SmallPtrSet<Value *, 8> &Set) {
+  for (BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI) {
+    Instruction *I = &*BI;
+    Value *Addr = 0;
+
+    // Try a load.
+    LoadInst *LI = dyn_cast<LoadInst>(I);
+    if (LI) {
+      Addr = LI->getPointerOperand();
+      Set.insert(Addr);
+      continue;
+    }
+
+    // Try a store.
+    StoreInst *SI = dyn_cast<StoreInst>(I);
+    if (!SI)
+      continue;
+
+    Addr = SI->getPointerOperand();
+    Set.insert(Addr);
+  }
+}
+
+bool LoadHoisting::canHoistAllLoads() {
+  // No conditional loads.
+  if (CondLoadAddrSet.empty())
+    return true;
+
+  MemorySet UncondMemAccesses;
+  std::vector<BasicBlock*> &LoopBlocks = TheLoop->getBlocksVector();
+  BasicBlock *LoopLatch = TheLoop->getLoopLatch();
+
+  // Iterate over the unconditional blocks and collect memory access addresses.
+  for (unsigned i = 0, e = LoopBlocks.size(); i < e; ++i) {
+    BasicBlock *BB = LoopBlocks[i];
+
+    // Ignore conditional blocks.
+    if (BB != LoopLatch && !DT->dominates(BB, LoopLatch))
+      continue;
+
+    addMemAccesses(BB, UncondMemAccesses);
+  }
+
+  // And make sure there is a matching unconditional access for every
+  // conditional load.
+  for (MemorySet::iterator MI = CondLoadAddrSet.begin(),
+       ME = CondLoadAddrSet.end(); MI != ME; ++MI)
+    if (!UncondMemAccesses.count(*MI))
+      return false;
+
+  return true;
+}
+
 /// LoopVectorizationLegality checks if it is legal to vectorize a loop, and
 /// to what vectorization factor.
 /// This class does not look at the profitability of vectorization, only the
@@ -337,7 +424,8 @@ public:
                             DominatorTree *DT, TargetTransformInfo* TTI,
                             AliasAnalysis *AA, TargetLibraryInfo *TLI)
       : TheLoop(L), SE(SE), DL(DL), DT(DT), TTI(TTI), AA(AA), TLI(TLI),
-        Induction(0), WidestIndTy(0), HasFunNoNaNAttr(false) {}
+        Induction(0), WidestIndTy(0), HasFunNoNaNAttr(false),
+        LoadSpeculation(L, DT) {}
 
   /// This enum represents the kinds of reductions that we support.
   enum ReductionKind {
@@ -598,6 +686,9 @@ private:
   RuntimePointerCheck PtrRtCheck;
   /// Can we assume the absence of NaNs.
   bool HasFunNoNaNAttr;
+
+  /// Utility to determine whether loads can be speculated.
+  LoadHoisting LoadSpeculation;
 };
 
 /// LoopVectorizationCostModel - estimates the expected speedups due to
@@ -1389,9 +1480,10 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
     case LoopVectorizationLegality::IK_NoInduction:
       llvm_unreachable("Unknown induction");
     case LoopVectorizationLegality::IK_IntInduction: {
-      // Handle the integer induction counter:
+      // Handle the integer induction counter.
       assert(OrigPhi->getType()->isIntegerTy() && "Invalid type");
-      assert(OrigPhi == OldInduction && "Unknown integer PHI");
+
+      // We have the canonical induction variable.
       if (OrigPhi == OldInduction) {
         // Create a truncated version of the resume value for the scalar loop,
         // we might have promoted the type to a larger width.
@@ -1402,11 +1494,20 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
         for (unsigned I = 0, E = LoopBypassBlocks.size(); I != E; ++I)
           TruncResumeVal->addIncoming(II.StartValue, LoopBypassBlocks[I]);
         TruncResumeVal->addIncoming(EndValue, VecBody);
+
+        // We know what the end value is.
+        EndValue = IdxEndRoundDown;
+        // We also know which PHI node holds it.
+        ResumeIndex = ResumeVal;
+        break;
       }
-      // We know what the end value is.
-      EndValue = IdxEndRoundDown;
-      // We also know which PHI node holds it.
-      ResumeIndex = ResumeVal;
+
+      // Not the canonical induction variable - add the vector loop count to the
+      // start value.
+      Value *CRD = BypassBuilder.CreateSExtOrTrunc(CountRoundDown,
+                                                   II.StartValue->getType(),
+                                                   "cast.crd");
+      EndValue = BypassBuilder.CreateAdd(CRD, II.StartValue , "ind.end");
       break;
     }
     case LoopVectorizationLegality::IK_ReverseIntInduction: {
@@ -2056,12 +2157,25 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
       case LoopVectorizationLegality::IK_NoInduction:
         llvm_unreachable("Unknown induction");
       case LoopVectorizationLegality::IK_IntInduction: {
-        assert(P == OldInduction && "Unexpected PHI");
-        // We might have had to extend the type.
-        Value *Trunc = Builder.CreateTrunc(Induction, P->getType());
-        Value *Broadcasted = getBroadcastInstrs(Trunc);
-        // After broadcasting the induction variable we need to make the
-        // vector consecutive by adding 0, 1, 2 ...
+        assert(P->getType() == II.StartValue->getType() && "Types must match");
+        Type *PhiTy = P->getType();
+        Value *Broadcasted;
+        if (P == OldInduction) {
+          // Handle the canonical induction variable. We might have had to
+          // extend the type.
+          Broadcasted = Builder.CreateTrunc(Induction, PhiTy);
+        } else {
+          // Handle other induction variables that are now based on the
+          // canonical one.
+          Value *NormalizedIdx = Builder.CreateSub(Induction, ExtendedIdx,
+                                                   "normalized.idx");
+          NormalizedIdx = Builder.CreateSExtOrTrunc(NormalizedIdx, PhiTy);
+          Broadcasted = Builder.CreateAdd(II.StartValue, NormalizedIdx,
+                                          "offset.idx");
+        }
+        Broadcasted = getBroadcastInstrs(Broadcasted);
+        // After broadcasting the induction variable we need to make the vector
+        // consecutive by adding 0, 1, 2, etc.
         for (unsigned part = 0; part < UF; ++part)
           Entry[part] = getConsecutiveVector(Broadcasted, VF * part, false);
         continue;
@@ -2466,11 +2580,11 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
 
           // Int inductions are special because we only allow one IV.
           if (IK == IK_IntInduction) {
-            if (Induction) {
-              DEBUG(dbgs() << "LV: Found too many inductions."<< *Phi <<"\n");
-              return false;
-            }
-            Induction = Phi;
+            // Use the phi node with the widest type as induction. Use the last
+            // one if there are multiple (no good reason for doing this other
+            // than it is expedient).
+            if (!Induction || PhiTy == WidestIndTy)
+              Induction = Phi;
           }
 
           DEBUG(dbgs() << "LV: Found an induction variable.\n");
@@ -3236,8 +3350,12 @@ bool LoopVectorizationLegality::blockNeedsPredication(BasicBlock *BB)  {
 
 bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB) {
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
-    // We don't predicate loads/stores at the moment.
-    if (it->mayReadFromMemory() || it->mayWriteToMemory() || it->mayThrow())
+    // We might be able to hoist the load.
+    if (it->mayReadFromMemory() && !LoadSpeculation.isHoistableLoad(it))
+      return false;
+
+    // We don't predicate stores at the moment.
+    if (it->mayWriteToMemory() || it->mayThrow())
       return false;
 
     // The instructions below can trap.
@@ -3250,6 +3368,10 @@ bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB) {
              return false;
     }
   }
+
+  // Check that we can actually speculate the hoistable loads.
+  if (!LoadSpeculation.canHoistAllLoads())
+    return false;
 
   return true;
 }
