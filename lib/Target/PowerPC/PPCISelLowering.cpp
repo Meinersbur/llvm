@@ -313,6 +313,9 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   // We want to custom lower some of our intrinsics.
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
+  // To handle counter-based loop conditions.
+  setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::i1, Custom);
+
   // Comparisons that require checking two conditions.
   setCondCodeAction(ISD::SETULT, MVT::f32, Expand);
   setCondCodeAction(ISD::SETULT, MVT::f64, Expand);
@@ -646,6 +649,8 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::LARX:            return "PPCISD::LARX";
   case PPCISD::STCX:            return "PPCISD::STCX";
   case PPCISD::COND_BRANCH:     return "PPCISD::COND_BRANCH";
+  case PPCISD::BDNZ:            return "PPCISD::BDNZ";
+  case PPCISD::BDZ:             return "PPCISD::BDZ";
   case PPCISD::MFFS:            return "PPCISD::MFFS";
   case PPCISD::FADDRTZ:         return "PPCISD::FADDRTZ";
   case PPCISD::TC_RETURN:       return "PPCISD::TC_RETURN";
@@ -670,7 +675,7 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   }
 }
 
-EVT PPCTargetLowering::getSetCCResultType(EVT VT) const {
+EVT PPCTargetLowering::getSetCCResultType(LLVMContext &, EVT VT) const {
   if (!VT.isVector())
     return MVT::i32;
   return VT.changeVectorElementTypeToInteger();
@@ -1043,10 +1048,12 @@ bool PPCTargetLowering::SelectAddressRegReg(SDValue N, SDValue &Base,
 
 /// Returns true if the address N can be represented by a base register plus
 /// a signed 16-bit displacement [r+imm], and if it is not better
-/// represented as reg+reg.
+/// represented as reg+reg.  If Aligned is true, only accept displacements
+/// suitable for STD and friends, i.e. multiples of 4.
 bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
                                             SDValue &Base,
-                                            SelectionDAG &DAG) const {
+                                            SelectionDAG &DAG,
+                                            bool Aligned) const {
   // FIXME dl should come from parent load or store, not from address
   DebugLoc dl = N.getDebugLoc();
   // If this can be more profitably realized as r+r, fail.
@@ -1055,8 +1062,9 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
 
   if (N.getOpcode() == ISD::ADD) {
     short imm = 0;
-    if (isIntS16Immediate(N.getOperand(1), imm)) {
-      Disp = DAG.getTargetConstant((int)imm & 0xFFFF, MVT::i32);
+    if (isIntS16Immediate(N.getOperand(1), imm) &&
+        (!Aligned || (imm & 3) == 0)) {
+      Disp = DAG.getTargetConstant(imm, N.getValueType());
       if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N.getOperand(0))) {
         Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
       } else {
@@ -1077,7 +1085,8 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
     }
   } else if (N.getOpcode() == ISD::OR) {
     short imm = 0;
-    if (isIntS16Immediate(N.getOperand(1), imm)) {
+    if (isIntS16Immediate(N.getOperand(1), imm) &&
+        (!Aligned || (imm & 3) == 0)) {
       // If this is an or of disjoint bitfields, we can codegen this as an add
       // (for better address arithmetic) if the LHS and RHS of the OR are
       // provably disjoint.
@@ -1088,7 +1097,7 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
         // If all of the bits are known zero on the LHS or RHS, the add won't
         // carry.
         Base = N.getOperand(0);
-        Disp = DAG.getTargetConstant((int)imm & 0xFFFF, MVT::i32);
+        Disp = DAG.getTargetConstant(imm, N.getValueType());
         return true;
       }
     }
@@ -1098,7 +1107,7 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
     // If this address fits entirely in a 16-bit sext immediate field, codegen
     // this as "d, 0"
     short Imm;
-    if (isIntS16Immediate(CN, Imm)) {
+    if (isIntS16Immediate(CN, Imm) && (!Aligned || (Imm & 3) == 0)) {
       Disp = DAG.getTargetConstant(Imm, CN->getValueType(0));
       Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::ZERO8 : PPC::ZERO,
                              CN->getValueType(0));
@@ -1106,8 +1115,9 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
     }
 
     // Handle 32-bit sext immediates with LIS + addr mode.
-    if (CN->getValueType(0) == MVT::i32 ||
-        (int64_t)CN->getZExtValue() == (int)CN->getZExtValue()) {
+    if ((CN->getValueType(0) == MVT::i32 ||
+         (int64_t)CN->getZExtValue() == (int)CN->getZExtValue()) &&
+        (!Aligned || (CN->getZExtValue() & 3) == 0)) {
       int Addr = (int)CN->getZExtValue();
 
       // Otherwise, break this down into an LIS + disp.
@@ -1153,91 +1163,6 @@ bool PPCTargetLowering::SelectAddressRegRegOnly(SDValue N, SDValue &Base,
                          N.getValueType());
   Index = N;
   return true;
-}
-
-/// SelectAddressRegImmShift - Returns true if the address N can be
-/// represented by a base register plus a signed 14-bit displacement
-/// [r+imm*4].  Suitable for use by STD and friends.
-bool PPCTargetLowering::SelectAddressRegImmShift(SDValue N, SDValue &Disp,
-                                                 SDValue &Base,
-                                                 SelectionDAG &DAG) const {
-  // FIXME dl should come from the parent load or store, not the address
-  DebugLoc dl = N.getDebugLoc();
-  // If this can be more profitably realized as r+r, fail.
-  if (SelectAddressRegReg(N, Disp, Base, DAG))
-    return false;
-
-  if (N.getOpcode() == ISD::ADD) {
-    short imm = 0;
-    if (isIntS16Immediate(N.getOperand(1), imm) && (imm & 3) == 0) {
-      Disp = DAG.getTargetConstant(((int)imm & 0xFFFF) >> 2, MVT::i32);
-      if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N.getOperand(0))) {
-        Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
-      } else {
-        Base = N.getOperand(0);
-      }
-      return true; // [r+i]
-    } else if (N.getOperand(1).getOpcode() == PPCISD::Lo) {
-      // Match LOAD (ADD (X, Lo(G))).
-      assert(!cast<ConstantSDNode>(N.getOperand(1).getOperand(1))->getZExtValue()
-             && "Cannot handle constant offsets yet!");
-      Disp = N.getOperand(1).getOperand(0);  // The global address.
-      assert(Disp.getOpcode() == ISD::TargetGlobalAddress ||
-             Disp.getOpcode() == ISD::TargetConstantPool ||
-             Disp.getOpcode() == ISD::TargetJumpTable);
-      Base = N.getOperand(0);
-      return true;  // [&g+r]
-    }
-  } else if (N.getOpcode() == ISD::OR) {
-    short imm = 0;
-    if (isIntS16Immediate(N.getOperand(1), imm) && (imm & 3) == 0) {
-      // If this is an or of disjoint bitfields, we can codegen this as an add
-      // (for better address arithmetic) if the LHS and RHS of the OR are
-      // provably disjoint.
-      APInt LHSKnownZero, LHSKnownOne;
-      DAG.ComputeMaskedBits(N.getOperand(0), LHSKnownZero, LHSKnownOne);
-      if ((LHSKnownZero.getZExtValue()|~(uint64_t)imm) == ~0ULL) {
-        // If all of the bits are known zero on the LHS or RHS, the add won't
-        // carry.
-        Base = N.getOperand(0);
-        Disp = DAG.getTargetConstant(((int)imm & 0xFFFF) >> 2, MVT::i32);
-        return true;
-      }
-    }
-  } else if (ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N)) {
-    // Loading from a constant address.  Verify low two bits are clear.
-    if ((CN->getZExtValue() & 3) == 0) {
-      // If this address fits entirely in a 14-bit sext immediate field, codegen
-      // this as "d, 0"
-      short Imm;
-      if (isIntS16Immediate(CN, Imm)) {
-        Disp = DAG.getTargetConstant((unsigned short)Imm >> 2, getPointerTy());
-        Base = DAG.getRegister(PPCSubTarget.isPPC64() ? PPC::ZERO8 : PPC::ZERO,
-                               CN->getValueType(0));
-        return true;
-      }
-
-      // Fold the low-part of 32-bit absolute addresses into addr mode.
-      if (CN->getValueType(0) == MVT::i32 ||
-          (int64_t)CN->getZExtValue() == (int)CN->getZExtValue()) {
-        int Addr = (int)CN->getZExtValue();
-
-        // Otherwise, break this down into an LIS + disp.
-        Disp = DAG.getTargetConstant((short)Addr >> 2, MVT::i32);
-        Base = DAG.getTargetConstant((Addr-(signed short)Addr) >> 16, MVT::i32);
-        unsigned Opc = CN->getValueType(0) == MVT::i32 ? PPC::LIS : PPC::LIS8;
-        Base = SDValue(DAG.getMachineNode(Opc, dl, CN->getValueType(0), Base),0);
-        return true;
-      }
-    }
-  }
-
-  Disp = DAG.getTargetConstant(0, getPointerTy());
-  if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N))
-    Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
-  else
-    Base = N;
-  return true;      // [r+0]
 }
 
 
@@ -1293,18 +1218,16 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     return true;
   }
 
-  // LDU/STU use reg+imm*4, others use reg+imm.
+  // LDU/STU can only handle immediates that are a multiple of 4.
   if (VT != MVT::i64) {
-    // reg + imm
-    if (!SelectAddressRegImm(Ptr, Offset, Base, DAG))
+    if (!SelectAddressRegImm(Ptr, Offset, Base, DAG, false))
       return false;
   } else {
     // LDU/STU need an address with at least 4-byte alignment.
     if (Alignment < 4)
       return false;
 
-    // reg + imm * 4.
-    if (!SelectAddressRegImmShift(Ptr, Offset, Base, DAG))
+    if (!SelectAddressRegImm(Ptr, Offset, Base, DAG, true))
       return false;
   }
 
@@ -2182,7 +2105,7 @@ PPCTargetLowering::extendArgForPPC64(ISD::ArgFlagsTy Flags, EVT ObjectVT,
   else if (Flags.isZExt())
     ArgVal = DAG.getNode(ISD::AssertZext, dl, MVT::i64, ArgVal,
                          DAG.getValueType(ObjectVT));
-  
+
   return DAG.getNode(ISD::TRUNCATE, dl, MVT::i32, ArgVal);
 }
 
@@ -3945,7 +3868,7 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
         // register.
         // FIXME: The memcpy seems to produce pretty awful code for
         // small aggregates, particularly for packed ones.
-        // FIXME: It would be preferable to use the slot in the 
+        // FIXME: It would be preferable to use the slot in the
         // parameter save area instead of a new local variable.
         SDValue Const = DAG.getConstant(8 - Size, PtrOff.getValueType());
         SDValue AddPtr = DAG.getNode(ISD::ADD, dl, PtrVT, PtrOff, Const);
@@ -5777,6 +5700,9 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::SCALAR_TO_VECTOR:   return LowerSCALAR_TO_VECTOR(Op, DAG);
   case ISD::MUL:                return LowerMUL(Op, DAG);
 
+  // For counter-based loop handling.
+  case ISD::INTRINSIC_W_CHAIN:  return SDValue();
+
   // Frame & Return address.
   case ISD::RETURNADDR:         return LowerRETURNADDR(Op, DAG);
   case ISD::FRAMEADDR:          return LowerFRAMEADDR(Op, DAG);
@@ -5791,6 +5717,22 @@ void PPCTargetLowering::ReplaceNodeResults(SDNode *N,
   switch (N->getOpcode()) {
   default:
     llvm_unreachable("Do not know how to custom type legalize this operation!");
+  case ISD::INTRINSIC_W_CHAIN: {
+    if (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue() !=
+        Intrinsic::ppc_is_decremented_ctr_nonzero)
+      break;
+
+    assert(N->getValueType(0) == MVT::i1 &&
+           "Unexpected result type for CTR decrement intrinsic");
+    EVT SVT = getSetCCResultType(*DAG.getContext(), N->getValueType(0));
+    SDVTList VTs = DAG.getVTList(SVT, MVT::Other);
+    SDValue NewInt = DAG.getNode(N->getOpcode(), dl, VTs, N->getOperand(0),
+                                 N->getOperand(1)); 
+
+    Results.push_back(NewInt);
+    Results.push_back(NewInt.getValue(1));
+    break;
+  }
   case ISD::VAARG: {
     if (!TM.getSubtarget<PPCSubtarget>().isSVR4ABI()
         || TM.getSubtarget<PPCSubtarget>().isPPC64())
@@ -6106,7 +6048,7 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
   if (PPCSubTarget.isPPC64() && PPCSubTarget.isSVR4ABI()) {
     MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::STD))
             .addReg(PPC::X2)
-            .addImm(TOCOffset / 4)
+            .addImm(TOCOffset)
             .addReg(BufReg);
 
     MIB.setMemRefs(MMOBegin, MMOEnd);
@@ -6134,7 +6076,7 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
   if (PPCSubTarget.isPPC64()) {
     MIB = BuildMI(mainMBB, DL, TII->get(PPC::STD))
             .addReg(LabelReg)
-            .addImm(LabelOffset / 4)
+            .addImm(LabelOffset)
             .addReg(BufReg);
   } else {
     MIB = BuildMI(mainMBB, DL, TII->get(PPC::STW))
@@ -6207,7 +6149,7 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
   // Reload IP
   if (PVT == MVT::i64) {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), Tmp)
-            .addImm(LabelOffset / 4)
+            .addImm(LabelOffset)
             .addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), Tmp)
@@ -6219,7 +6161,7 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
   // Reload SP
   if (PVT == MVT::i64) {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), SP)
-            .addImm(SPOffset / 4)
+            .addImm(SPOffset)
             .addReg(BufReg);
   } else {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LWZ), SP)
@@ -6234,7 +6176,7 @@ PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
   // Reload TOC
   if (PVT == MVT::i64 && PPCSubTarget.isSVR4ABI()) {
     MIB = BuildMI(*MBB, MI, DL, TII->get(PPC::LD), PPC::X2)
-            .addImm(TOCOffset / 4)
+            .addImm(TOCOffset)
             .addReg(BufReg);
 
     MIB.setMemRefs(MMOBegin, MMOEnd);
@@ -7102,6 +7044,39 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     // compare down to code that is difficult to reassemble.
     ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(1))->get();
     SDValue LHS = N->getOperand(2), RHS = N->getOperand(3);
+
+    // Sometimes the promoted value of the intrinsic is ANDed by some non-zero
+    // value. If so, pass-through the AND to get to the intrinsic.
+    if (LHS.getOpcode() == ISD::AND &&
+        LHS.getOperand(0).getOpcode() == ISD::INTRINSIC_W_CHAIN &&
+        cast<ConstantSDNode>(LHS.getOperand(0).getOperand(1))->getZExtValue() ==
+          Intrinsic::ppc_is_decremented_ctr_nonzero &&
+        isa<ConstantSDNode>(LHS.getOperand(1)) &&
+        !cast<ConstantSDNode>(LHS.getOperand(1))->getConstantIntValue()->
+          isZero())
+      LHS = LHS.getOperand(0);
+
+    if (LHS.getOpcode() == ISD::INTRINSIC_W_CHAIN &&
+        cast<ConstantSDNode>(LHS.getOperand(1))->getZExtValue() ==
+          Intrinsic::ppc_is_decremented_ctr_nonzero &&
+        isa<ConstantSDNode>(RHS)) {
+      assert((CC == ISD::SETEQ || CC == ISD::SETNE) &&
+             "Counter decrement comparison is not EQ or NE");
+
+      unsigned Val = cast<ConstantSDNode>(RHS)->getZExtValue();
+      bool isBDNZ = (CC == ISD::SETEQ && Val) ||
+                    (CC == ISD::SETNE && !Val);
+
+      // We now need to make the intrinsic dead (it cannot be instruction
+      // selected).
+      DAG.ReplaceAllUsesOfValueWith(LHS.getValue(1), LHS.getOperand(0));
+      assert(LHS.getNode()->hasOneUse() &&
+             "Counter decrement has more than one use");
+
+      return DAG.getNode(isBDNZ ? PPCISD::BDNZ : PPCISD::BDZ, dl, MVT::Other,
+                         N->getOperand(0), N->getOperand(4));
+    }
+
     int CompareOpc;
     bool isDot;
 

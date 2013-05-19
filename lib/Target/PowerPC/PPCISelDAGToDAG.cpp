@@ -116,7 +116,7 @@ namespace {
     /// a base register plus a signed 16-bit displacement [r+imm].
     bool SelectAddrImm(SDValue N, SDValue &Disp,
                        SDValue &Base) {
-      return PPCLowering.SelectAddressRegImm(N, Disp, Base, *CurDAG);
+      return PPCLowering.SelectAddressRegImm(N, Disp, Base, *CurDAG, false);
     }
 
     /// SelectAddrImmOffs - Return true if the operand is valid for a preinc
@@ -145,11 +145,11 @@ namespace {
       return PPCLowering.SelectAddressRegRegOnly(N, Base, Index, *CurDAG);
     }
 
-    /// SelectAddrImmShift - Returns true if the address N can be represented by
-    /// a base register plus a signed 14-bit displacement [r+imm*4].  Suitable
-    /// for use by STD and friends.
-    bool SelectAddrImmShift(SDValue N, SDValue &Disp, SDValue &Base) {
-      return PPCLowering.SelectAddressRegImmShift(N, Disp, Base, *CurDAG);
+    /// SelectAddrImmX4 - Returns true if the address N can be represented by
+    /// a base register plus a signed 16-bit displacement that is a multiple of 4.
+    /// Suitable for use by STD and friends.
+    bool SelectAddrImmX4(SDValue N, SDValue &Disp, SDValue &Base) {
+      return PPCLowering.SelectAddressRegImm(N, Disp, Base, *CurDAG, true);
     }
 
     // Select an address into a single register.
@@ -1241,6 +1241,15 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
     SDValue Ops[] = { CCReg, N->getOperand(2), N->getOperand(3),
                         getI32Imm(BROpc) };
     return CurDAG->SelectNodeTo(N, SelectCCOp, N->getValueType(0), Ops, 4);
+  }
+  case PPCISD::BDNZ:
+  case PPCISD::BDZ: {
+    bool IsPPC64 = PPCSubTarget.isPPC64();
+    SDValue Ops[] = { N->getOperand(1), N->getOperand(0) };
+    return CurDAG->SelectNodeTo(N, N->getOpcode() == PPCISD::BDNZ ?
+                                   (IsPPC64 ? PPC::BDNZ8 : PPC::BDNZ) :
+                                   (IsPPC64 ? PPC::BDZ8 : PPC::BDZ),
+                                MVT::Other, Ops, 2);
   }
   case PPCISD::COND_BRANCH: {
     // Op #0 is the Chain.

@@ -156,7 +156,7 @@ const char *MipsTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case MipsISD::FPCmp:             return "MipsISD::FPCmp";
   case MipsISD::CMovFP_T:          return "MipsISD::CMovFP_T";
   case MipsISD::CMovFP_F:          return "MipsISD::CMovFP_F";
-  case MipsISD::FPRound:           return "MipsISD::FPRound";
+  case MipsISD::TruncIntFP:        return "MipsISD::TruncIntFP";
   case MipsISD::ExtractLOHI:       return "MipsISD::ExtractLOHI";
   case MipsISD::InsertLOHI:        return "MipsISD::InsertLOHI";
   case MipsISD::Mult:              return "MipsISD::Mult";
@@ -250,6 +250,7 @@ MipsTargetLowering(MipsTargetMachine &TM)
   setOperationAction(ISD::VASTART,            MVT::Other, Custom);
   setOperationAction(ISD::FCOPYSIGN,          MVT::f32,   Custom);
   setOperationAction(ISD::FCOPYSIGN,          MVT::f64,   Custom);
+  setOperationAction(ISD::FP_TO_SINT,         MVT::i32,   Custom);
 
   if (!TM.Options.NoNaNsFPMath) {
     setOperationAction(ISD::FABS,             MVT::f32,   Custom);
@@ -265,6 +266,7 @@ MipsTargetLowering(MipsTargetMachine &TM)
     setOperationAction(ISD::SELECT,             MVT::i64,   Custom);
     setOperationAction(ISD::LOAD,               MVT::i64,   Custom);
     setOperationAction(ISD::STORE,              MVT::i64,   Custom);
+    setOperationAction(ISD::FP_TO_SINT,         MVT::i64,   Custom);
   }
 
   if (!HasMips64) {
@@ -407,7 +409,7 @@ const MipsTargetLowering *MipsTargetLowering::create(MipsTargetMachine &TM) {
   return llvm::createMipsSETargetLowering(TM);
 }
 
-EVT MipsTargetLowering::getSetCCResultType(EVT VT) const {
+EVT MipsTargetLowering::getSetCCResultType(LLVMContext &, EVT VT) const {
   if (!VT.isVector())
     return MVT::i32;
   return VT.changeVectorElementTypeToInteger();
@@ -744,6 +746,7 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const
   case ISD::LOAD:               return lowerLOAD(Op, DAG);
   case ISD::STORE:              return lowerSTORE(Op, DAG);
   case ISD::ADD:                return lowerADD(Op, DAG);
+  case ISD::FP_TO_SINT:         return lowerFP_TO_SINT(Op, DAG);
   }
   return SDValue();
 }
@@ -1417,7 +1420,8 @@ lowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const
 {
   DebugLoc DL = Op.getDebugLoc();
   EVT Ty = Op.getOperand(0).getValueType();
-  SDValue Cond = DAG.getNode(ISD::SETCC, DL, getSetCCResultType(Ty),
+  SDValue Cond = DAG.getNode(ISD::SETCC, DL,
+                             getSetCCResultType(*DAG.getContext(), Ty),
                              Op.getOperand(0), Op.getOperand(1),
                              Op.getOperand(4));
 
@@ -2000,16 +2004,8 @@ static SDValue createStoreLR(unsigned Opc, SelectionDAG &DAG, StoreSDNode *SD,
 }
 
 // Expand an unaligned 32 or 64-bit integer store node.
-SDValue MipsTargetLowering::lowerSTORE(SDValue Op, SelectionDAG &DAG) const {
-  StoreSDNode *SD = cast<StoreSDNode>(Op);
-  EVT MemVT = SD->getMemoryVT();
-
-  // Return if store is aligned or if MemVT is neither i32 nor i64.
-  if ((SD->getAlignment() >= MemVT.getSizeInBits() / 8) ||
-      ((MemVT != MVT::i32) && (MemVT != MVT::i64)))
-    return SDValue();
-
-  bool IsLittle = Subtarget->isLittle();
+static SDValue lowerUnalignedIntStore(StoreSDNode *SD, SelectionDAG &DAG,
+                                      bool IsLittle) {
   SDValue Value = SD->getValue(), Chain = SD->getChain();
   EVT VT = Value.getValueType();
 
@@ -2036,6 +2032,34 @@ SDValue MipsTargetLowering::lowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   return createStoreLR(MipsISD::SDR, DAG, SD, SDL, IsLittle ? 0 : 7);
 }
 
+// Lower (store (fp_to_sint $fp) $ptr) to (store (TruncIntFP $fp), $ptr).
+static SDValue lowerFP_TO_SINT_STORE(StoreSDNode *SD, SelectionDAG &DAG) {
+  SDValue Val = SD->getValue();
+
+  if (Val.getOpcode() != ISD::FP_TO_SINT)
+    return SDValue();
+
+  EVT FPTy = EVT::getFloatingPointVT(Val.getValueSizeInBits());
+  SDValue Tr = DAG.getNode(MipsISD::TruncIntFP, Val.getDebugLoc(), FPTy,
+                           Val.getOperand(0));
+
+  return DAG.getStore(SD->getChain(), SD->getDebugLoc(), Tr, SD->getBasePtr(),
+                      SD->getPointerInfo(), SD->isVolatile(),
+                      SD->isNonTemporal(), SD->getAlignment());
+}
+
+SDValue MipsTargetLowering::lowerSTORE(SDValue Op, SelectionDAG &DAG) const {
+  StoreSDNode *SD = cast<StoreSDNode>(Op);
+  EVT MemVT = SD->getMemoryVT();
+
+  // Lower unaligned integer stores.
+  if ((SD->getAlignment() < MemVT.getSizeInBits() / 8) &&
+      ((MemVT == MVT::i32) || (MemVT == MVT::i64)))
+    return lowerUnalignedIntStore(SD, DAG, Subtarget->isLittle());
+
+  return lowerFP_TO_SINT_STORE(SD, DAG);
+}
+
 SDValue MipsTargetLowering::lowerADD(SDValue Op, SelectionDAG &DAG) const {
   if (Op->getOperand(0).getOpcode() != ISD::FRAMEADDR
       || cast<ConstantSDNode>
@@ -2055,6 +2079,14 @@ SDValue MipsTargetLowering::lowerADD(SDValue Op, SelectionDAG &DAG) const {
   SDValue InArgsAddr = DAG.getFrameIndex(FI, ValTy);
   return DAG.getNode(ISD::ADD, Op->getDebugLoc(), ValTy, InArgsAddr,
                      DAG.getConstant(0, ValTy));
+}
+
+SDValue MipsTargetLowering::lowerFP_TO_SINT(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  EVT FPTy = EVT::getFloatingPointVT(Op.getValueSizeInBits());
+  SDValue Trunc = DAG.getNode(MipsISD::TruncIntFP, Op.getDebugLoc(), FPTy,
+                              Op.getOperand(0));
+  return DAG.getNode(ISD::BITCAST, Op.getDebugLoc(), Op.getValueType(), Trunc);
 }
 
 //===----------------------------------------------------------------------===//

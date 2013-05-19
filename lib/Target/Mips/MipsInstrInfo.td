@@ -26,7 +26,8 @@ def SDT_MipsCallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_ExtractLOHI : SDTypeProfile<1, 2, [SDTCisInt<0>, SDTCisVT<1, untyped>,
                                            SDTCisVT<2, i32>]>;
 def SDT_InsertLOHI : SDTypeProfile<1, 2, [SDTCisVT<0, untyped>,
-                                          SDTCisVT<1, i32>, SDTCisSameAs<1, 2>]>;
+                                          SDTCisVT<1, i32>,
+                                          SDTCisSameAs<1, 2>]>;
 def SDT_MipsMultDiv : SDTypeProfile<1, 2, [SDTCisVT<0, untyped>, SDTCisInt<1>,
                                     SDTCisSameAs<1, 2>]>;
 def SDT_MipsMAddMSub : SDTypeProfile<1, 3,
@@ -104,7 +105,8 @@ def MipsMSubu : SDNode<"MipsISD::MSubu", SDT_MipsMAddMSub>;
 // DivRem(u) nodes
 def MipsDivRem    : SDNode<"MipsISD::DivRem", SDT_MipsMultDiv>;
 def MipsDivRemU   : SDNode<"MipsISD::DivRemU", SDT_MipsMultDiv>;
-def MipsDivRem16  : SDNode<"MipsISD::DivRem16", SDT_MipsDivRem16, [SDNPOutGlue]>;
+def MipsDivRem16  : SDNode<"MipsISD::DivRem16", SDT_MipsDivRem16,
+                           [SDNPOutGlue]>;
 def MipsDivRemU16 : SDNode<"MipsISD::DivRemU16", SDT_MipsDivRem16,
                            [SDNPOutGlue]>;
 
@@ -389,6 +391,7 @@ class ArithLogicI<string opstr, Operand Od, RegisterOperand RO,
          [(set RO:$rt, (OpNode RO:$rs, imm_type:$imm16))],
          IIAlu, FrmI, opstr> {
   let isReMaterializable = 1;
+  let TwoOperandAliasConstraint = "$rs = $rt";
 }
 
 // Arithmetic Multiply ADD/SUB
@@ -521,7 +524,7 @@ multiclass StoreLeftRightM<string opstr, SDNode OpNode, RegisterClass RC> {
 }
 
 // Conditional Branch
-class CBranch<string opstr, PatFrag cond_op, RegisterClass RC> :
+class CBranch<string opstr, PatFrag cond_op, RegisterOperand RC> :
   InstSE<(outs), (ins RC:$rs, RC:$rt, brtarget:$offset),
          !strconcat(opstr, "\t$rs, $rt, $offset"),
          [(brcond (i32 (cond_op RC:$rs, RC:$rt)), bb:$offset)], IIBranch,
@@ -532,7 +535,7 @@ class CBranch<string opstr, PatFrag cond_op, RegisterClass RC> :
   let Defs = [AT];
 }
 
-class CBranchZero<string opstr, PatFrag cond_op, RegisterClass RC> :
+class CBranchZero<string opstr, PatFrag cond_op, RegisterOperand RC> :
   InstSE<(outs), (ins RC:$rs, brtarget:$offset),
          !strconcat(opstr, "\t$rs, $offset"),
          [(brcond (i32 (cond_op RC:$rs, 0)), bb:$offset)], IIBranch, FrmI> {
@@ -940,12 +943,12 @@ def J       : JumpFJ<jmptarget, "j", br, bb>, FJ<2>,
               Requires<[RelocStatic, HasStdEnc]>, IsBranch;
 def JR      : IndirectBranch<CPURegs>, MTLO_FM<8>;
 def B       : UncondBranch<"b">, B_FM;
-def BEQ     : CBranch<"beq", seteq, CPURegs>, BEQ_FM<4>;
-def BNE     : CBranch<"bne", setne, CPURegs>, BEQ_FM<5>;
-def BGEZ    : CBranchZero<"bgez", setge, CPURegs>, BGEZ_FM<1, 1>;
-def BGTZ    : CBranchZero<"bgtz", setgt, CPURegs>, BGEZ_FM<7, 0>;
-def BLEZ    : CBranchZero<"blez", setle, CPURegs>, BGEZ_FM<6, 0>;
-def BLTZ    : CBranchZero<"bltz", setlt, CPURegs>, BGEZ_FM<1, 0>;
+def BEQ     : CBranch<"beq", seteq, CPURegsOpnd>, BEQ_FM<4>;
+def BNE     : CBranch<"bne", setne, CPURegsOpnd>, BEQ_FM<5>;
+def BGEZ    : CBranchZero<"bgez", setge, CPURegsOpnd>, BGEZ_FM<1, 1>;
+def BGTZ    : CBranchZero<"bgtz", setgt, CPURegsOpnd>, BGEZ_FM<7, 0>;
+def BLEZ    : CBranchZero<"blez", setle, CPURegsOpnd>, BGEZ_FM<6, 0>;
+def BLTZ    : CBranchZero<"bltz", setlt, CPURegsOpnd>, BGEZ_FM<1, 0>;
 
 def BAL_BR: BAL_FT, BAL_FM;
 
@@ -989,7 +992,8 @@ def PseudoMULT  : MultDivPseudo<MULT, ACRegs, CPURegsOpnd, MipsMult, IIImul>;
 def PseudoMULTu : MultDivPseudo<MULTu, ACRegs, CPURegsOpnd, MipsMultu, IIImul>;
 def SDIV  : Div<"div", IIIdiv, CPURegsOpnd, [HI, LO]>, MULT_FM<0, 0x1a>;
 def UDIV  : Div<"divu", IIIdiv, CPURegsOpnd, [HI, LO]>, MULT_FM<0, 0x1b>;
-def PseudoSDIV : MultDivPseudo<SDIV, ACRegs, CPURegsOpnd, MipsDivRem, IIIdiv, 0>;
+def PseudoSDIV : MultDivPseudo<SDIV, ACRegs, CPURegsOpnd, MipsDivRem, IIIdiv,
+                               0>;
 def PseudoUDIV : MultDivPseudo<UDIV, ACRegs, CPURegsOpnd, MipsDivRemU, IIIdiv,
                                0>;
 
@@ -1095,8 +1099,12 @@ def : InstAlias<"mfc2 $rt, $rd",
                 (MFC2_3OP CPURegsOpnd:$rt, CPURegsOpnd:$rd, 0), 0>;
 def : InstAlias<"mtc2 $rt, $rd",
                 (MTC2_3OP CPURegsOpnd:$rd, 0, CPURegsOpnd:$rt), 0>;
-def : InstAlias<"addiu $rs, $imm",
-                (ADDiu CPURegsOpnd:$rs, CPURegsOpnd:$rs, simm16:$imm), 0>;
+def : InstAlias<"bnez $rs,$offset",
+                 (BNE CPURegsOpnd:$rs, ZERO, brtarget:$offset), 1>,
+                 Requires<[NotMips64]>;
+def : InstAlias<"beqz $rs,$offset",
+                 (BEQ CPURegsOpnd:$rs, ZERO, brtarget:$offset), 1>,
+                 Requires<[NotMips64]>;
 //===----------------------------------------------------------------------===//
 // Assembler Pseudo Instructions
 //===----------------------------------------------------------------------===//
