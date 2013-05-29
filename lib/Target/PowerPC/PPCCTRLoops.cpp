@@ -44,9 +44,17 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "PPCTargetMachine.h"
 #include "PPC.h"
+
+#ifndef NDEBUG
+#include "llvm/CodeGen/MachineDominators.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
+#endif
 
 #include <algorithm>
 #include <vector>
@@ -61,6 +69,9 @@ STATISTIC(NumCTRLoops, "Number of loops converted to CTR loops");
 
 namespace llvm {
   void initializePPCCTRLoopsPass(PassRegistry&);
+#ifndef NDEBUG
+  void initializePPCCTRLoopsVerifyPass(PassRegistry&);
+#endif
 }
 
 namespace {
@@ -91,14 +102,9 @@ namespace {
     }
 
   private:
-    // FIXME: Copied from LoopSimplify.
-    BasicBlock *InsertPreheaderForLoop(Loop *L);
-    void PlaceSplitBlockCarefully(BasicBlock *NewBB,
-                                  SmallVectorImpl<BasicBlock*> &SplitPreds,
-                                  Loop *L);
-
     bool mightUseCTR(const Triple &TT, BasicBlock *BB);
     bool convertToCTRLoop(Loop *L);
+
   private:
     PPCTargetMachine *TM;
     LoopInfo *LI;
@@ -112,6 +118,29 @@ namespace {
 #ifndef NDEBUG
   int PPCCTRLoops::Counter = 0;
 #endif
+
+#ifndef NDEBUG
+  struct PPCCTRLoopsVerify : public MachineFunctionPass {
+  public:
+    static char ID;
+
+    PPCCTRLoopsVerify() : MachineFunctionPass(ID) {
+      initializePPCCTRLoopsVerifyPass(*PassRegistry::getPassRegistry());
+    }
+
+    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+      AU.addRequired<MachineDominatorTree>();
+      MachineFunctionPass::getAnalysisUsage(AU);
+    }
+
+    virtual bool runOnMachineFunction(MachineFunction &MF);
+
+  private:
+    MachineDominatorTree *MDT;
+  };
+
+  char PPCCTRLoopsVerify::ID = 0;
+#endif // NDEBUG
 } // end anonymous namespace
 
 INITIALIZE_PASS_BEGIN(PPCCTRLoops, "ppc-ctr-loops", "PowerPC CTR Loops",
@@ -125,6 +154,18 @@ INITIALIZE_PASS_END(PPCCTRLoops, "ppc-ctr-loops", "PowerPC CTR Loops",
 FunctionPass *llvm::createPPCCTRLoops(PPCTargetMachine &TM) {
   return new PPCCTRLoops(TM);
 }
+
+#ifndef NDEBUG
+INITIALIZE_PASS_BEGIN(PPCCTRLoopsVerify, "ppc-ctr-loops-verify",
+                      "PowerPC CTR Loops Verify", false, false)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
+INITIALIZE_PASS_END(PPCCTRLoopsVerify, "ppc-ctr-loops-verify",
+                    "PowerPC CTR Loops Verify", false, false)
+
+FunctionPass *llvm::createPPCCTRLoopsVerify() {
+  return new PPCCTRLoopsVerify();
+}
+#endif // NDEBUG
 
 bool PPCCTRLoops::runOnFunction(Function &F) {
   LI = &getAnalysis<LoopInfo>();
@@ -419,7 +460,7 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   // the CTR register because some such uses might be reordered by the
   // selection DAG after the mtctr instruction).
   if (!Preheader || mightUseCTR(TT, Preheader))
-    Preheader = InsertPreheaderForLoop(L);
+    Preheader = InsertPreheaderForLoop(L, this);
   if (!Preheader)
     return MadeChange;
 
@@ -467,81 +508,113 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   return MadeChange;
 }
 
-// FIXME: Copied from LoopSimplify.
-BasicBlock *PPCCTRLoops::InsertPreheaderForLoop(Loop *L) {
-  BasicBlock *Header = L->getHeader();
-
-  // Compute the set of predecessors of the loop that are not in the loop.
-  SmallVector<BasicBlock*, 8> OutsideBlocks;
-  for (pred_iterator PI = pred_begin(Header), PE = pred_end(Header);
-       PI != PE; ++PI) {
-    BasicBlock *P = *PI;
-    if (!L->contains(P)) {         // Coming in from outside the loop?
-      // If the loop is branched to from an indirect branch, we won't
-      // be able to fully transform the loop, because it prohibits
-      // edge splitting.
-      if (isa<IndirectBrInst>(P->getTerminator())) return 0;
-
-      // Keep track of it.
-      OutsideBlocks.push_back(P);
+#ifndef NDEBUG
+static bool clobbersCTR(const MachineInstr *MI) {
+  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
+    const MachineOperand &MO = MI->getOperand(i);
+    if (MO.isReg()) {
+      if (MO.isDef() && (MO.getReg() == PPC::CTR || MO.getReg() == PPC::CTR8))
+        return true;
+    } else if (MO.isRegMask()) {
+      if (MO.clobbersPhysReg(PPC::CTR) || MO.clobbersPhysReg(PPC::CTR8))
+        return true;
     }
   }
 
-  // Split out the loop pre-header.
-  BasicBlock *PreheaderBB;
-  if (!Header->isLandingPad()) {
-    PreheaderBB = SplitBlockPredecessors(Header, OutsideBlocks, ".preheader",
-                                         this);
-  } else {
-    SmallVector<BasicBlock*, 2> NewBBs;
-    SplitLandingPadPredecessors(Header, OutsideBlocks, ".preheader",
-                                ".split-lp", this, NewBBs);
-    PreheaderBB = NewBBs[0];
-  }
-
-  PreheaderBB->getTerminator()->setDebugLoc(
-                                      Header->getFirstNonPHI()->getDebugLoc());
-  DEBUG(dbgs() << "Creating pre-header "
-               << PreheaderBB->getName() << "\n");
-
-  // Make sure that NewBB is put someplace intelligent, which doesn't mess up
-  // code layout too horribly.
-  PlaceSplitBlockCarefully(PreheaderBB, OutsideBlocks, L);
-
-  return PreheaderBB;
+  return false;
 }
 
-void PPCCTRLoops::PlaceSplitBlockCarefully(BasicBlock *NewBB,
-                                       SmallVectorImpl<BasicBlock*> &SplitPreds,
-                                            Loop *L) {
-  // Check to see if NewBB is already well placed.
-  Function::iterator BBI = NewBB; --BBI;
-  for (unsigned i = 0, e = SplitPreds.size(); i != e; ++i) {
-    if (&*BBI == SplitPreds[i])
-      return;
-  }
+static bool verifyCTRBranch(MachineBasicBlock *MBB,
+                            MachineBasicBlock::iterator I) {
+  MachineBasicBlock::iterator BI = I;
+  SmallSet<MachineBasicBlock *, 16>   Visited;
+  SmallVector<MachineBasicBlock *, 8> Preds;
+  bool CheckPreds;
 
-  // If it isn't already after an outside block, move it after one.  This is
-  // always good as it makes the uncond branch from the outside block into a
-  // fall-through.
+  if (I == MBB->begin()) {
+    Visited.insert(MBB);
+    goto queue_preds;
+  } else
+    --I;
 
-  // Figure out *which* outside block to put this after.  Prefer an outside
-  // block that neighbors a BB actually in the loop.
-  BasicBlock *FoundBB = 0;
-  for (unsigned i = 0, e = SplitPreds.size(); i != e; ++i) {
-    Function::iterator BBI = SplitPreds[i];
-    if (++BBI != NewBB->getParent()->end() &&
-        L->contains(BBI)) {
-      FoundBB = SplitPreds[i];
+check_block:
+  Visited.insert(MBB);
+  if (I == MBB->end())
+    goto queue_preds;
+
+  CheckPreds = true;
+  for (MachineBasicBlock::iterator IE = MBB->begin();; --I) {
+    unsigned Opc = I->getOpcode();
+    if (Opc == PPC::MTCTRloop || Opc == PPC::MTCTR8loop) {
+      CheckPreds = false;
       break;
     }
+
+    if (I != BI && clobbersCTR(I)) {
+      DEBUG(dbgs() << "BB#" << MBB->getNumber() << " (" <<
+                      MBB->getFullName() << ") instruction " << *I <<
+                      " clobbers CTR, invalidating " << "BB#" <<
+                      BI->getParent()->getNumber() << " (" <<
+                      BI->getParent()->getFullName() << ") instruction " <<
+                      *BI << "\n");
+      return false;
+    }
+
+    if (I == IE)
+      break;
   }
 
-  // If our heuristic for a *good* bb to place this after doesn't find
-  // anything, just pick something.  It's likely better than leaving it within
-  // the loop.
-  if (!FoundBB)
-    FoundBB = SplitPreds[0];
-  NewBB->moveAfter(FoundBB);
+  if (!CheckPreds && Preds.empty())
+    return true;
+
+  if (CheckPreds) {
+queue_preds:
+    if (MachineFunction::iterator(MBB) == MBB->getParent()->begin()) {
+      DEBUG(dbgs() << "Unable to find a MTCTR instruction for BB#" <<
+                      BI->getParent()->getNumber() << " (" <<
+                      BI->getParent()->getFullName() << ") instruction " <<
+                      *BI << "\n");
+      return false;
+    }
+
+    for (MachineBasicBlock::pred_iterator PI = MBB->pred_begin(),
+         PIE = MBB->pred_end(); PI != PIE; ++PI)
+      Preds.push_back(*PI);
+  }
+
+  do {
+    MBB = Preds.pop_back_val();
+    if (!Visited.count(MBB)) {
+      I = MBB->getLastNonDebugInstr();
+      goto check_block;
+    }
+  } while (!Preds.empty());
+
+  return true;
 }
+
+bool PPCCTRLoopsVerify::runOnMachineFunction(MachineFunction &MF) {
+  MDT = &getAnalysis<MachineDominatorTree>();
+
+  // Verify that all bdnz/bdz instructions are dominated by a loop mtctr before
+  // any other instructions that might clobber the ctr register.
+  for (MachineFunction::iterator I = MF.begin(), IE = MF.end();
+       I != IE; ++I) {
+    MachineBasicBlock *MBB = I;
+    if (!MDT->isReachableFromEntry(MBB))
+      continue;
+
+    for (MachineBasicBlock::iterator MII = MBB->getFirstTerminator(),
+      MIIE = MBB->end(); MII != MIIE; ++MII) {
+      unsigned Opc = MII->getOpcode();
+      if (Opc == PPC::BDNZ8 || Opc == PPC::BDNZ ||
+          Opc == PPC::BDZ8  || Opc == PPC::BDZ)
+        if (!verifyCTRBranch(MBB, MII))
+          llvm_unreachable("Invalid PPC CTR loop!");
+    }
+  }
+
+  return false;
+}
+#endif // NDEBUG
 

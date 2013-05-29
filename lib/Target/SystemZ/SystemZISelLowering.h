@@ -16,6 +16,7 @@
 #define LLVM_TARGET_SystemZ_ISELLOWERING_H
 
 #include "SystemZ.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Target/TargetLowering.h"
 
@@ -147,7 +148,7 @@ public:
     LowerFormalArguments(SDValue Chain,
                          CallingConv::ID CallConv, bool isVarArg,
                          const SmallVectorImpl<ISD::InputArg> &Ins,
-                         DebugLoc DL, SelectionDAG &DAG,
+                         SDLoc DL, SelectionDAG &DAG,
                          SmallVectorImpl<SDValue> &InVals) const LLVM_OVERRIDE;
   virtual SDValue
     LowerCall(CallLoweringInfo &CLI,
@@ -158,7 +159,7 @@ public:
                 CallingConv::ID CallConv, bool IsVarArg,
                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                 const SmallVectorImpl<SDValue> &OutVals,
-                DebugLoc DL, SelectionDAG &DAG) const LLVM_OVERRIDE;
+                SDLoc DL, SelectionDAG &DAG) const LLVM_OVERRIDE;
 
 private:
   const SystemZSubtarget &Subtarget;
@@ -188,6 +189,15 @@ private:
   SDValue lowerATOMIC_CMP_SWAP(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerSTACKSAVE(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerSTACKRESTORE(SDValue Op, SelectionDAG &DAG) const;
+
+  // If the last instruction before MBBI in MBB was some form of COMPARE,
+  // try to replace it with a COMPARE AND BRANCH just before MBBI.
+  // CCMask and Target are the BRC-like operands for the branch.
+  // Return true if the change was made.
+  bool convertPrevCompareToBranch(MachineBasicBlock *MBB,
+                                  MachineBasicBlock::iterator MBBI,
+                                  unsigned CCMask,
+                                  MachineBasicBlock *Target) const;
 
   // Implement EmitInstrWithCustomInserter for individual operation types.
   MachineBasicBlock *emitSelect(MachineInstr *MI,

@@ -13,6 +13,7 @@
 
 #include "SparcRegisterInfo.h"
 #include "Sparc.h"
+#include "SparcMachineFunctionInfo.h"
 #include "SparcSubtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -20,6 +21,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetInstrInfo.h"
 
@@ -27,6 +29,10 @@
 #include "SparcGenRegisterInfo.inc"
 
 using namespace llvm;
+
+static cl::opt<bool>
+ReserveAppRegisters("sparc-reserve-app-registers", cl::Hidden, cl::init(false),
+                    cl::desc("Reserve application registers (%g2-%g4)"));
 
 SparcRegisterInfo::SparcRegisterInfo(SparcSubtarget &st,
                                      const TargetInstrInfo &tii)
@@ -43,14 +49,21 @@ BitVector SparcRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   // FIXME: G1 reserved for now for large imm generation by frame code.
   Reserved.set(SP::G1);
-  Reserved.set(SP::G2);
-  Reserved.set(SP::G3);
-  Reserved.set(SP::G4);
+
+  //G1-G4 can be used in applications.
+  if (ReserveAppRegisters) {
+    Reserved.set(SP::G2);
+    Reserved.set(SP::G3);
+    Reserved.set(SP::G4);
+  }
+  //G5 is not reserved in 64 bit mode.
+  if (!Subtarget.is64Bit())
+    Reserved.set(SP::G5);
+
   Reserved.set(SP::O6);
   Reserved.set(SP::I6);
   Reserved.set(SP::I7);
   Reserved.set(SP::G0);
-  Reserved.set(SP::G5);
   Reserved.set(SP::G6);
   Reserved.set(SP::G7);
   return Reserved;
@@ -77,12 +90,13 @@ SparcRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   int64_t Offset = MF.getFrameInfo()->getObjectOffset(FrameIndex) +
                    MI.getOperand(FIOperandNum + 1).getImm() +
                    Subtarget.getStackPointerBias();
-
+  SparcMachineFunctionInfo *FuncInfo = MF.getInfo<SparcMachineFunctionInfo>();
+  unsigned FramePtr = (FuncInfo->isLeafProc()) ? SP::O6 : SP::I6;
   // Replace frame index with a frame pointer reference.
   if (Offset >= -4096 && Offset <= 4095) {
     // If the offset is small enough to fit in the immediate field, directly
     // encode it.
-    MI.getOperand(FIOperandNum).ChangeToRegister(SP::I6, false);
+    MI.getOperand(FIOperandNum).ChangeToRegister(FramePtr, false);
     MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
   } else {
     // Otherwise, emit a G1 = SETHI %hi(offset).  FIXME: it would be better to 
@@ -91,7 +105,7 @@ SparcRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     BuildMI(*MI.getParent(), II, dl, TII.get(SP::SETHIi), SP::G1).addImm(OffHi);
     // Emit G1 = G1 + I6
     BuildMI(*MI.getParent(), II, dl, TII.get(SP::ADDrr), SP::G1).addReg(SP::G1)
-      .addReg(SP::I6);
+      .addReg(FramePtr);
     // Insert: G1+%lo(offset) into the user.
     MI.getOperand(FIOperandNum).ChangeToRegister(SP::G1, false);
     MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset & ((1 << 10)-1));

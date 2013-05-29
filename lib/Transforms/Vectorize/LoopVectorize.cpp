@@ -80,6 +80,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PatternMatch.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/ValueHandle.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -118,11 +119,11 @@ static const unsigned TinyTripCountUnrollThreshold = 128;
 /// than this number of comparisons.
 static const unsigned RuntimeMemoryCheckThreshold = 8;
 
-/// We use a metadata with this name  to indicate that a scalar loop was
-/// vectorized and that we don't need to re-vectorize it if we run into it
-/// again.
-static const char*
-AlreadyVectorizedMDName = "llvm.vectorizer.already_vectorized";
+/// Maximum simd width.
+static const unsigned MaxVectorWidth = 64;
+
+/// Maximum vectorization unroll count.
+static const unsigned MaxUnrollFactor = 16;
 
 namespace {
 
@@ -458,7 +459,7 @@ public:
 
     // The starting value of the reduction.
     // It does not have to be zero!
-    Value *StartValue;
+    TrackingVH<Value> StartValue;
     // The instruction who's value is used outside the loop.
     Instruction *LoopExitInstr;
     // The kind of the reduction.
@@ -503,7 +504,7 @@ public:
     /// This flag indicates if we need to add the runtime check.
     bool Need;
     /// Holds the pointers that we need to check.
-    SmallVector<Value*, 2> Pointers;
+    SmallVector<TrackingVH<Value>, 2> Pointers;
     /// Holds the pointer value at the beginning of the loop.
     SmallVector<const SCEV*, 2> Starts;
     /// Holds the pointer value at the end of the loop.
@@ -517,7 +518,7 @@ public:
     InductionInfo(Value *Start, InductionKind K) : StartValue(Start), IK(K) {}
     InductionInfo() : StartValue(0), IK(IK_NoInduction) {}
     /// Start value.
-    Value *StartValue;
+    TrackingVH<Value> StartValue;
     /// Induction kind.
     InductionKind IK;
   };
@@ -767,6 +768,126 @@ private:
   const TargetLibraryInfo *TLI;
 };
 
+/// Utility class for getting and setting loop vectorizer hints in the form
+/// of loop metadata.
+struct LoopVectorizeHints {
+  /// Vectorization width.
+  unsigned Width;
+  /// Vectorization unroll factor.
+  unsigned Unroll;
+
+  LoopVectorizeHints(const Loop *L)
+  : Width(VectorizationFactor)
+  , Unroll(VectorizationUnroll)
+  , LoopID(L->getLoopID()) {
+    getHints(L);
+    // The command line options override any loop metadata except for when
+    // width == 1 which is used to indicate the loop is already vectorized.
+    if (VectorizationFactor.getNumOccurrences() > 0 && Width != 1)
+      Width = VectorizationFactor;
+    if (VectorizationUnroll.getNumOccurrences() > 0)
+      Unroll = VectorizationUnroll;
+  }
+
+  /// Return the loop vectorizer metadata prefix.
+  static StringRef Prefix() { return "llvm.vectorizer."; }
+
+  MDNode *createHint(LLVMContext &Context, StringRef Name, unsigned V) {
+    SmallVector<Value*, 2> Vals;
+    Vals.push_back(MDString::get(Context, Name));
+    Vals.push_back(ConstantInt::get(Type::getInt32Ty(Context), V));
+    return MDNode::get(Context, Vals);
+  }
+
+  /// Mark the loop L as already vectorized by setting the width to 1.
+  void setAlreadyVectorized(Loop *L) {
+    LLVMContext &Context = L->getHeader()->getContext();
+
+    Width = 1;
+
+    // Create a new loop id with one more operand for the already_vectorized
+    // hint. If the loop already has a loop id then copy the existing operands.
+    SmallVector<Value*, 4> Vals(1);
+    if (LoopID)
+      for (unsigned i = 1, ie = LoopID->getNumOperands(); i < ie; ++i)
+        Vals.push_back(LoopID->getOperand(i));
+
+    Vals.push_back(createHint(Context, Twine(Prefix(), "width").str(), Width));
+
+    MDNode *NewLoopID = MDNode::get(Context, Vals);
+    // Set operand 0 to refer to the loop id itself.
+    NewLoopID->replaceOperandWith(0, NewLoopID);
+
+    L->setLoopID(NewLoopID);
+    if (LoopID)
+      LoopID->replaceAllUsesWith(NewLoopID);
+
+    LoopID = NewLoopID;
+  }
+
+private:
+  MDNode *LoopID;
+
+  /// Find hints specified in the loop metadata.
+  void getHints(const Loop *L) {
+    if (!LoopID)
+      return;
+
+    // First operand should refer to the loop id itself.
+    assert(LoopID->getNumOperands() > 0 && "requires at least one operand");
+    assert(LoopID->getOperand(0) == LoopID && "invalid loop id");
+
+    for (unsigned i = 1, ie = LoopID->getNumOperands(); i < ie; ++i) {
+      const MDString *S = 0;
+      SmallVector<Value*, 4> Args;
+
+      // The expected hint is either a MDString or a MDNode with the first
+      // operand a MDString.
+      if (const MDNode *MD = dyn_cast<MDNode>(LoopID->getOperand(i))) {
+        if (!MD || MD->getNumOperands() == 0)
+          continue;
+        S = dyn_cast<MDString>(MD->getOperand(0));
+        for (unsigned i = 1, ie = MD->getNumOperands(); i < ie; ++i)
+          Args.push_back(MD->getOperand(i));
+      } else {
+        S = dyn_cast<MDString>(LoopID->getOperand(i));
+        assert(Args.size() == 0 && "too many arguments for MDString");
+      }
+
+      if (!S)
+        continue;
+
+      // Check if the hint starts with the vectorizer prefix.
+      StringRef Hint = S->getString();
+      if (!Hint.startswith(Prefix()))
+        continue;
+      // Remove the prefix.
+      Hint = Hint.substr(Prefix().size(), StringRef::npos);
+
+      if (Args.size() == 1)
+        getHint(Hint, Args[0]);
+    }
+  }
+
+  // Check string hint with one operand.
+  void getHint(StringRef Hint, Value *Arg) {
+    const ConstantInt *C = dyn_cast<ConstantInt>(Arg);
+    if (!C) return;
+    unsigned Val = C->getZExtValue();
+
+    if (Hint == "width") {
+      assert(isPowerOf2_32(Val) && Val <= MaxVectorWidth &&
+             "Invalid width metadata");
+      Width = Val;
+    } else if (Hint == "unroll") {
+      assert(isPowerOf2_32(Val) && Val <= MaxUnrollFactor &&
+             "Invalid unroll metadata");
+      Unroll = Val;
+    } else
+      DEBUG(dbgs() << "LV: ignoring unknown hint " << Hint);
+  }
+};
+
 /// The LoopVectorize Pass.
 struct LoopVectorize : public LoopPass {
   /// Pass identification, replacement for typeid
@@ -805,6 +926,13 @@ struct LoopVectorize : public LoopPass {
     DEBUG(dbgs() << "LV: Checking a loop in \"" <<
           L->getHeader()->getParent()->getName() << "\"\n");
 
+    LoopVectorizeHints Hints(L);
+
+    if (Hints.Width == 1) {
+      DEBUG(dbgs() << "LV: Not vectorizing.\n");
+      return false;
+    }
+
     // Check if it is legal to vectorize the loop.
     LoopVectorizationLegality LVL(L, SE, DL, DT, TTI, AA, TLI);
     if (!LVL.canVectorize()) {
@@ -832,10 +960,10 @@ struct LoopVectorize : public LoopPass {
 
     // Select the optimal vectorization factor.
     LoopVectorizationCostModel::VectorizationFactor VF;
-    VF = CM.selectVectorizationFactor(OptForSize, VectorizationFactor);
+    VF = CM.selectVectorizationFactor(OptForSize, Hints.Width);
     // Select the unroll factor.
-    unsigned UF = CM.selectUnrollFactor(OptForSize, VectorizationUnroll,
-                                        VF.Width, VF.Cost);
+    unsigned UF = CM.selectUnrollFactor(OptForSize, Hints.Unroll, VF.Width,
+                                        VF.Cost);
 
     if (VF.Width == 1) {
       DEBUG(dbgs() << "LV: Vectorization is possible but not beneficial.\n");
@@ -849,6 +977,9 @@ struct LoopVectorize : public LoopPass {
     // If we decided that it is *legal* to vectorize the loop then do it.
     InnerLoopVectorizer LB(L, SE, LI, DT, DL, TLI, VF.Width, UF);
     LB.vectorize(&LVL);
+
+    // Mark the loop as already vectorized to avoid vectorizing again.
+    Hints.setAlreadyVectorized(L);
 
     DEBUG(verifyFunction(*L->getHeader()->getParent()));
     return true;
@@ -1316,11 +1447,6 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
   BasicBlock *BypassBlock = OrigLoop->getLoopPreheader();
   BasicBlock *ExitBlock = OrigLoop->getExitBlock();
   assert(ExitBlock && "Must have an exit block");
-
-  // Mark the old scalar loop with metadata that tells us not to vectorize this
-  // loop again if we run into it.
-  MDNode *MD = MDNode::get(OldBasicBlock->getContext(), None);
-  OldBasicBlock->getTerminator()->setMetadata(AlreadyVectorizedMDName, MD);
 
   // Some loops have a single integer induction variable, while other loops
   // don't. One example is c++ iterators that often have multiple pointer
@@ -1902,7 +2028,7 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
     Value *LoopVal = RdxPhi->getIncomingValueForBlock(Latch);
     VectorParts &Val = getVectorValue(LoopVal);
     for (unsigned part = 0; part < UF; ++part) {
-      // Make sure to add the reduction stat value only to the 
+      // Make sure to add the reduction stat value only to the
       // first unroll part.
       Value *StartVal = (part == 0) ? VectorStart : Identity;
       cast<PHINode>(VecRdxPhi[part])->addIncoming(StartVal, VecPreheader);
@@ -2427,7 +2553,10 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
 }
 
 bool LoopVectorizationLegality::canVectorize() {
-  assert(TheLoop->getLoopPreheader() && "No preheader!!");
+  // We must have a loop in canonical form. Loops with indirectbr in them cannot
+  // be canonicalized.
+  if (!TheLoop->getLoopPreheader())
+    return false;
 
   // We can only vectorize innermost loops.
   if (TheLoop->getSubLoopsVector().size())
@@ -2511,13 +2640,6 @@ static Type* getWiderType(DataLayout &DL, Type *Ty0, Type *Ty1) {
 bool LoopVectorizationLegality::canVectorizeInstrs() {
   BasicBlock *PreHeader = TheLoop->getLoopPreheader();
   BasicBlock *Header = TheLoop->getHeader();
-
-  // If we marked the scalar loop as "already vectorized" then no need
-  // to vectorize it again.
-  if (Header->getTerminator()->getMetadata(AlreadyVectorizedMDName)) {
-    DEBUG(dbgs() << "LV: This loop was vectorized before\n");
-    return false;
-  }
 
   // Look for the attribute signaling the absence of NaNs.
   Function &F = *Header->getParent();

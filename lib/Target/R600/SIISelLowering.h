@@ -30,7 +30,8 @@ class SITargetLowering : public AMDGPUTargetLowering {
 
   bool foldImm(SDValue &Operand, int32_t &Immediate,
                bool &ScalarSlotUsed) const;
-  bool fitsRegClass(SelectionDAG &DAG, SDValue &Op, unsigned RegClass) const;
+  bool fitsRegClass(SelectionDAG &DAG, const SDValue &Op,
+                    unsigned RegClass) const;
   void ensureSRegLimit(SelectionDAG &DAG, SDValue &Operand,
                        unsigned RegClass, bool &ScalarSlotUsed) const;
 
@@ -43,7 +44,7 @@ public:
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool isVarArg,
                                const SmallVectorImpl<ISD::InputArg> &Ins,
-                               DebugLoc DL, SelectionDAG &DAG,
+                               SDLoc DL, SelectionDAG &DAG,
                                SmallVectorImpl<SDValue> &InVals) const;
 
   virtual MachineBasicBlock * EmitInstrWithCustomInserter(MachineInstr * MI,

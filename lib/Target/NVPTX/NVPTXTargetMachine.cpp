@@ -49,6 +49,7 @@ using namespace llvm;
 
 namespace llvm {
 void initializeNVVMReflectPass(PassRegistry&);
+void initializeGenericToNVVMPass(PassRegistry&);
 }
 
 extern "C" void LLVMInitializeNVPTXTarget() {
@@ -62,6 +63,7 @@ extern "C" void LLVMInitializeNVPTXTarget() {
   // FIXME: This pass is really intended to be invoked during IR optimization,
   // but it's very NVPTX-specific.
   initializeNVVMReflectPass(*PassRegistry::getPassRegistry());
+  initializeGenericToNVVMPass(*PassRegistry::getPassRegistry());
 }
 
 NVPTXTargetMachine::NVPTXTargetMachine(
@@ -92,7 +94,7 @@ NVPTXTargetMachine64::NVPTXTargetMachine64(
     CodeGenOpt::Level OL)
     : NVPTXTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL, true) {}
 
-namespace llvm {
+namespace {
 class NVPTXPassConfig : public TargetPassConfig {
 public:
   NVPTXPassConfig(NVPTXTargetMachine *TM, PassManagerBase &PM)
@@ -102,14 +104,20 @@ public:
     return getTM<NVPTXTargetMachine>();
   }
 
+  virtual void addIRPasses();
   virtual bool addInstSelector();
   virtual bool addPreRegAlloc();
 };
-}
+} // end anonymous namespace
 
 TargetPassConfig *NVPTXTargetMachine::createPassConfig(PassManagerBase &PM) {
   NVPTXPassConfig *PassConfig = new NVPTXPassConfig(this, PM);
   return PassConfig;
+}
+
+void NVPTXPassConfig::addIRPasses() {
+  TargetPassConfig::addIRPasses();
+  addPass(createGenericToNVVMPass());
 }
 
 bool NVPTXPassConfig::addInstSelector() {

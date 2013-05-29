@@ -192,9 +192,9 @@ def PseudoDMULTu : MultDivPseudo<DMULTu, ACRegs128, CPU64RegsOpnd, MipsMultu,
 def DSDIV : Div<"ddiv", IIIdiv, CPU64RegsOpnd, [HI64, LO64]>, MULT_FM<0, 0x1e>;
 def DUDIV : Div<"ddivu", IIIdiv, CPU64RegsOpnd, [HI64, LO64]>, MULT_FM<0, 0x1f>;
 def PseudoDSDIV : MultDivPseudo<DSDIV, ACRegs128, CPU64RegsOpnd, MipsDivRem,
-                                IIIdiv, 0>;
+                                IIIdiv, 0, 1, 1>;
 def PseudoDUDIV : MultDivPseudo<DUDIV, ACRegs128, CPU64RegsOpnd, MipsDivRemU,
-                                IIIdiv, 0>;
+                                IIIdiv, 0, 1, 1>;
 
 def MTHI64 : MoveToLOHI<"mthi", CPU64Regs, [HI64]>, MTLO_FM<0x11>;
 def MTLO64 : MoveToLOHI<"mtlo", CPU64Regs, [LO64]>, MTLO_FM<0x13>;
@@ -293,6 +293,11 @@ def : WrapperPat<tglobaltlsaddr, DADDiu, CPU64Regs>;
 
 defm : BrcondPats<CPU64Regs, BEQ64, BNE64, SLT64, SLTu64, SLTi64, SLTiu64,
                   ZERO_64>;
+
+def : MipsPat<(brcond (i32 (setlt i64:$lhs, 1)), bb:$dst),
+              (BLEZ64 i64:$lhs, bb:$dst)>;
+def : MipsPat<(brcond (i32 (setgt i64:$lhs, -1)), bb:$dst),
+              (BGEZ64 i64:$lhs, bb:$dst)>;
 
 // setcc patterns
 defm : SeteqPats<CPU64Regs, SLTiu64, XOR64, SLTu64, ZERO_64>;

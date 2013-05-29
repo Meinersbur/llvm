@@ -110,6 +110,25 @@ class InstRI<bits<12> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Inst{15-0}  = I2;
 }
 
+class InstRIEb<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<6, outs, ins, asmstr, pattern> {
+  field bits<48> Inst;
+  field bits<48> SoftFail = 0;
+
+  bits<4> R1;
+  bits<4> R2;
+  bits<4> M3;
+  bits<16> RI4;
+
+  let Inst{47-40} = op{15-8};
+  let Inst{39-36} = R1;
+  let Inst{35-32} = R2;
+  let Inst{31-16} = RI4;
+  let Inst{15-12} = M3;
+  let Inst{11-8}  = 0;
+  let Inst{7-0}   = op{7-0};
+}
+
 class InstRIEf<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   : InstSystemZ<6, outs, ins, asmstr, pattern> {
   field bits<48> Inst;
@@ -913,10 +932,10 @@ class SelectWrapper<RegisterOperand cls>
            [(set cls:$dst, (z_select_ccmask cls:$src1, cls:$src2, imm:$cc))]> {
   let usesCustomInserter = 1;
   // Although the instructions used by these nodes do not in themselves
-  // change the PSW, the insertion requires new blocks, and the PSW cannot
-  // be live across them.
-  let Defs = [PSW];
-  let Uses = [PSW];
+  // change CC, the insertion requires new blocks, and CC cannot be live
+  // across them.
+  let Defs = [CC];
+  let Uses = [CC];
 }
 
 // OPERATOR is ATOMIC_SWAP or an ATOMIC_LOAD_* operation.  PAT and OPERAND
@@ -925,7 +944,7 @@ class AtomicLoadBinary<SDPatternOperator operator, RegisterOperand cls,
                        dag pat, DAGOperand operand>
   : Pseudo<(outs cls:$dst), (ins bdaddr20only:$ptr, operand:$src2),
            [(set cls:$dst, (operator bdaddr20only:$ptr, pat))]> {
-  let Defs = [PSW];
+  let Defs = [CC];
   let Has20BitOffset = 1;
   let mayLoad = 1;
   let mayStore = 1;
@@ -951,7 +970,7 @@ class AtomicLoadWBinary<SDPatternOperator operator, dag pat,
                 ADDR32:$negbitshift, uimm32:$bitsize),
            [(set GR32:$dst, (operator bdaddr20only:$ptr, pat, ADDR32:$bitshift,
                                       ADDR32:$negbitshift, uimm32:$bitsize))]> {
-  let Defs = [PSW];
+  let Defs = [CC];
   let Has20BitOffset = 1;
   let mayLoad = 1;
   let mayStore = 1;

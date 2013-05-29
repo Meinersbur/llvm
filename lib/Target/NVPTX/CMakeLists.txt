@@ -23,6 +23,7 @@ set(NVPTXCodeGen_sources
   NVPTXAsmPrinter.cpp
   NVPTXUtilities.cpp
   NVVMReflect.cpp
+  NVPTXGenericToNVVM.cpp
   )
 
 set(LLVM_NEXT_DEPENDS intrinsics_gen)
