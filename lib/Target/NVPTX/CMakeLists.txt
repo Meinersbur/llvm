@@ -24,6 +24,7 @@ set(NVPTXCodeGen_sources
   NVPTXUtilities.cpp
   NVVMReflect.cpp
   NVPTXGenericToNVVM.cpp
+  NVPTXPrologEpilogPass.cpp
   )
 
 set(LLVM_NEXT_DEPENDS intrinsics_gen)
