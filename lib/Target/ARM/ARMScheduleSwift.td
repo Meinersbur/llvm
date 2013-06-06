@@ -1181,19 +1181,504 @@ let SchedModel = SwiftModel in {
   def : WriteRes<WriteCMP, [SwiftUnitP01]>;
   def : SchedAlias<WriteCMPsi, SwiftChooseShiftKindP01OneOrTwoCycle>;
   def : SchedAlias<WriteCMPsr, SwiftWriteP01TwoCycle>;
+
+  // 4.2.6 Shift, Move
+  // Shift
+  //  ASR,LSL,ROR,RRX
+  //  MOV(register-shiftedregister)  MVN(register-shiftedregister)
+  // Move
+  //  MOV,MVN
+  //  MOVT
+  // Sign/Zero extension
+  def : InstRW<[SwiftWriteP01OneCycle],
+               (instregex "SXTB", "SXTH", "SXTB16", "UXTB", "UXTH", "UXTB16",
+                          "t2SXTB", "t2SXTH", "t2SXTB16", "t2UXTB", "t2UXTH",
+                          "t2UXTB16")>;
+  // Pseudo instructions.
+  def : InstRW<[SwiftWriteP01OneCycle2x],
+        (instregex "MOVCCi32imm", "MOVi32imm", "MOV_ga_dyn", "t2MOVCCi32imm",
+                   "t2MOVi32imm", "t2MOV_ga_dyn")>;
+  def : InstRW<[SwiftWriteP01OneCycle3x],
+        (instregex "MOV_ga_pcrel", "t2MOV_ga_pcrel", "t2MOVi16_ga_pcrel")>;
+  def : InstRW<[SwiftWriteP01OneCycle2x_load],
+        (instregex "MOV_ga_pcrel_ldr", "t2MOV_ga_pcrel_ldr")>;
+
+  def SwiftWriteP0TwoCyleTwoUops : WriteSequence<[SwiftWriteP0OneCycle], 2>;
+
+  def SwiftPredP0OneOrTwoCycle : SchedWriteVariant<[
+    SchedVar<IsPredicatedPred, [ SwiftWriteP0TwoCyleTwoUops ]>,
+    SchedVar<NoSchedPred,     [ SwiftWriteP0OneCycle ]>
+  ]>;
+
+  // 4.2.7 Select
+  // SEL
+  def : InstRW<[SwiftPredP0OneOrTwoCycle], (instregex "SEL", "t2SEL")>;
+
+  // 4.2.8 Bitfield
+  // BFI,BFC, SBFX,UBFX
+  def : InstRW< [SwiftWriteP01TwoCycle],
+        (instregex "BFC", "BFI", "UBFX", "SBFX", "(t|t2)BFC", "(t|t2)BFI",
+        "(t|t2)UBFX", "(t|t2)SBFX")>;
+
+  // 4.2.9 Saturating arithmetic
+  def : InstRW< [SwiftWriteP01TwoCycle],
+        (instregex "QADD", "QSUB", "QDADD", "QDSUB", "SSAT", "SSAT16", "USAT",
+        "USAT16", "QADD8", "QADD16", "QSUB8", "QSUB16", "QASX", "QSAX",
+        "UQADD8", "UQADD16","UQSUB8","UQSUB16","UQASX","UQSAX", "t2QADD",
+        "t2QSUB", "t2QDADD", "t2QDSUB", "t2SSAT", "t2SSAT16", "t2USAT",
+        "t2QADD8", "t2QADD16", "t2QSUB8", "t2QSUB16", "t2QASX", "t2QSAX",
+        "t2UQADD8", "t2UQADD16","t2UQSUB8","t2UQSUB16","t2UQASX","t2UQSAX")>;
+
+  // 4.2.10 Parallel Arithmetic
+  // Not flag setting.
+  def : InstRW< [SwiftWriteALUsr],
+        (instregex "SADD8", "SADD16", "SSUB8", "SSUB16", "SASX", "SSAX",
+        "UADD8", "UADD16", "USUB8", "USUB16", "UASX", "USAX", "t2SADD8",
+        "t2SADD16", "t2SSUB8", "t2SSUB16", "t2SASX", "t2SSAX", "t2UADD8",
+        "t2UADD16", "t2USUB8", "t2USUB16", "t2UASX", "t2USAX")>;
+  // Flag setting.
+  def : InstRW< [SwiftWriteP01TwoCycle],
+       (instregex "SHADD8", "SHADD16", "SHSUB8", "SHSUB16", "SHASX", "SHSAX",
+       "SXTAB", "SXTAB16", "SXTAH", "UHADD8", "UHADD16", "UHSUB8", "UHSUB16",
+       "UHASX", "UHSAX", "UXTAB", "UXTAB16", "UXTAH", "t2SHADD8", "t2SHADD16",
+       "t2SHSUB8", "t2SHSUB16", "t2SHASX", "t2SHSAX", "t2SXTAB", "t2SXTAB16",
+       "t2SXTAH", "t2UHADD8", "t2UHADD16", "t2UHSUB8", "t2UHSUB16", "t2UHASX",
+       "t2UHSAX", "t2UXTAB", "t2UXTAB16", "t2UXTAH")>;
+
+  // 4.2.11 Sum of Absolute Difference
+  def : InstRW< [SwiftWriteP0P1FourCycle], (instregex "USAD8") >;
+  def : InstRW<[SwiftWriteP0P1FourCycle, ReadALU, ReadALU, SchedReadAdvance<2>],
+        (instregex "USADA8")>;
+
+  // 4.2.12 Integer Multiply (32-bit result)
+  // Two sources.
+  def : InstRW< [SwiftWriteP0FourCycle],
+        (instregex "MULS", "MUL", "SMMUL", "SMMULR", "SMULBB", "SMULBT",
+        "SMULTB", "SMULTT", "SMULWB", "SMULWT", "SMUSD", "SMUSDXi", "t2MUL",
+        "t2SMMUL", "t2SMMULR", "t2SMULBB", "t2SMULBT", "t2SMULTB", "t2SMULTT",
+        "t2SMULWB", "t2SMULWT", "t2SMUSD")>;
+
+  def SwiftWriteP0P01FiveCycleTwoUops :
+      SchedWriteRes<[SwiftUnitP0, SwiftUnitP01]>  {
+    let Latency = 5;
+  }
+
+  def SwiftPredP0P01FourFiveCycle : SchedWriteVariant<[
+    SchedVar<IsPredicatedPred, [ SwiftWriteP0P01FiveCycleTwoUops ]>,
+    SchedVar<NoSchedPred,      [ SwiftWriteP0FourCycle ]>
+  ]>;
+
+  def SwiftReadAdvanceFourCyclesPred : SchedReadVariant<[
+     SchedVar<IsPredicatedPred, [SchedReadAdvance<4>]>,
+     SchedVar<NoSchedPred,      [ReadALU]>
+  ]>;
+
+  // Multiply accumulate, three sources
+  def : InstRW< [SwiftPredP0P01FourFiveCycle, ReadALU, ReadALU,
+                 SwiftReadAdvanceFourCyclesPred],
+        (instregex "MLAS", "MLA", "MLS", "SMMLA", "SMMLAR", "SMMLS", "SMMLSR",
+        "t2MLA", "t2MLS", "t2MLAS", "t2SMMLA", "t2SMMLAR", "t2SMMLS",
+        "t2SMMLSR")>;
+
+  // 4.2.13 Integer Multiply (32-bit result, Q flag)
+  def : InstRW< [SwiftWriteP0FourCycle],
+        (instregex "SMUAD", "SMUADX", "t2SMUAD", "t2SMUADX")>;
+  def : InstRW< [SwiftPredP0P01FourFiveCycle, ReadALU, ReadALU,
+                 SwiftReadAdvanceFourCyclesPred],
+        (instregex "SMLABB", "SMLABT", "SMLATB", "SMLATT", "SMLSD", "SMLSDX",
+        "SMLAWB", "SMLAWT", "t2SMLABB", "t2SMLABT", "t2SMLATB", "t2SMLATT",
+        "t2SMLSD", "t2SMLSDX", "t2SMLAWB", "t2SMLAWT")>;
+  def : InstRW< [SwiftPredP0P01FourFiveCycle],
+        (instregex "SMLAD", "SMLADX", "t2SMLAD", "t2SMLADX")>;
+
+  def SwiftP0P0P01FiveCycle : SchedWriteRes<[SwiftUnitP0, SwiftUnitP01]> {
+    let Latency = 5;
+    let NumMicroOps = 3;
+    let ResourceCycles = [2, 1];
+  }
+  def SwiftWrite1Cycle : SchedWriteRes<[]> {
+    let Latency = 1;
+    let NumMicroOps = 0;
+  }
+  def SwiftWrite5Cycle : SchedWriteRes<[]> {
+    let Latency = 5;
+    let NumMicroOps = 0;
+  }
+  def SwiftWrite6Cycle : SchedWriteRes<[]> {
+    let Latency = 6;
+    let NumMicroOps = 0;
+  }
+
+  // 4.2.14 Integer Multiply, Long
+  def : InstRW< [SwiftP0P0P01FiveCycle, SwiftWrite5Cycle],
+        (instregex "SMULL$", "UMULL$", "t2SMULL$", "t2UMULL$")>;
+
+  def Swift2P03P01FiveCycle : SchedWriteRes<[SwiftUnitP0, SwiftUnitP01]> {
+    let Latency = 7;
+    let NumMicroOps = 5;
+    let ResourceCycles = [2, 3];
+  }
+
+  // 4.2.15 Integer Multiply Accumulate, Long
+  // 4.2.16 Integer Multiply Accumulate, Dual
+  // 4.2.17 Integer Multiply Accumulate Accumulate, Long
+  // We are being a bit inaccurate here.
+  def : InstRW< [SwiftWrite5Cycle, Swift2P03P01FiveCycle, ReadALU, ReadALU,
+                 SchedReadAdvance<4>, SchedReadAdvance<3>],
+        (instregex "SMLALS", "UMLALS", "SMLAL", "UMLAL", "MLALBB", "SMLALBT",
+        "SMLALTB", "SMLALTT", "SMLALD", "SMLALDX", "SMLSLD", "SMLSLDX",
+        "UMAAL", "t2SMLALS", "t2UMLALS", "t2SMLAL", "t2UMLAL", "t2MLALBB", "t2SMLALBT",
+        "t2SMLALTB", "t2SMLALTT", "t2SMLALD", "t2SMLALDX", "t2SMLSLD", "t2SMLSLDX",
+        "t2UMAAL")>;
+
+  def SwiftDiv : SchedWriteRes<[SwiftUnitP0, SwiftUnitDiv]> {
+    let NumMicroOps = 1;
+    let Latency = 14;
+    let ResourceCycles = [1, 14];
+  }
   // 4.2.18 Integer Divide
   def : WriteRes<WriteDiv, [SwiftUnitDiv]>; // Workaround.
   def : InstRW < [WriteDiv],
         (instregex "SDIV", "UDIV", "t2SDIV", "t2UDIV")>;
+
+  // 4.2.19 Integer Load Single Element
+  // 4.2.20 Integer Load Signextended
+  def SwiftWriteP2P01ThreeCycle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01]> {
+    let Latency = 3;
+  }
+  def SwiftWriteP2P01FourCyle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01]> {
+    let Latency = 4;
+  }
+  def SwiftWriteP2P01P01FourCycle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01,
+                                                   SwiftUnitP01]> {
+    let Latency = 4;
+  }
+  def SwiftWriteP2P2ThreeCycle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP2]> {
+    let Latency = 3;
+  }
+  def SwiftWriteP2P2P01ThreeCycle : SchedWriteRes<[SwiftUnitP2, SwiftUnitP2,
+                                                    SwiftUnitP01]> {
+    let Latency = 3;
+  }
+  def SwiftWrBackOne : SchedWriteRes<[]> {
+    let Latency = 1;
+    let NumMicroOps = 0;
+  }
+  def SwiftWriteLdFour : SchedWriteRes<[]> {
+    let Latency = 4;
+    let NumMicroOps = 0;
+  }
+   // Not accurate.
+  def : InstRW<[SwiftWriteP2ThreeCycle],
+        (instregex "LDR(i12|rs)$", "LDRB(i12|rs)$", "t2LDR(i8|i12|s|pci)",
+        "t2LDR(H|B)(i8|i12|s|pci)", "LDREX", "tLDR[BH](r|i|spi|pci|pciASM)",
+        "tLDR(r|i|spi|pci|pciASM)")>;
+  def : InstRW<[SwiftWriteP2ThreeCycle],
+        (instregex "LDRH$",  "PICLDR$", "PICLDR(H|B)$", "LDRcp$")>;
+  def : InstRW<[SwiftWriteP2P01FourCyle],
+        (instregex "PICLDRS(H|B)$", "t2LDRS(H|B)(i|r|p|s)", "LDRS(H|B)$",
+        "t2LDRpci_pic", "tLDRS(B|H)")>;
+  def : InstRW<[SwiftWriteP2P01ThreeCycle,  SwiftWrBackOne],
+        (instregex "LD(RB|R)(_|T_)(POST|PRE)_(IMM|REG)", "LDRH(_PRE|_POST)",
+        "LDR(T|BT)_POST_(REG|IMM)", "LDRHT(i|r)",
+        "t2LD(R|RB|RH)_(PRE|POST)", "t2LD(R|RB|RH)T")>;
+  def : InstRW<[SwiftWriteP2P01P01FourCycle, SwiftWrBackOne],
+        (instregex "LDR(SH|SB)(_POST|_PRE)", "t2LDR(SH|SB)(_POST|_PRE)",
+        "LDRS(B|H)T(i|r)", "t2LDRS(B|H)T(i|r)", "t2LDRS(B|H)T")>;
+
+  // 4.2.21 Integer Dual Load
+  // Not accurate.
+  def : InstRW<[SwiftWriteP2P2ThreeCycle, SwiftWriteLdFour],
+        (instregex "t2LDRDi8", "LDRD$")>;
+  def : InstRW<[SwiftWriteP2P2P01ThreeCycle, SwiftWriteLdFour, SwiftWrBackOne],
+        (instregex "LDRD_(POST|PRE)", "t2LDRD_(POST|PRE)")>;
+
+  // 4.2.22 Integer Load, Multiple
+  // NumReg = 1 .. 16
+  foreach Lat = 3-25 in {
+    def SwiftWriteLM#Lat#Cy : SchedWriteRes<[SwiftUnitP2]> {
+      let Latency = Lat;
+    }
+    def SwiftWriteLM#Lat#CyNo : SchedWriteRes<[]> { let Latency = Lat; }
+  }
+  // Predicate.
+  foreach NumAddr = 1-16 in {
+    def SwiftLMAddr#NumAddr#Pred : SchedPredicate<"TII->getNumLDMAddresses(MI) == "#NumAddr>;
+  }
+  def SwiftWriteLDMAddrNoWB : SchedWriteRes<[SwiftUnitP01]> { let Latency = 0; }
+  def SwiftWriteLDMAddrWB : SchedWriteRes<[SwiftUnitP01, SwiftUnitP01]>;
+  def SwiftWriteLM : SchedWriteVariant<[
+    SchedVar<SwiftLMAddr2Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy]>,
+    SchedVar<SwiftLMAddr3Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy]>,
+    SchedVar<SwiftLMAddr4Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy]>,
+    SchedVar<SwiftLMAddr5Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy]>,
+    SchedVar<SwiftLMAddr6Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy]>,
+    SchedVar<SwiftLMAddr7Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy]>,
+    SchedVar<SwiftLMAddr8Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy]>,
+    SchedVar<SwiftLMAddr9Pred, [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy]>,
+    SchedVar<SwiftLMAddr10Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy]>,
+    SchedVar<SwiftLMAddr11Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy]>,
+    SchedVar<SwiftLMAddr12Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy, SwiftWriteLM14Cy]>,
+    SchedVar<SwiftLMAddr13Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy, SwiftWriteLM14Cy,
+                                SwiftWriteLM15Cy]>,
+    SchedVar<SwiftLMAddr14Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy, SwiftWriteLM14Cy,
+                                SwiftWriteLM15Cy, SwiftWriteLM16Cy]>,
+    SchedVar<SwiftLMAddr15Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy, SwiftWriteLM14Cy,
+                                SwiftWriteLM15Cy, SwiftWriteLM16Cy,
+                                SwiftWriteLM17Cy]>,
+    SchedVar<SwiftLMAddr16Pred,[SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5Cy, SwiftWriteLM6Cy,
+                                SwiftWriteLM7Cy, SwiftWriteLM8Cy,
+                                SwiftWriteLM9Cy, SwiftWriteLM10Cy,
+                                SwiftWriteLM11Cy, SwiftWriteLM12Cy,
+                                SwiftWriteLM13Cy, SwiftWriteLM14Cy,
+                                SwiftWriteLM15Cy, SwiftWriteLM16Cy,
+                                SwiftWriteLM17Cy, SwiftWriteLM18Cy]>,
+    // Unknow number of registers, just use resources for two registers.
+    SchedVar<NoSchedPred,      [SwiftWriteLM3Cy, SwiftWriteLM4Cy,
+                                SwiftWriteLM5CyNo, SwiftWriteLM6CyNo,
+                                SwiftWriteLM7CyNo, SwiftWriteLM8CyNo,
+                                SwiftWriteLM9CyNo, SwiftWriteLM10CyNo,
+                                SwiftWriteLM11CyNo, SwiftWriteLM12CyNo,
+                                SwiftWriteLM13CyNo, SwiftWriteLM14CyNo,
+                                SwiftWriteLM15CyNo, SwiftWriteLM16CyNo,
+                                SwiftWriteLM17CyNo, SwiftWriteLM18CyNo]>
+
+  ]> { let Variadic=1; }
+
+  def : InstRW<[SwiftWriteLM, SwiftWriteLDMAddrNoWB],
+        (instregex "LDM(IA|DA|DB|IB)$", "t2LDM(IA|DA|DB|IB)$",
+        "(t|sys)LDM(IA|DA|DB|IB)$")>;
+  def : InstRW<[SwiftWriteLDMAddrWB, SwiftWriteLM],
+        (instregex /*"t2LDMIA_RET", "tLDMIA_RET", "LDMIA_RET",*/
+        "LDM(IA|DA|DB|IB)_UPD", "(t2|sys|t)LDM(IA|DA|DB|IB)_UPD")>;
+  def : InstRW<[SwiftWriteLDMAddrWB, SwiftWriteLM, SwiftWriteP1TwoCycle],
+        (instregex "LDMIA_RET", "(t|t2)LDMIA_RET", "POP", "tPOP")>;
+  // 4.2.23 Integer Store, Single Element
+  def : InstRW<[SwiftWriteP2],
+        (instregex "PICSTR", "STR(i12|rs)", "STRB(i12|rs)", "STRH$", "STREX",
+        "t2STR(i12|i8|s)$", "t2STR[BH](i12|i8|s)$", "tSTR[BH](i|r)", "tSTR(i|r)", "tSTRspi")>;
+
+  def : InstRW<[SwiftWriteP01OneCycle, SwiftWriteP2],
+        (instregex "STR(B_|_|BT_|T_)(PRE_IMM|PRE_REG|POST_REG|POST_IMM)",
+        "STR(i|r)_preidx", "STRB(i|r)_preidx", "STRH_preidx", "STR(H_|HT_)(PRE|POST)",
+        "STR(BT|HT|T)", "t2STR_(PRE|POST)", "t2STR[BH]_(PRE|POST)",
+        "t2STR_preidx", "t2STR[BH]_preidx", "t2ST(RB|RH|R)T")>;
+
+  // 4.2.24 Integer Store, Dual
+  def : InstRW<[SwiftWriteP2, SwiftWriteP2, SwiftWriteP01OneCycle],
+        (instregex "STRD$", "t2STRDi8")>;
+  def : InstRW<[SwiftWriteP01OneCycle, SwiftWriteP2, SwiftWriteP2,
+                SwiftWriteP01OneCycle],
+        (instregex "(t2|t)STRD_(POST|PRE)", "STRD_(POST|PRE)")>;
+
+  // 4.2.25 Integer Store, Multiple
+  def SwiftWriteStIncAddr : SchedWriteRes<[SwiftUnitP2, SwiftUnitP01]> {
+    let Latency = 0;
+  }
+  foreach NumAddr = 1-16 in {
+     def SwiftWriteSTM#NumAddr : WriteSequence<[SwiftWriteStIncAddr], NumAddr>;
+  }
+  def SwiftWriteSTM : SchedWriteVariant<[
+    SchedVar<SwiftLMAddr2Pred, [SwiftWriteSTM2]>,
+    SchedVar<SwiftLMAddr3Pred, [SwiftWriteSTM3]>,
+    SchedVar<SwiftLMAddr4Pred, [SwiftWriteSTM4]>,
+    SchedVar<SwiftLMAddr5Pred, [SwiftWriteSTM5]>,
+    SchedVar<SwiftLMAddr6Pred, [SwiftWriteSTM6]>,
+    SchedVar<SwiftLMAddr7Pred, [SwiftWriteSTM7]>,
+    SchedVar<SwiftLMAddr8Pred, [SwiftWriteSTM8]>,
+    SchedVar<SwiftLMAddr9Pred, [SwiftWriteSTM9]>,
+    SchedVar<SwiftLMAddr10Pred,[SwiftWriteSTM10]>,
+    SchedVar<SwiftLMAddr11Pred,[SwiftWriteSTM11]>,
+    SchedVar<SwiftLMAddr12Pred,[SwiftWriteSTM12]>,
+    SchedVar<SwiftLMAddr13Pred,[SwiftWriteSTM13]>,
+    SchedVar<SwiftLMAddr14Pred,[SwiftWriteSTM14]>,
+    SchedVar<SwiftLMAddr15Pred,[SwiftWriteSTM15]>,
+    SchedVar<SwiftLMAddr16Pred,[SwiftWriteSTM16]>,
+    // Unknow number of registers, just use resources for two registers.
+    SchedVar<NoSchedPred,      [SwiftWriteSTM2]>
+  ]>;
+  def : InstRW<[SwiftWriteSTM],
+        (instregex "STM(IB|IA|DB|DA)$", "(t2|sys|t)STM(IB|IA|DB|DA)$")>;
+  def : InstRW<[SwiftWriteP01OneCycle, SwiftWriteSTM],
+        (instregex "STM(IB|IA|DB|DA)_UPD", "(t2|sys|t)STM(IB|IA|DB|DA)_UPD",
+        "PUSH", "tPUSH")>;
+
   // 4.2.26 Branch
   def : WriteRes<WriteBr, [SwiftUnitP1]> { let Latency = 0; }
   def : WriteRes<WriteBrL, [SwiftUnitP1]> { let Latency = 2; }
   def : WriteRes<WriteBrTbl, [SwiftUnitP1, SwiftUnitP2]> { let Latency = 0; }
 
+  // 4.2.27 Not issued
+  def : WriteRes<WriteNoop, []> { let Latency = 0; let NumMicroOps = 0; }
+  def : InstRW<[WriteNoop], (instregex "t2IT", "IT", "NOP")>;
+
+  // 4.2.28 Advanced SIMD, Integer, 2 cycle
+  def : InstRW<[SwiftWriteP0TwoCycle],
+        (instregex "VADDv", "VSUBv", "VNEG(s|f|v)", "VADDL", "VSUBL",
+                   "VADDW", "VSUBW", "VHADD", "VHSUB", "VRHADD", "VPADDi",
+                   "VPADDL", "VAND", "VBIC", "VEOR", "VORN", "VORR", "VTST",
+                   "VSHL", "VSHR(s|u)", "VSHLL", "VQSHL", "VQSHLU", "VBIF",
+                   "VBIT", "VBSL", "VSLI", "VSRI", "VCLS", "VCLZ", "VCNT")>;
+
+  def : InstRW<[SwiftWriteP1TwoCycle],
+        (instregex "VEXT", "VREV16", "VREV32", "VREV64")>;
+
+  // 4.2.29 Advanced SIMD, Integer, 4 cycle
+  // 4.2.30 Advanced SIMD, Integer with Accumulate
+  def : InstRW<[SwiftWriteP0FourCycle],
+        (instregex "VABA", "VABAL", "VPADAL", "VRSRA", "VSRA", "VACGE", "VACGT",
+        "VACLE", "VACLT", "VCEQ", "VCGE", "VCGT", "VCLE", "VCLT", "VRSHL",
+        "VQRSHL", "VRSHR(u|s)", "VABS(f|v)", "VQABS", "VQNEG", "VQADD",
+        "VQSUB")>;
+  def : InstRW<[SwiftWriteP1FourCycle],
+        (instregex "VRECPE", "VRSQRTE")>;
+
+  // 4.2.31 Advanced SIMD, Add and Shift with Narrow
+  def : InstRW<[SwiftWriteP0P1FourCycle],
+        (instregex "VADDHN", "VSUBHN", "VSHRN")>;
+  def : InstRW<[SwiftWriteP0P1SixCycle],
+        (instregex "VRADDHN", "VRSUBHN", "VRSHRN", "VQSHRN", "VQSHRUN",
+                   "VQRSHRN", "VQRSHRUN")>;
+
+  // 4.2.32 Advanced SIMD, Vector Table Lookup
+  foreach Num = 1-4 in {
+    def SwiftWrite#Num#xP1TwoCycle : WriteSequence<[SwiftWriteP1TwoCycle], Num>;
+  }
+  def : InstRW<[SwiftWrite1xP1TwoCycle],
+        (instregex "VTB(L|X)1")>;
+  def : InstRW<[SwiftWrite2xP1TwoCycle],
+        (instregex "VTB(L|X)2")>;
+  def : InstRW<[SwiftWrite3xP1TwoCycle],
+        (instregex "VTB(L|X)3")>;
+  def : InstRW<[SwiftWrite4xP1TwoCycle],
+        (instregex "VTB(L|X)4")>;
+
+  // 4.2.33 Advanced SIMD, Transpose
+  def : InstRW<[SwiftWriteP1FourCycle, SwiftWriteP1FourCycle,
+                SwiftWriteP1TwoCycle/*RsrcOnly*/, SchedReadAdvance<2>],
+        (instregex "VSWP", "VTRN", "VUZP", "VZIP")>;
+
+  // 4.2.34 Advanced SIMD and VFP, Floating Point
+  def : InstRW<[SwiftWriteP0TwoCycle], (instregex "VABS(S|D)$", "VNEG(S|D)$")>;
+  def : InstRW<[SwiftWriteP0FourCycle],
+        (instregex "VCMP(D|S|ZD|ZS)$", "VCMPE(D|S|ZD|ZS)")>;
+  def : InstRW<[SwiftWriteP0FourCycle],
+        (instregex "VADD(S|f)", "VSUB(S|f)", "VABD", "VPADDf", "VMAX", "VMIN", "VPMAX",
+                   "VPMIN")>;
+  def : InstRW<[SwiftWriteP0SixCycle], (instregex "VADDD$", "VSUBD$")>;
+  def : InstRW<[SwiftWriteP1EightCycle], (instregex "VRECPS", "VRSQRTS")>;
+
+  // 4.2.35 Advanced SIMD and VFP, Multiply
+  def : InstRW<[SwiftWriteP1FourCycle],
+        (instregex "VMUL(S|v|p|f|s)", "VNMULS", "VQDMULH", "VQRDMULH",
+                   "VMULL", "VQDMULL")>;
+  def : InstRW<[SwiftWriteP1SixCycle],
+        (instregex "VMULD", "VNMULD")>;
+  def : InstRW<[SwiftWriteP1FourCycle],
+        (instregex "VMLA", "VMLS", "VNMLA", "VNMLS", "VFMA(S|D)", "VFMS(S|D)",
+        "VFNMA", "VFNMS", "VMLAL", "VMLSL","VQDMLAL", "VQDMLSL")>;
+  def : InstRW<[SwiftWriteP1EightCycle], (instregex "VFMAfd", "VFMSfd")>;
+  def : InstRW<[SwiftWriteP1TwelveCyc], (instregex "VFMAfq", "VFMSfq")>;
+
   // 4.2.36 Advanced SIMD and VFP, Convert
   def : InstRW<[SwiftWriteP1FourCycle], (instregex "VCVT", "V(S|U)IT", "VTO(S|U)")>;
   // Fixpoint conversions.
   def : WriteRes<WriteCvtFP, [SwiftUnitP1]> { let Latency = 4; }
+
+  // 4.2.37 Advanced SIMD and VFP, Move
+  def : InstRW<[SwiftWriteP0TwoCycle],
+        (instregex "VMOVv", "VMOV(S|D)$", "VMOV(S|D)cc",
+                   "VMVNv", "VMVN(d|q)", "VMVN(S|D)cc",
+                   "FCONST(D|S)")>;
+  def : InstRW<[SwiftWriteP1TwoCycle], (instregex "VMOVN", "VMOVL")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP0FourCycle, SwiftWriteP1TwoCycle]>],
+        (instregex "VQMOVN")>;
+  def : InstRW<[SwiftWriteP1TwoCycle], (instregex "VDUPLN", "VDUPf")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP2FourCycle, SwiftWriteP1TwoCycle]>],
+        (instregex "VDUP(8|16|32)")>;
+  def : InstRW<[SwiftWriteP2ThreeCycle], (instregex "VMOVRS$")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP2FourCycle, SwiftWriteP0TwoCycle]>],
+        (instregex "VMOVSR$", "VSETLN")>;
+  def : InstRW<[SwiftWriteP2ThreeCycle, SwiftWriteP2FourCycle],
+        (instregex "VMOVRR(D|S)$")>;
+  def : InstRW<[SwiftWriteP2FourCycle], (instregex "VMOVDRR$")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP2FourCycle, SwiftWriteP1TwoCycle]>,
+                WriteSequence<[SwiftWrite1Cycle, SwiftWriteP2FourCycle,
+                               SwiftWriteP1TwoCycle]>],
+                (instregex "VMOVSRR$")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP1TwoCycle, SwiftWriteP2ThreeCycle]>],
+        (instregex "VGETLN(u|i)")>;
+  def : InstRW<[WriteSequence<[SwiftWriteP1TwoCycle, SwiftWriteP2ThreeCycle,
+                               SwiftWriteP01OneCycle]>],
+        (instregex "VGETLNs")>;
+
+  // 4.2.38 Advanced SIMD and VFP, Move FPSCR
+  // Serializing instructions.
+  def SwiftWaitP0For15Cy : SchedWriteRes<[SwiftUnitP0]> {
+    let Latency = 15;
+    let ResourceCycles = [15];
+  }
+  def SwiftWaitP1For15Cy : SchedWriteRes<[SwiftUnitP1]> {
+    let Latency = 15;
+    let ResourceCycles = [15];
+  }
+  def SwiftWaitP2For15Cy : SchedWriteRes<[SwiftUnitP2]> {
+    let Latency = 15;
+    let ResourceCycles = [15];
+  }
+  def : InstRW<[SwiftWaitP0For15Cy, SwiftWaitP1For15Cy, SwiftWaitP2For15Cy],
+        (instregex "VMRS")>;
+  def : InstRW<[SwiftWaitP0For15Cy, SwiftWaitP1For15Cy, SwiftWaitP2For15Cy],
+        (instregex "VMSR")>;
+  // Not serializing.
+  def : InstRW<[SwiftWriteP0TwoCycle], (instregex "FMSTAT")>;
+
   // Preload.
   def : WriteRes<WritePreLd, [SwiftUnitP2]> { let Latency = 0;
     let ResourceCycles = [0];
