@@ -159,6 +159,17 @@ bool R600VectorRegMerger::tryMergeVector(const RegSeqInfo *Untouched,
   return true;
 }
 
+static
+unsigned getReassignedChan(
+    const std::vector<std::pair<unsigned, unsigned> > &RemapChan,
+    unsigned Chan) {
+  for (unsigned j = 0, je = RemapChan.size(); j < je; j++) {
+    if (RemapChan[j].first == Chan)
+      return RemapChan[j].second;
+  }
+  llvm_unreachable("Chan wasn't reassigned");
+}
+
 MachineInstr *R600VectorRegMerger::RebuildVector(
     RegSeqInfo *RSI, const RegSeqInfo *BaseRSI,
     const std::vector<std::pair<unsigned, unsigned> > &RemapChan) const {
@@ -179,24 +190,17 @@ MachineInstr *R600VectorRegMerger::RebuildVector(
     unsigned DstReg = MRI->createVirtualRegister(&AMDGPU::R600_Reg128RegClass);
     unsigned SubReg = (*It).first;
     unsigned Swizzle = (*It).second;
-    unsigned Chan = 0xDEADBEEF;
-    for (unsigned j = 0, je = RemapChan.size(); j < je; j++) {
-      if (RemapChan[j].first == Swizzle) {
-        Chan = RemapChan[j].second;
-        break;
-      }
-    }
+    unsigned Chan = getReassignedChan(RemapChan, Swizzle);
+
     MachineInstr *Tmp = BuildMI(MBB, Pos, DL, TII->get(AMDGPU::INSERT_SUBREG),
         DstReg)
         .addReg(SrcVec)
         .addReg(SubReg)
         .addImm(Chan);
     UpdatedRegToChan[SubReg] = Chan;
-    for (std::vector<unsigned>::iterator RemoveIt = UpdatedUndef.begin(),
-        RemoveE = UpdatedUndef.end(); RemoveIt != RemoveE; ++ RemoveIt) {
-      if (*RemoveIt == Chan)
-        UpdatedUndef.erase(RemoveIt);
-    }
+    UpdatedUndef.erase(
+        std::remove(UpdatedUndef.begin(), UpdatedUndef.end(), Chan),
+        UpdatedUndef.end());
     DEBUG(dbgs() << "    ->"; Tmp->dump(););
     (void)Tmp;
     SrcVec = DstReg;
