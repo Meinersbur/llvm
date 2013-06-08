@@ -239,6 +239,11 @@ def LDXri  : F3_2<3, 0b001011,
                   [(set i64:$dst, (load ADDRri:$addr))]>;
 
 // Extending loads to i64.
+def : Pat<(i64 (zextloadi1 ADDRrr:$addr)), (LDUBrr ADDRrr:$addr)>;
+def : Pat<(i64 (zextloadi1 ADDRri:$addr)), (LDUBri ADDRri:$addr)>;
+def : Pat<(i64 (extloadi1 ADDRrr:$addr)), (LDUBrr ADDRrr:$addr)>;
+def : Pat<(i64 (extloadi1 ADDRri:$addr)), (LDUBri ADDRri:$addr)>;
+
 def : Pat<(i64 (zextloadi8 ADDRrr:$addr)), (LDUBrr ADDRrr:$addr)>;
 def : Pat<(i64 (zextloadi8 ADDRri:$addr)), (LDUBri ADDRri:$addr)>;
 def : Pat<(i64 (extloadi8 ADDRrr:$addr)),  (LDUBrr ADDRrr:$addr)>;
@@ -308,7 +313,7 @@ let Predicates = [Is64Bit] in {
 
 let Uses = [ICC] in
 def BPXCC : BranchSP<0, (ins brtarget:$dst, CCOp:$cc),
-                     "bp$cc %xcc, $dst",
+                     "b$cc %xcc, $dst",
                      [(SPbrxcc bb:$dst, imm:$cc)]>;
 
 // Conditional moves on %xcc.

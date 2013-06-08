@@ -104,7 +104,7 @@ private:
 public:
   static char ID;
   R600VectorRegMerger(TargetMachine &tm) : MachineFunctionPass(ID),
-  TII (static_cast<const R600InstrInfo *>(tm.getInstrInfo())) { }
+  TII(0) { }
 
   void getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesCFG();
@@ -198,9 +198,13 @@ MachineInstr *R600VectorRegMerger::RebuildVector(
         .addReg(SubReg)
         .addImm(Chan);
     UpdatedRegToChan[SubReg] = Chan;
-    UpdatedUndef.erase(
-        std::remove(UpdatedUndef.begin(), UpdatedUndef.end(), Chan),
-        UpdatedUndef.end());
+    std::vector<unsigned>::iterator ChanPos =
+        std::find(UpdatedUndef.begin(), UpdatedUndef.end(), Chan);
+    if (ChanPos != UpdatedUndef.end())
+      UpdatedUndef.erase(ChanPos);
+    assert(std::find(UpdatedUndef.begin(), UpdatedUndef.end(), Chan) ==
+               UpdatedUndef.end() &&
+           "UpdatedUndef shouldn't contain Chan more than once!");
     DEBUG(dbgs() << "    ->"; Tmp->dump(););
     (void)Tmp;
     SrcVec = DstReg;
@@ -310,6 +314,7 @@ void R600VectorRegMerger::trackRSI(const RegSeqInfo &RSI) {
 }
 
 bool R600VectorRegMerger::runOnMachineFunction(MachineFunction &Fn) {
+  TII = static_cast<const R600InstrInfo *>(Fn.getTarget().getInstrInfo());
   MRI = &(Fn.getRegInfo());
   for (MachineFunction::iterator MBB = Fn.begin(), MBBe = Fn.end();
        MBB != MBBe; ++MBB) {
