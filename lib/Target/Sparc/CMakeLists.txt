@@ -12,7 +12,6 @@ set(LLVM_NEXT_DEPENDS intrinsics_gen)
 
 add_llvm_target(SparcCodeGen
   DelaySlotFiller.cpp
-  FPMover.cpp
   SparcAsmPrinter.cpp
   SparcInstrInfo.cpp
   SparcISelDAGToDAG.cpp
