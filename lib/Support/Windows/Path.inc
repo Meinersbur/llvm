@@ -233,74 +233,6 @@ Path::GetTemporaryDirectory(std::string* ErrMsg) {
   return *TempDirectory;
 }
 
-// FIXME: the following set of functions don't map to Windows very well.
-Path
-Path::GetRootDirectory() {
-  // This is the only notion that that Windows has of a root directory. Nothing
-  // is here except for drives.
-  return Path("file:///");
-}
-
-void
-Path::GetSystemLibraryPaths(std::vector<sys::Path>& Paths) {
-  char buff[MAX_PATH];
-  // Generic form of C:\Windows\System32
-  HRESULT res =  SHGetFolderPathA(NULL,
-                                  CSIDL_FLAG_CREATE | CSIDL_SYSTEM,
-                                  NULL,
-                                  SHGFP_TYPE_CURRENT,
-                                  buff);
-  if (res != S_OK) {
-    assert(0 && "Failed to get system directory");
-    return;
-  }
-  Paths.push_back(sys::Path(buff));
-
-  // Reset buff.
-  buff[0] = 0;
-  // Generic form of C:\Windows
-  res =  SHGetFolderPathA(NULL,
-                          CSIDL_FLAG_CREATE | CSIDL_WINDOWS,
-                          NULL,
-                          SHGFP_TYPE_CURRENT,
-                          buff);
-  if (res != S_OK) {
-    assert(0 && "Failed to get windows directory");
-    return;
-  }
-  Paths.push_back(sys::Path(buff));
-}
-
-void
-Path::GetBitcodeLibraryPaths(std::vector<sys::Path>& Paths) {
-  char * env_var = getenv("LLVM_LIB_SEARCH_PATH");
-  if (env_var != 0) {
-    getPathList(env_var,Paths);
-  }
-#ifdef LLVM_LIBDIR
-  {
-    Path tmpPath;
-    if (tmpPath.set(LLVM_LIBDIR))
-      if (tmpPath.canRead())
-        Paths.push_back(tmpPath);
-  }
-#endif
-  GetSystemLibraryPaths(Paths);
-}
-
-Path
-Path::GetUserHomeDirectory() {
-  char buff[MAX_PATH];
-  HRESULT res = SHGetFolderPathA(NULL,
-                                 CSIDL_FLAG_CREATE | CSIDL_APPDATA,
-                                 NULL,
-                                 SHGFP_TYPE_CURRENT,
-                                 buff);
-  if (res != S_OK)
-    assert(0 && "Failed to get user home directory");
-  return Path(buff);
-}
-
 Path
 Path::GetCurrentDirectory() {
   char pathname[MAX_PATH];
@@ -318,27 +250,6 @@ Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
 
 
 // FIXME: the above set of functions don't map to Windows very well.
-
-
-StringRef Path::getDirname() const {
-  return getDirnameCharSep(path, "/");
-}
-
-StringRef
-Path::getBasename() const {
-  // Find the last slash
-  size_t slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  size_t dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef(path).substr(slash);
-  else
-    return StringRef(path).substr(slash, dot - slash);
-}
 
 StringRef
 Path::getSuffix() const {
@@ -409,23 +320,6 @@ Path::isRegularFile() const {
   if (fs::is_regular_file(path, res))
     return false;
   return res;
-}
-
-StringRef
-Path::getLast() const {
-  // Find the last slash
-  size_t pos = path.rfind('/');
-
-  // Handle the corner cases
-  if (pos == std::string::npos)
-    return path;
-
-  // If the last character is a slash, we have a root directory
-  if (pos == path.length()-1)
-    return path;
-
-  // Return everything after the last slash
-  return StringRef(path).substr(pos+1);
 }
 
 const FileStatus *

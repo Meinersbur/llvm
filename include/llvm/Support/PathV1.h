@@ -92,15 +92,6 @@ namespace sys {
     /// @name Constructors
     /// @{
     public:
-      /// Construct a path to the root directory of the file system. The root
-      /// directory is a top level directory above which there are no more
-      /// directories. For example, on UNIX, the root directory is /. On Windows
-      /// it is file:///. Other operating systems may have different notions of
-      /// what the root directory is or none at all. In that case, a consistent
-      /// default root directory will be used.
-      LLVM_ATTRIBUTE_DEPRECATED(static Path GetRootDirectory(),
-        LLVM_PATH_DEPRECATED_MSG(NOTHING));
-
       /// Construct a path to a unique temporary directory that is created in
       /// a "standard" place for the operating system. The directory is
       /// guaranteed to be created on exit from this function. If the directory
@@ -110,35 +101,6 @@ namespace sys {
       /// @brief Construct a path to an new, unique, existing temporary
       /// directory.
       static Path GetTemporaryDirectory(std::string* ErrMsg = 0);
-
-      /// Construct a vector of sys::Path that contains the "standard" system
-      /// library paths suitable for linking into programs.
-      /// @brief Construct a path to the system library directory
-      static void GetSystemLibraryPaths(std::vector<sys::Path>& Paths);
-
-      /// Construct a vector of sys::Path that contains the "standard" bitcode
-      /// library paths suitable for linking into an llvm program. This function
-      /// *must* return the value of LLVM_LIB_SEARCH_PATH as well as the value
-      /// of LLVM_LIBDIR. It also must provide the System library paths as
-      /// returned by GetSystemLibraryPaths.
-      /// @see GetSystemLibraryPaths
-      /// @brief Construct a list of directories in which bitcode could be
-      /// found.
-      static void GetBitcodeLibraryPaths(std::vector<sys::Path>& Paths);
-
-      /// Find the path to a library using its short name. Use the system
-      /// dependent library paths to locate the library.
-      /// @brief Find a library.
-      static Path FindLibrary(std::string& short_name);
-
-      /// Construct a path to the current user's home directory. The
-      /// implementation must use an operating system specific mechanism for
-      /// determining the user's home directory. For example, the environment
-      /// variable "HOME" could be used on Unix. If a given operating system
-      /// does not have the concept of a user's home directory, this static
-      /// constructor must provide the same result as GetRootDirectory.
-      /// @brief Construct a path to the current user's "home" directory
-      static Path GetUserHomeDirectory();
 
       /// Construct a path to the current directory for the current process.
       /// @returns The current working directory.
@@ -150,14 +112,6 @@ namespace sys {
       /// @returns The executable file suffix for the current platform.
       /// @brief Return the executable file suffix.
       static StringRef GetEXESuffix();
-
-      /// Return the suffix commonly used on file names that contain a shared
-      /// object, shared archive, or dynamic link library. Such files are
-      /// linked at runtime into a process and their code images are shared
-      /// between processes.
-      /// @returns The dynamic link library suffix for the current platform.
-      /// @brief Return the dynamic link library suffix.
-      static StringRef GetDLLSuffix();
 
       /// GetMainExecutable - Return the path to the main executable, given the
       /// value of argv[0] from program startup and the address of main itself.
@@ -245,29 +199,6 @@ namespace sys {
       /// @returns true iff the path is empty.
       /// @brief Determines if the path name is empty (invalid).
       bool isEmpty() const { return path.empty(); }
-
-       /// This function returns the last component of the path name. The last
-      /// component is the file or directory name occurring after the last
-      /// directory separator. If no directory separator is present, the entire
-      /// path name is returned (i.e. same as toString).
-      /// @returns StringRef containing the last component of the path name.
-      /// @brief Returns the last component of the path name.
-      LLVM_ATTRIBUTE_DEPRECATED(
-        StringRef getLast() const,
-        LLVM_PATH_DEPRECATED_MSG(path::filename));
-
-      /// This function strips off the path and suffix of the file or directory
-      /// name and returns just the basename. For example /a/foo.bar would cause
-      /// this function to return "foo".
-      /// @returns StringRef containing the basename of the path
-      /// @brief Get the base name of the path
-      LLVM_ATTRIBUTE_DEPRECATED(StringRef getBasename() const,
-        LLVM_PATH_DEPRECATED_MSG(path::stem));
-
-      /// This function strips off the suffix of the path beginning with the
-      /// path separator ('/' on Unix, '\' on Windows) and returns the result.
-      LLVM_ATTRIBUTE_DEPRECATED(StringRef getDirname() const,
-        LLVM_PATH_DEPRECATED_MSG(path::parent_path));
 
       /// This function strips off the path and basename(up to and
       /// including the last dot) of the file or directory name and
@@ -700,32 +631,6 @@ namespace sys {
 
     /// @}
   };
-
-  /// This enumeration delineates the kinds of files that LLVM knows about.
-  enum LLVMFileType {
-    Unknown_FileType = 0,              ///< Unrecognized file
-    Bitcode_FileType,                  ///< Bitcode file
-    Archive_FileType,                  ///< ar style archive file
-    ELF_Relocatable_FileType,          ///< ELF Relocatable object file
-    ELF_Executable_FileType,           ///< ELF Executable image
-    ELF_SharedObject_FileType,         ///< ELF dynamically linked shared lib
-    ELF_Core_FileType,                 ///< ELF core image
-    Mach_O_Object_FileType,            ///< Mach-O Object file
-    Mach_O_Executable_FileType,        ///< Mach-O Executable
-    Mach_O_FixedVirtualMemorySharedLib_FileType, ///< Mach-O Shared Lib, FVM
-    Mach_O_Core_FileType,              ///< Mach-O Core File
-    Mach_O_PreloadExecutable_FileType, ///< Mach-O Preloaded Executable
-    Mach_O_DynamicallyLinkedSharedLib_FileType, ///< Mach-O dynlinked shared lib
-    Mach_O_DynamicLinker_FileType,     ///< The Mach-O dynamic linker
-    Mach_O_Bundle_FileType,            ///< Mach-O Bundle file
-    Mach_O_DynamicallyLinkedSharedLibStub_FileType, ///< Mach-O Shared lib stub
-    Mach_O_DSYMCompanion_FileType,     ///< Mach-O dSYM companion file
-    COFF_FileType                      ///< COFF object file or lib
-  };
-
-  /// This utility function allows any memory block to be examined in order
-  /// to determine its file type.
-  LLVMFileType identifyFileType(StringRef Magic);
 
   /// This function can be used to copy the file specified by Src to the
   /// file specified by Dest. If an error occurs, Dest is removed.

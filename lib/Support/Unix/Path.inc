@@ -125,13 +125,6 @@ Path::isAbsolute() const {
 }
 
 Path
-Path::GetRootDirectory() {
-  Path result;
-  result.set("/");
-  return result;
-}
-
-Path
 Path::GetTemporaryDirectory(std::string *ErrMsg) {
 #if defined(HAVE_MKDTEMP)
   // The best way is with mkdtemp but that's not available on many systems,
@@ -205,48 +198,6 @@ Path::GetTemporaryDirectory(std::string *ErrMsg) {
   }
   return Path(pathname);
 #endif
-}
-
-void
-Path::GetSystemLibraryPaths(std::vector<sys::Path>& Paths) {
-#ifdef LTDL_SHLIBPATH_VAR
-  char* env_var = getenv(LTDL_SHLIBPATH_VAR);
-  if (env_var != 0) {
-    getPathList(env_var,Paths);
-  }
-#endif
-  // FIXME: Should this look at LD_LIBRARY_PATH too?
-  Paths.push_back(sys::Path("/usr/local/lib/"));
-  Paths.push_back(sys::Path("/usr/X11R6/lib/"));
-  Paths.push_back(sys::Path("/usr/lib/"));
-  Paths.push_back(sys::Path("/lib/"));
-}
-
-void
-Path::GetBitcodeLibraryPaths(std::vector<sys::Path>& Paths) {
-  char * env_var = getenv("LLVM_LIB_SEARCH_PATH");
-  if (env_var != 0) {
-    getPathList(env_var,Paths);
-  }
-#ifdef LLVM_LIBDIR
-  {
-    Path tmpPath;
-    if (tmpPath.set(LLVM_LIBDIR))
-      if (tmpPath.canRead())
-        Paths.push_back(tmpPath);
-  }
-#endif
-  GetSystemLibraryPaths(Paths);
-}
-
-Path
-Path::GetUserHomeDirectory() {
-  const char* home = getenv("HOME");
-  Path result;
-  if (home && result.set(home))
-    return result;
-  result.set("/");
-  return result;
 }
 
 Path
@@ -368,26 +319,6 @@ Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
 }
 
 
-StringRef Path::getDirname() const {
-  return getDirnameCharSep(path, "/");
-}
-
-StringRef
-Path::getBasename() const {
-  // Find the last slash
-  std::string::size_type slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  std::string::size_type dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef(path).substr(slash);
-  else
-    return StringRef(path).substr(slash, dot - slash);
-}
-
 StringRef
 Path::getSuffix() const {
   // Find the last slash
@@ -474,28 +405,6 @@ Path::canExecute() const {
   if (!S_ISREG(buf.st_mode))
     return false;
   return true;
-}
-
-StringRef
-Path::getLast() const {
-  // Find the last slash
-  size_t pos = path.rfind('/');
-
-  // Handle the corner cases
-  if (pos == std::string::npos)
-    return path;
-
-  // If the last character is a slash
-  if (pos == path.length()-1) {
-    // Find the second to last slash
-    size_t pos2 = path.rfind('/', pos-1);
-    if (pos2 == std::string::npos)
-      return StringRef(path).substr(0,pos);
-    else
-      return StringRef(path).substr(pos2+1,pos-pos2-1);
-  }
-  // Return everything after the last slash
-  return StringRef(path).substr(pos+1);
 }
 
 const FileStatus *
