@@ -123,12 +123,13 @@ private:
   AnalysisResolver() LLVM_DELETED_FUNCTION;
 
 public:
+  virtual ~AnalysisResolver() {}
   explicit AnalysisResolver(PMDataManager &P) : PM(P) { }
   
   inline PMDataManager &getPMDataManager() { return PM; }
 
   // Find pass that is implementing PI.
-  Pass *findImplPass(AnalysisID PI) {
+  virtual Pass *findImplPass(AnalysisID PI) {
     Pass *ResultPass = 0;
     for (unsigned i = 0; i < AnalysisImpls.size() ; ++i) {
       if (AnalysisImpls[i].first == PI) {
@@ -140,7 +141,7 @@ public:
   }
 
   // Find pass that is implementing PI. Initialize pass for Function F.
-  Pass *findImplPass(Pass *P, AnalysisID PI, Function &F);
+  virtual Pass *findImplPass(Pass *P, AnalysisID PI, Function &F);
 
   void addAnalysisImplsPair(AnalysisID PI, Pass *P) {
     if (findImplPass(PI) == P)
@@ -156,7 +157,7 @@ public:
   }
 
   // getAnalysisIfAvailable - Return analysis result or null if it doesn't exist
-  Pass *getAnalysisIfAvailable(AnalysisID ID, bool Direction) const;
+  virtual Pass *getAnalysisIfAvailable(AnalysisID ID, bool Direction) const;
 
 private:
   // AnalysisImpls - This keeps track of which passes implements the interfaces

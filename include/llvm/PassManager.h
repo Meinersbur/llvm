@@ -40,6 +40,13 @@ public:
   /// will be destroyed as well, so there is no need to delete the pass.  This
   /// implies that all passes MUST be allocated with 'new'.
   virtual void add(Pass *P) = 0;
+#ifdef MOLLY
+  //FIXME: This is an extremely ugly hack to force other passes to preserve passes they don't know about (here e.g.: polly::IndependentBlocks preserving molly::FieldDetection)
+  //virtual void add(Pass *P, bool preserve/* = false*/) = 0;
+  //virtual void unpreserve(Pass*) = 0;
+  //template<typename T>
+  //void unpreserve() { unpreserve(&T::ID); }
+#endif
 };
 
 /// PassManager manages ModulePassManagers
@@ -63,6 +70,11 @@ private:
   /// PassManagerImpl_New is the actual class. PassManager is just the
   /// wraper to publish simple pass manager interface
   PassManagerImpl *PM;
+
+#ifdef MOLLY
+  void add(Pass *P, bool preserve/* = false*/);
+  void unpreserve(Pass*);
+#endif
 };
 
 /// FunctionPassManager manages FunctionPasses and BasicBlockPassManagers.
@@ -97,6 +109,12 @@ public:
 private:
   FunctionPassManagerImpl *FPM;
   Module *M;
+
+#ifdef MOLLY
+public:
+  void add(Pass *P, bool preserve/* = false*/) { assert(!preserve && "Not yet supported for FPM"); add(P); }
+  //void unpreserve(Pass*) { }
+#endif
 };
 
 // Create wrappers for C Binding types (see CBindingWrapping.h).

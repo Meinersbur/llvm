@@ -4,6 +4,9 @@ include(LLVM-Config)
 
 option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables MSVC to link dynamically)" OFF)
 
+if (LLVM_EXTERNAL_MOLLY_BUILD)
+  add_definitions("-DMOLLY")
+endif ()
 
 macro(new_llvm_target name)
   parse_arguments(PARM "LINK_LIBS;LINK_LIBS2;LINK_COMPONENTS;TARGET_DEPENDS;EXTERNAL_LIBS;EXTERNAL_LIBS2;SOURCES;SOURCES2" "EXCLUDE_FROM_ALL;MODULE;SHARED;STATIC;EXE" ${ARGN})

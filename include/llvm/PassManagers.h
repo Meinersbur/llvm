@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Pass.h"
 #include <map>
 #include <vector>
@@ -251,6 +252,14 @@ private:
   SmallVector<ImmutablePass *, 8> ImmutablePasses;
 
   DenseMap<Pass *, AnalysisUsage *> AnUsageMap;
+
+#ifdef MOLLY
+protected:
+  DenseSet<Pass*> passesToPreserve;
+
+public:
+  bool forcePreservePass(Pass *pass) { return passesToPreserve.find(pass)!=passesToPreserve.end(); }
+#endif
 };
 
 

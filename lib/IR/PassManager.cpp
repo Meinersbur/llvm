@@ -25,6 +25,7 @@
 #include "llvm/Support/PassNameParser.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/DenseSet.h"
 #include <algorithm>
 #include <map>
 using namespace llvm;
@@ -395,6 +396,19 @@ public:
   void add(Pass *P) {
     schedulePass(P);
   }
+
+#ifdef MOLLY
+public:
+  void add(Pass *P, bool preserve/* = false*/) {
+    add(P);
+    if (preserve) {
+      passesToPreserve.insert(P);
+    }
+  }
+  void unpreserve(Pass *pass) {
+    passesToPreserve.erase(pass);
+  }
+#endif
 
   /// createPrinterPass - Get a module printer pass.
   Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const {
@@ -880,6 +894,12 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
     if (Info->second->getAsImmutablePass() == 0 &&
         std::find(PreservedSet.begin(), PreservedSet.end(), Info->first) ==
         PreservedSet.end()) {
+#if MOLLY
+      if (TPM->forcePreservePass(Info->second)) {
+        DEBUG(llvm::dbgs() << " -- Pass '" << Info->second->getPassName() << "' not preserved by '" << P->getPassName() << "', but it's in the preserve list\n");
+        continue;
+      }
+#endif
       // Remove this analysis
       if (PassDebugging >= Details) {
         Pass *S = Info->second;
@@ -904,6 +924,13 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
       if (Info->second->getAsImmutablePass() == 0 &&
           std::find(PreservedSet.begin(), PreservedSet.end(), Info->first) ==
              PreservedSet.end()) {
+#if MOLLY
+        if (TPM->forcePreservePass(Info->second)) {
+          DEBUG(llvm::dbgs() << " -- Inherited pass '" << Info->second->getPassName() << "' not preserved by '" << P->getPassName() << "', but it's in the preserve list\n");
+          continue;
+        }
+#endif
+
         // Remove this analysis
         if (PassDebugging >= Details) {
           Pass *S = Info->second;
@@ -1731,6 +1758,16 @@ PassManager::~PassManager() {
 void PassManager::add(Pass *P) {
   PM->add(P);
 }
+
+#ifdef MOLLY
+void PassManager::add(Pass *P, bool preserve/* = false*/) {
+  PM->add(P, preserve);
+}
+
+void PassManager::unpreserve(Pass *pass) {
+  PM->unpreserve(pass);
+}
+#endif
 
 /// run - Execute all of the passes scheduled for execution.  Keep track of
 /// whether any of the passes modifies the module, and if so, return true.
