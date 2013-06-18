@@ -44,6 +44,8 @@ namespace {
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();
     }
+
+    const char *getPassName() const LLVM_OVERRIDE { return "PrintModulePass"; }
   };
   
   class PrintFunctionPass : public FunctionPass {
@@ -72,6 +74,8 @@ namespace {
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();
     }
+
+    const char *getPassName() const LLVM_OVERRIDE { return "PrintFunctionPass"; }
   };
   
   class PrintBasicBlockPass : public BasicBlockPass {
@@ -97,6 +101,8 @@ namespace {
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();
     }
+
+    const char *getPassName() const LLVM_OVERRIDE { return "PrintBasicBlockPass"; }
   };
 }
 
