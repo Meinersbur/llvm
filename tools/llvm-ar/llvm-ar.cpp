@@ -100,7 +100,6 @@ bool FullPath = false;           ///< 'P' modifier
 bool SymTable = true;            ///< 's' & 'S' modifiers
 bool OnlyUpdate = false;         ///< 'u' modifier
 bool Verbose = false;            ///< 'v' modifier
-bool ReallyVerbose = false;      ///< 'V' modifier
 
 // Relative Positional Argument (for insert/move). This variable holds
 // the name of the archive member to which the 'a', 'b' or 'i' modifier
@@ -217,12 +216,11 @@ ArchiveOperation parseCommandLine() {
     case 'k': DontSkipBitcode = true; break;
     case 'l': /* accepted but unused */ break;
     case 'o': OriginalDates = true; break;
+    case 's': break; // Ignore for now.
+    case 'S': break; // Ignore for now.
     case 'P': FullPath = true; break;
-    case 's': SymTable = true; break;
-    case 'S': SymTable = false; break;
     case 'u': OnlyUpdate = true; break;
     case 'v': Verbose = true; break;
-    case 'V': Verbose = ReallyVerbose = true; break;
     case 'a':
       getRelPos();
       AddAfter = true;
@@ -286,38 +284,21 @@ ArchiveOperation parseCommandLine() {
 // the operations that add/replace files to the archive ('q' and 'r')
 bool buildPaths(bool checkExistence, std::string* ErrMsg) {
   for (unsigned i = 0; i < Members.size(); i++) {
-    sys::Path aPath;
-    if (!aPath.set(Members[i]))
-      fail(std::string("File member name invalid: ") + Members[i]);
+    std::string aPath = Members[i];
     if (checkExistence) {
-      bool Exists;
-      if (sys::fs::exists(aPath.str(), Exists) || !Exists)
-        fail(std::string("File does not exist: ") + Members[i]);
-      std::string Err;
-      sys::PathWithStatus PwS(aPath);
-      const sys::FileStatus *si = PwS.getFileStatus(false, &Err);
-      if (!si)
-        fail(Err);
-      if (si->isDir)
-        fail(aPath.str() + " Is a directory");
+      bool IsDirectory;
+      error_code EC = sys::fs::is_directory(aPath, IsDirectory);
+      if (EC)
+        fail(aPath + ": " + EC.message());
+      if (IsDirectory)
+        fail(aPath + " Is a directory");
 
-      Paths.insert(aPath.str());
+      Paths.insert(aPath);
     } else {
-      Paths.insert(aPath.str());
+      Paths.insert(aPath);
     }
   }
   return false;
-}
-
-// printSymbolTable - print out the archive's symbol table.
-void printSymbolTable() {
-  outs() << "\nArchive Symbol Table:\n";
-  const Archive::SymTabType& symtab = TheArchive->getSymbolTable();
-  for (Archive::SymTabType::const_iterator I=symtab.begin(), E=symtab.end();
-       I != E; ++I ) {
-    unsigned offset = TheArchive->getFirstFileOffset() + I->second;
-    outs() << " " << format("%9u", offset) << "\t" << I->first <<"\n";
-  }
 }
 
 // doPrint - Implements the 'p' operation. This function traverses the archive
@@ -404,8 +385,6 @@ doDisplayTable(std::string* ErrMsg) {
       }
     }
   }
-  if (ReallyVerbose)
-    printSymbolTable();
   return false;
 }
 
@@ -484,10 +463,8 @@ doDelete(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(SymTable,TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
     return true;
-  if (ReallyVerbose)
-    printSymbolTable();
   return false;
 }
 
@@ -539,10 +516,8 @@ doMove(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(SymTable,TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
     return true;
-  if (ReallyVerbose)
-    printSymbolTable();
   return false;
 }
 
@@ -564,10 +539,8 @@ doQuickAppend(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(SymTable,TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
     return true;
-  if (ReallyVerbose)
-    printSymbolTable();
   return false;
 }
 
@@ -662,10 +635,8 @@ doReplaceOrInsert(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(SymTable,TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
     return true;
-  if (ReallyVerbose)
-    printSymbolTable();
   return false;
 }
 

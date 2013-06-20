@@ -301,20 +301,6 @@ class Archive {
     /// @brief Get the iplist of the members
     MembersList& getMembers() { return members; }
 
-    /// This method allows direct query of the Archive's symbol table. The
-    /// symbol table is a std::map of std::string (the symbol) to unsigned (the
-    /// file offset). Note that for efficiency reasons, the offset stored in
-    /// the symbol table is not the actual offset. It is the offset from the
-    /// beginning of the first "real" file member (after the symbol table). Use
-    /// the getFirstFileOffset() to obtain that offset and add this value to the
-    /// offset in the symbol table to obtain the real file offset. Note that
-    /// there is purposefully no interface provided by Archive to look up
-    /// members by their offset. Use the findModulesDefiningSymbols and
-    /// findModuleDefiningSymbol methods instead.
-    /// @returns the Archive's symbol table.
-    /// @brief Get the archive's symbol table
-    const SymTabType& getSymbolTable() { return symTab; }
-
     /// This method returns the offset in the archive file to the first "real"
     /// file member. Archive files, on disk, have a signature and might have a
     /// symbol table that precedes the first actual file member. This method
@@ -322,55 +308,6 @@ class Archive {
     /// @returns the offset to the first "real" file member  in the archive.
     /// @brief Get the offset to the first "real" file member  in the archive.
     unsigned getFirstFileOffset() { return firstFileOffset; }
-
-    /// This method will scan the archive for bitcode modules, interpret them
-    /// and return a vector of the instantiated modules in \p Modules. If an
-    /// error occurs, this method will return true. If \p ErrMessage is not null
-    /// and an error occurs, \p *ErrMessage will be set to a string explaining
-    /// the error that occurred.
-    /// @returns true if an error occurred
-    /// @brief Instantiate all the bitcode modules located in the archive
-    bool getAllModules(std::vector<Module*>& Modules, std::string* ErrMessage);
-
-    /// This accessor looks up the \p symbol in the archive's symbol table and
-    /// returns the associated module that defines that symbol. This method can
-    /// be called as many times as necessary. This is handy for linking the
-    /// archive into another module based on unresolved symbols. Note that the
-    /// Module returned by this accessor should not be deleted by the caller. It
-    /// is managed internally by the Archive class. It is possible that multiple
-    /// calls to this accessor will return the same Module instance because the
-    /// associated module defines multiple symbols.
-    /// @returns The Module* found or null if the archive does not contain a
-    /// module that defines the \p symbol.
-    /// @brief Look up a module by symbol name.
-    Module* findModuleDefiningSymbol(
-      const std::string& symbol,  ///< Symbol to be sought
-      std::string* ErrMessage     ///< Error message storage, if non-zero
-    );
-
-    /// This method is similar to findModuleDefiningSymbol but allows lookup of
-    /// more than one symbol at a time. If \p symbols contains a list of
-    /// undefined symbols in some module, then calling this method is like
-    /// making one complete pass through the archive to resolve symbols but is
-    /// more efficient than looking at the individual members. Note that on
-    /// exit, the symbols resolved by this method will be removed from \p
-    /// symbols to ensure they are not re-searched on a subsequent call. If
-    /// you need to retain the list of symbols, make a copy.
-    /// @brief Look up multiple symbols in the archive.
-    bool findModulesDefiningSymbols(
-      std::set<std::string>& symbols,     ///< Symbols to be sought
-      SmallVectorImpl<Module*>& modules,  ///< The modules matching \p symbols
-      std::string* ErrMessage             ///< Error msg storage, if non-zero
-    );
-
-    /// This method determines whether the archive is a properly formed llvm
-    /// bitcode archive.  It first makes sure the symbol table has been loaded
-    /// and has a non-zero size.  If it does, then it is an archive.  If not,
-    /// then it tries to load all the bitcode modules of the archive.  Finally,
-    /// it returns whether it was successful.
-    /// @returns true if the archive is a proper llvm bitcode archive
-    /// @brief Determine whether the archive is a proper llvm bitcode archive.
-    bool isBitcodeArchive();
 
   /// @}
   /// @name Mutators
@@ -390,7 +327,6 @@ class Archive {
     /// returns false if the writing succeeded.
     /// @brief Write (possibly modified) archive contents to disk
     bool writeToDisk(
-      bool CreateSymbolTable=false,   ///< Create Symbol table
       bool TruncateNames=false,       ///< Truncate the filename to 15 chars
       std::string* ErrMessage=0       ///< If non-null, where error msg is set
     );
@@ -445,7 +381,6 @@ class Archive {
     bool writeMember(
       const ArchiveMember& member, ///< The member to be written
       std::ofstream& ARFile,       ///< The file to write member onto
-      bool CreateSymbolTable,      ///< Should symbol table be created?
       bool TruncateNames,          ///< Should names be truncated to 11 chars?
       std::string* ErrMessage      ///< If non-null, place were error msg is set
     );
@@ -476,12 +411,9 @@ class Archive {
     MembersList members;      ///< The ilist of ArchiveMember
     MemoryBuffer *mapfile;    ///< Raw Archive contents mapped into memory
     const char* base;         ///< Base of the memory mapped file data
-    SymTabType symTab;        ///< The symbol table
     std::string strtab;       ///< The string table for long file names
-    unsigned symTabSize;      ///< Size in bytes of symbol table
     unsigned firstFileOffset; ///< Offset to first normal file.
     ModuleMap modules;        ///< The modules loaded via symbol lookup.
-    ArchiveMember* foreignST; ///< This holds the foreign symbol table.
     LLVMContext& Context;     ///< This holds global data.
   /// @}
   /// @name Hidden
