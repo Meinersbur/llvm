@@ -17,7 +17,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/TimeValue.h"
-#include <set>
 #include <string>
 #include <vector>
 
@@ -45,19 +44,17 @@ namespace sys {
     uint32_t    mode;       ///< Mode of the file, if applicable
     uint32_t    user;       ///< User ID of owner, if applicable
     uint32_t    group;      ///< Group ID of owner, if applicable
-    uint64_t    uniqueID;   ///< A number to uniquely ID this file
     bool        isDir  : 1; ///< True if this is a directory.
     bool        isFile : 1; ///< True if this is a file.
 
     FileStatus() : fileSize(0), modTime(0,0), mode(0777), user(999),
-                   group(999), uniqueID(0), isDir(false), isFile(false) { }
+                   group(999), isDir(false), isFile(false) { }
 
     TimeValue getTimestamp() const { return modTime; }
     uint64_t getSize() const { return fileSize; }
     uint32_t getMode() const { return mode; }
     uint32_t getUser() const { return user; }
     uint32_t getGroup() const { return group; }
-    uint64_t getUniqueID() const { return uniqueID; }
   };
 
   /// This class provides an abstraction for the path to a file or directory
@@ -200,14 +197,7 @@ namespace sys {
       /// @brief Determines if the path name is empty (invalid).
       bool isEmpty() const { return path.empty(); }
 
-      /// This function strips off the path and basename(up to and
-      /// including the last dot) of the file or directory name and
-      /// returns just the suffix. For example /a/foo.bar would cause
-      /// this function to return "bar".
-      /// @returns StringRef containing the suffix of the path
-      /// @brief Get the suffix of the path
-      LLVM_ATTRIBUTE_DEPRECATED(StringRef getSuffix() const,
-        LLVM_PATH_DEPRECATED_MSG(path::extension));
+
 
       /// Obtain a 'C' string for the path name.
       /// @returns a 'C' string containing the path name.
@@ -226,50 +216,12 @@ namespace sys {
     /// @name Disk Accessors
     /// @{
     public:
-      /// This function determines if the path name is absolute, as opposed to
-      /// relative.
-      /// @brief Determine if the path is absolute.
-      LLVM_ATTRIBUTE_DEPRECATED(
-        bool isAbsolute() const,
-        LLVM_PATH_DEPRECATED_MSG(path::is_absolute));
-
-      /// This function determines if the path name is absolute, as opposed to
-      /// relative.
-      /// @brief Determine if the path is absolute.
-      LLVM_ATTRIBUTE_DEPRECATED(
-        static bool isAbsolute(const char *NameStart, unsigned NameLen),
-        LLVM_PATH_DEPRECATED_MSG(path::is_absolute));
-
-      /// This function opens the file associated with the path name provided by
-      /// the Path object and reads its magic number. If the magic number at the
-      /// start of the file matches \p magic, true is returned. In all other
-      /// cases (file not found, file not accessible, etc.) it returns false.
-      /// @returns true if the magic number of the file matches \p magic.
-      /// @brief Determine if file has a specific magic number
-      LLVM_ATTRIBUTE_DEPRECATED(bool hasMagicNumber(StringRef magic) const,
-        LLVM_PATH_DEPRECATED_MSG(fs::has_magic));
-
-      /// This function retrieves the first \p len bytes of the file associated
-      /// with \p this. These bytes are returned as the "magic number" in the
-      /// \p Magic parameter.
-      /// @returns true if the Path is a file and the magic number is retrieved,
-      /// false otherwise.
-      /// @brief Get the file's magic number.
-      bool getMagicNumber(std::string& Magic, unsigned len) const;
-
       /// This function determines if the path name in the object references an
       /// archive file by looking at its magic number.
       /// @returns true if the file starts with the magic number for an archive
       /// file.
       /// @brief Determine if the path references an archive file.
       bool isArchive() const;
-
-      /// This function determines if the path name in the object references an
-      /// LLVM Bitcode file by looking at its magic number.
-      /// @returns true if the file starts with the magic number for LLVM
-      /// bitcode files.
-      /// @brief Determine if the path references a bitcode file.
-      bool isBitcodeFile() const;
 
       /// This function determines if the path name in the object references a
       /// native Dynamic Library (shared library, shared object) by looking at
@@ -279,17 +231,6 @@ namespace sys {
       /// shared library.
       /// @brief Determine if the path references a dynamic library.
       bool isDynamicLibrary() const;
-
-      /// This function determines if the path name in the object references a
-      /// native object file by looking at it's magic number. The term object
-      /// file is defined as "an organized collection of separate, named
-      /// sequences of binary data." This covers the obvious file formats such
-      /// as COFF and ELF, but it also includes llvm ir bitcode, archives,
-      /// libraries, etc...
-      /// @returns true if the file starts with the magic number for an object
-      /// file.
-      /// @brief Determine if the path references an object file.
-      bool isObjectFile() const;
 
       /// This function determines if the path name references an existing file
       /// or directory in the file system.
@@ -314,47 +255,12 @@ namespace sys {
       LLVM_ATTRIBUTE_DEPRECATED(bool isSymLink() const,
         LLVM_PATH_DEPRECATED_MSG(fs::is_symlink));
 
-      /// This function determines if the path name references a readable file
-      /// or directory in the file system. This function checks for
-      /// the existence and readability (by the current program) of the file
-      /// or directory.
-      /// @returns true if the pathname references a readable file.
-      /// @brief Determines if the path is a readable file or directory
-      /// in the file system.
-      bool canRead() const;
-
-      /// This function determines if the path name references a writable file
-      /// or directory in the file system. This function checks for the
-      /// existence and writability (by the current program) of the file or
-      /// directory.
-      /// @returns true if the pathname references a writable file.
-      /// @brief Determines if the path is a writable file or directory
-      /// in the file system.
-      bool canWrite() const;
-
       /// This function checks that what we're trying to work only on a regular
       /// file. Check for things like /dev/null, any block special file, or
       /// other things that aren't "regular" regular files.
       /// @returns true if the file is S_ISREG.
       /// @brief Determines if the file is a regular file
       bool isRegularFile() const;
-
-      /// This function determines if the path name references an executable
-      /// file in the file system. This function checks for the existence and
-      /// executability (by the current program) of the file.
-      /// @returns true if the pathname references an executable file.
-      /// @brief Determines if the path is an executable file in the file
-      /// system.
-      bool canExecute() const;
-
-      /// This function builds a list of paths that are the names of the
-      /// files and directories in a directory.
-      /// @returns true if an error occurs, true otherwise
-      /// @brief Build a list of directory's contents.
-      bool getDirectoryContents(
-        std::set<Path> &paths, ///< The resulting list of file & directory names
-        std::string* ErrMsg    ///< Optional place to return an error message.
-      ) const;
 
     /// @}
     /// @name Path Mutators
@@ -434,12 +340,6 @@ namespace sys {
       /// @brief Make the file writable;
       bool makeWriteableOnDisk(std::string* ErrMsg = 0);
 
-      /// This method attempts to make the file referenced by the Path object
-      /// available for execution so that the canExecute() method will return
-      /// true.
-      /// @brief Make the file readable;
-      bool makeExecutableOnDisk(std::string* ErrMsg = 0);
-
       /// This method allows the last modified time stamp and permission bits
       /// to be set on the disk object referenced by the Path.
       /// @throws std::string if an error occurs.
@@ -461,17 +361,6 @@ namespace sys {
         bool create_parents = false, ///<  Determines whether non-existent
            ///< directory components other than the last one (the "parents")
            ///< are created or not.
-        std::string* ErrMsg = 0 ///< Optional place to put error messages.
-      );
-
-      /// This method attempts to create a file in the file system with the same
-      /// name as the Path object. The intermediate directories must all exist
-      /// at the time this method is called. Use createDirectoriesOnDisk to
-      /// accomplish that. The created file will be empty upon return from this
-      /// function.
-      /// @returns true if the file could not be created, false otherwise.
-      /// @brief Create the file this Path refers to.
-      bool createFileOnDisk(
         std::string* ErrMsg = 0 ///< Optional place to put error messages.
       );
 
@@ -511,29 +400,6 @@ namespace sys {
       /// @brief Removes the file or directory from the filesystem.
       bool eraseFromDisk(bool destroy_contents = false,
                          std::string *Err = 0) const;
-
-
-      /// MapInFilePages - This is a low level system API to map in the file
-      /// that is currently opened as FD into the current processes' address
-      /// space for read only access.  This function may return null on failure
-      /// or if the system cannot provide the following constraints:
-      ///  1) The pages must be valid after the FD is closed, until
-      ///     UnMapFilePages is called.
-      ///  2) Any padding after the end of the file must be zero filled, if
-      ///     present.
-      ///  3) The pages must be contiguous.
-      ///
-      /// This API is not intended for general use, clients should use
-      /// MemoryBuffer::getFile instead.
-      static const char *MapInFilePages(int FD, size_t FileSize,
-                                        off_t Offset);
-
-      /// UnMapFilePages - Free pages mapped into the current process by
-      /// MapInFilePages.
-      ///
-      /// This API is not intended for general use, clients should use
-      /// MemoryBuffer::getFile instead.
-      static void UnMapFilePages(const char *Base, size_t FileSize);
 
     /// @}
     /// @name Data
@@ -631,12 +497,6 @@ namespace sys {
 
     /// @}
   };
-
-  /// This function can be used to copy the file specified by Src to the
-  /// file specified by Dest. If an error occurs, Dest is removed.
-  /// @returns true if an error occurs, false otherwise
-  /// @brief Copy one file to another.
-  bool CopyFile(const Path& Dest, const Path& Src, std::string* ErrMsg);
 
   /// This is the OS-specific path separator: a colon on Unix or a semicolon
   /// on Windows.

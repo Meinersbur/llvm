@@ -21,7 +21,6 @@
 #include <malloc.h>
 
 // We need to undo a macro defined in Windows.h, otherwise we won't compile:
-#undef CopyFile
 #undef GetCurrentDirectory
 
 // Windows happily accepts either forward or backward slashes, though any path
@@ -151,39 +150,6 @@ void Path::makeAbsolute() {
   }
 }
 
-bool
-Path::isAbsolute(const char *NameStart, unsigned NameLen) {
-  assert(NameStart);
-  // FIXME: This does not handle correctly an absolute path starting from
-  // a drive letter or in UNC format.
-  switch (NameLen) {
-  case 0:
-    return false;
-  case 1:
-  case 2:
-    return NameStart[0] == '/';
-  default:
-    return
-      (NameStart[0] == '/' || (NameStart[1] == ':' && NameStart[2] == '/')) ||
-      (NameStart[0] == '\\' || (NameStart[1] == ':' && NameStart[2] == '\\'));
-  }
-}
-
-bool
-Path::isAbsolute() const {
-  // FIXME: This does not handle correctly an absolute path starting from
-  // a drive letter or in UNC format.
-  switch (path.length()) {
-    case 0:
-      return false;
-    case 1:
-    case 2:
-      return path[0] == '/';
-    default:
-      return path[0] == '/' || (path[1] == ':' && path[2] == '/');
-  }
-}
-
 static Path *TempDirectory;
 
 Path
@@ -251,22 +217,6 @@ Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
 
 // FIXME: the above set of functions don't map to Windows very well.
 
-StringRef
-Path::getSuffix() const {
-  // Find the last slash
-  size_t slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  size_t dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef("");
-  else
-    return StringRef(path).substr(dot + 1);
-}
-
 bool
 Path::exists() const {
   DWORD attr = GetFileAttributes(path.c_str());
@@ -294,27 +244,6 @@ Path::isSymLink() const {
 }
 
 bool
-Path::canRead() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return attr != INVALID_FILE_ATTRIBUTES;
-}
-
-bool
-Path::canWrite() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_READONLY);
-}
-
-bool
-Path::canExecute() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return attr != INVALID_FILE_ATTRIBUTES;
-}
-
-bool
 Path::isRegularFile() const {
   bool res;
   if (fs::is_regular_file(path, res))
@@ -339,13 +268,6 @@ PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
     status.mode = fi.dwFileAttributes & FILE_ATTRIBUTE_READONLY ? 0555 : 0777;
     status.user = 9999;    // Not applicable to Windows, so...
     status.group = 9999;   // Not applicable to Windows, so...
-
-    // FIXME: this is only unique if the file is accessed by the same file path.
-    // How do we do this for C:\dir\file and ..\dir\file ? Unix has inode
-    // numbers, but the concept doesn't exist in Windows.
-    status.uniqueID = 0;
-    for (unsigned i = 0; i < path.length(); ++i)
-      status.uniqueID += path[i];
 
     ULARGE_INTEGER ui;
     ui.LowPart = fi.ftLastWriteTime.dwLowDateTime;
@@ -375,59 +297,6 @@ bool Path::makeWriteableOnDisk(std::string* ErrMsg) {
       MakeErrMsg(ErrMsg, std::string(path) + ": Can't make file writable: ");
       return true;
     }
-  }
-  return false;
-}
-
-bool Path::makeExecutableOnDisk(std::string* ErrMsg) {
-  // All files are executable on Windows (ignoring security attributes).
-  return false;
-}
-
-bool
-Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
-  WIN32_FILE_ATTRIBUTE_DATA fi;
-  if (!GetFileAttributesEx(path.c_str(), GetFileExInfoStandard, &fi)) {
-    MakeErrMsg(ErrMsg, path + ": can't get status of file");
-    return true;
-  }
-
-  if (!(fi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-    if (ErrMsg)
-      *ErrMsg = path + ": not a directory";
-    return true;
-  }
-
-  result.clear();
-  WIN32_FIND_DATA fd;
-  std::string searchpath = path;
-  if (path.size() == 0 || searchpath[path.size()-1] == '/')
-    searchpath += "*";
-  else
-    searchpath += "/*";
-
-  HANDLE h = FindFirstFile(searchpath.c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE) {
-    if (GetLastError() == ERROR_FILE_NOT_FOUND)
-      return true; // not really an error, now is it?
-    MakeErrMsg(ErrMsg, path + ": Can't read directory: ");
-    return true;
-  }
-
-  do {
-    if (fd.cFileName[0] == '.')
-      continue;
-    Path aPath(path);
-    aPath.appendComponent(&fd.cFileName[0]);
-    result.insert(aPath);
-  } while (FindNextFile(h, &fd));
-
-  DWORD err = GetLastError();
-  FindClose(h);
-  if (err != ERROR_NO_MORE_FILES) {
-    SetLastError(err);
-    MakeErrMsg(ErrMsg, path + ": Can't read directory: ");
-    return true;
   }
   return false;
 }
@@ -565,18 +434,6 @@ Path::createDirectoryOnDisk(bool create_parents, std::string* ErrMsg) {
 }
 
 bool
-Path::createFileOnDisk(std::string* ErrMsg) {
-  // Create the file
-  HANDLE h = CreateFile(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                        FILE_ATTRIBUTE_NORMAL, NULL);
-  if (h == INVALID_HANDLE_VALUE)
-    return MakeErrMsg(ErrMsg, path + ": Can't create file: ");
-
-  CloseHandle(h);
-  return false;
-}
-
-bool
 Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
   WIN32_FILE_ATTRIBUTE_DATA fi;
   if (!GetFileAttributesEx(path.c_str(), GetFileExInfoStandard, &fi))
@@ -657,31 +514,6 @@ Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
   }
 }
 
-bool Path::getMagicNumber(std::string& Magic, unsigned len) const {
-  assert(len < 1024 && "Request for magic string too long");
-  char* buf = reinterpret_cast<char*>(alloca(len));
-
-  HANDLE h = CreateFile(path.c_str(),
-                        GENERIC_READ,
-                        FILE_SHARE_READ,
-                        NULL,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        NULL);
-  if (h == INVALID_HANDLE_VALUE)
-    return false;
-
-  DWORD nRead = 0;
-  BOOL ret = ReadFile(h, buf, len, &nRead, NULL);
-  CloseHandle(h);
-
-  if (!ret || nRead != len)
-    return false;
-
-  Magic = std::string(buf, len);
-  return true;
-}
-
 bool
 Path::renamePathOnDisk(const Path& newName, std::string* ErrMsg) {
   if (!MoveFileEx(path.c_str(), newName.c_str(), MOVEFILE_REPLACE_EXISTING))
@@ -748,16 +580,6 @@ Path::setStatusInfoOnDisk(const FileStatus &si, std::string *ErrMsg) const {
 }
 
 bool
-CopyFile(const sys::Path &Dest, const sys::Path &Src, std::string* ErrMsg) {
-  // Can't use CopyFile macro defined in Windows.h because it would mess up the
-  // above line.  We use the expansion it would have in a non-UNICODE build.
-  if (!::CopyFileA(Src.c_str(), Dest.c_str(), false))
-    return MakeErrMsg(ErrMsg, "Can't copy '" + Src.str() +
-               "' to '" + Dest.str() + "': ");
-  return false;
-}
-
-bool
 Path::makeUnique(bool reuse_current, std::string* ErrMsg) {
   bool Exists;
   if (reuse_current && (fs::exists(path, Exists) || !Exists))
@@ -805,16 +627,5 @@ Path::createTemporaryFileOnDisk(bool reuse_current, std::string* ErrMsg) {
   CloseHandle(h);
   return false;
 }
-
-/// MapInFilePages - Not yet implemented on win32.
-const char *Path::MapInFilePages(int FD, size_t FileSize, off_t Offset) {
-  return 0;
-}
-
-/// MapInFilePages - Not yet implemented on win32.
-void Path::UnMapFilePages(const char *Base, size_t FileSize) {
-  assert(0 && "NOT IMPLEMENTED");
-}
-
 }
 }

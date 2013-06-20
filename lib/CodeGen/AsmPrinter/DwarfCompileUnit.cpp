@@ -348,7 +348,8 @@ void CompileUnit::addVariableAddress(DbgVariable *&DV, DIE *Die,
   else if (DV->isBlockByrefVariable())
     addBlockByrefAddress(DV, Die, dwarf::DW_AT_location, Location);
   else
-    addAddress(Die, dwarf::DW_AT_location, Location);
+    addAddress(Die, dwarf::DW_AT_location, Location,
+               DV->getVariable().isIndirect());
 }
 
 /// addRegisterOp - Add register operand.
@@ -384,13 +385,17 @@ void CompileUnit::addRegisterOffset(DIE *TheDie, unsigned Reg,
 /// addAddress - Add an address attribute to a die based on the location
 /// provided.
 void CompileUnit::addAddress(DIE *Die, unsigned Attribute,
-                             const MachineLocation &Location) {
+                             const MachineLocation &Location, bool Indirect) {
   DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
 
-  if (Location.isReg())
+  if (Location.isReg() && !Indirect)
     addRegisterOp(Block, Location.getReg());
-  else
+  else {
     addRegisterOffset(Block, Location.getReg(), Location.getOffset());
+    if (Indirect && !Location.isReg()) {
+      addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_deref);
+    }
+  }
 
   // Now attach the location information to the DIE.
   addBlock(Die, Attribute, 0, Block);
@@ -1525,43 +1530,23 @@ DIE *CompileUnit::constructVariableDIE(DbgVariable *DV, bool isScopeAbstract) {
   // Check if variable is described by a DBG_VALUE instruction.
   if (const MachineInstr *DVInsn = DV->getMInsn()) {
     bool updated = false;
-    if (DVInsn->getNumOperands() == 3) {
-      if (DVInsn->getOperand(0).isReg()) {
-        const MachineOperand RegOp = DVInsn->getOperand(0);
-        const TargetRegisterInfo *TRI = Asm->TM.getRegisterInfo();
-        if (DVInsn->getOperand(1).isImm() &&
-            TRI->getFrameRegister(*Asm->MF) == RegOp.getReg()) {
-          unsigned FrameReg = 0;
-          const TargetFrameLowering *TFI = Asm->TM.getFrameLowering();
-          int Offset =
-            TFI->getFrameIndexReference(*Asm->MF,
-                                        DVInsn->getOperand(1).getImm(),
-                                        FrameReg);
-          MachineLocation Location(FrameReg, Offset);
-          addVariableAddress(DV, VariableDie, Location);
-
-        } else if (RegOp.getReg())
-          addVariableAddress(DV, VariableDie,
-                                         MachineLocation(RegOp.getReg()));
-        updated = true;
-      }
-      else if (DVInsn->getOperand(0).isImm())
-        updated =
-          addConstantValue(VariableDie, DVInsn->getOperand(0),
-                                       DV->getType());
-      else if (DVInsn->getOperand(0).isFPImm())
-        updated =
-          addConstantFPValue(VariableDie, DVInsn->getOperand(0));
-      else if (DVInsn->getOperand(0).isCImm())
-        updated =
-          addConstantValue(VariableDie,
-                                       DVInsn->getOperand(0).getCImm(),
-                                       DV->getType().isUnsignedDIType());
-    } else {
-      addVariableAddress(DV, VariableDie,
-                                     Asm->getDebugValueLocation(DVInsn));
+    assert(DVInsn->getNumOperands() == 3);
+    if (DVInsn->getOperand(0).isReg()) {
+      const MachineOperand RegOp = DVInsn->getOperand(0);
+      if (int64_t Offset = DVInsn->getOperand(1).getImm()) {
+        MachineLocation Location(RegOp.getReg(), Offset);
+        addVariableAddress(DV, VariableDie, Location);
+      } else if (RegOp.getReg())
+        addVariableAddress(DV, VariableDie, MachineLocation(RegOp.getReg()));
       updated = true;
-    }
+    } else if (DVInsn->getOperand(0).isImm())
+      updated =
+          addConstantValue(VariableDie, DVInsn->getOperand(0), DV->getType());
+    else if (DVInsn->getOperand(0).isFPImm())
+      updated = addConstantFPValue(VariableDie, DVInsn->getOperand(0));
+    else if (DVInsn->getOperand(0).isCImm())
+      updated = addConstantValue(VariableDie, DVInsn->getOperand(0).getCImm(),
+                                 DV->getType().isUnsignedDIType());
     if (!updated) {
       // If variableDie is not updated then DBG_VALUE instruction does not
       // have valid variable info.

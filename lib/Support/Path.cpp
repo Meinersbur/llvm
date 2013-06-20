@@ -61,35 +61,12 @@ Path::isDynamicLibrary() const {
   }
 }
 
-bool
-Path::isObjectFile() const {
-  fs::file_magic type;
-  if (fs::identify_magic(str(), type) || type == fs::file_magic::unknown)
-    return false;
-  return true;
-}
-
 void
 Path::appendSuffix(StringRef suffix) {
   if (!suffix.empty()) {
     path.append(".");
     path.append(suffix);
   }
-}
-
-bool
-Path::isBitcodeFile() const {
-  fs::file_magic type;
-  if (fs::identify_magic(str(), type))
-    return false;
-  return type == fs::file_magic::bitcode;
-}
-
-bool Path::hasMagicNumber(StringRef Magic) const {
-  std::string actualMagic;
-  if (getMagicNumber(actualMagic, static_cast<unsigned>(Magic.size())))
-    return Magic == actualMagic;
-  return false;
 }
 
 // Include the truly platform-specific parts of this class.

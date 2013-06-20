@@ -213,77 +213,67 @@ namespace {
 
 } // end of anonymous namespace
 
-MachineLocation ARMAsmPrinter::
-getDebugValueLocation(const MachineInstr *MI) const {
-  MachineLocation Location;
-  assert(MI->getNumOperands() == 4 && "Invalid no. of machine operands!");
-  // Frame address.  Currently handles register +- offset only.
-  if (MI->getOperand(0).isReg() && MI->getOperand(1).isImm())
-    Location.set(MI->getOperand(0).getReg(), MI->getOperand(1).getImm());
-  else {
-    DEBUG(dbgs() << "DBG_VALUE instruction ignored! " << *MI << "\n");
-  }
-  return Location;
-}
-
 /// EmitDwarfRegOp - Emit dwarf register operation.
-void ARMAsmPrinter::EmitDwarfRegOp(const MachineLocation &MLoc) const {
+void ARMAsmPrinter::EmitDwarfRegOp(const MachineLocation &MLoc,
+                                   bool Indirect) const {
   const TargetRegisterInfo *RI = TM.getRegisterInfo();
-  if (RI->getDwarfRegNum(MLoc.getReg(), false) != -1)
-    AsmPrinter::EmitDwarfRegOp(MLoc);
-  else {
-    unsigned Reg = MLoc.getReg();
-    if (Reg >= ARM::S0 && Reg <= ARM::S31) {
-      assert(ARM::S0 + 31 == ARM::S31 && "Unexpected ARM S register numbering");
-      // S registers are described as bit-pieces of a register
-      // S[2x] = DW_OP_regx(256 + (x>>1)) DW_OP_bit_piece(32, 0)
-      // S[2x+1] = DW_OP_regx(256 + (x>>1)) DW_OP_bit_piece(32, 32)
+  if (RI->getDwarfRegNum(MLoc.getReg(), false) != -1) {
+    AsmPrinter::EmitDwarfRegOp(MLoc, Indirect);
+    return;
+  }
+  assert(MLoc.isReg() && !Indirect &&
+         "This doesn't support offset/indirection - implement it if needed");
+  unsigned Reg = MLoc.getReg();
+  if (Reg >= ARM::S0 && Reg <= ARM::S31) {
+    assert(ARM::S0 + 31 == ARM::S31 && "Unexpected ARM S register numbering");
+    // S registers are described as bit-pieces of a register
+    // S[2x] = DW_OP_regx(256 + (x>>1)) DW_OP_bit_piece(32, 0)
+    // S[2x+1] = DW_OP_regx(256 + (x>>1)) DW_OP_bit_piece(32, 32)
 
-      unsigned SReg = Reg - ARM::S0;
-      bool odd = SReg & 0x1;
-      unsigned Rx = 256 + (SReg >> 1);
+    unsigned SReg = Reg - ARM::S0;
+    bool odd = SReg & 0x1;
+    unsigned Rx = 256 + (SReg >> 1);
 
-      OutStreamer.AddComment("DW_OP_regx for S register");
-      EmitInt8(dwarf::DW_OP_regx);
+    OutStreamer.AddComment("DW_OP_regx for S register");
+    EmitInt8(dwarf::DW_OP_regx);
 
-      OutStreamer.AddComment(Twine(SReg));
-      EmitULEB128(Rx);
+    OutStreamer.AddComment(Twine(SReg));
+    EmitULEB128(Rx);
 
-      if (odd) {
-        OutStreamer.AddComment("DW_OP_bit_piece 32 32");
-        EmitInt8(dwarf::DW_OP_bit_piece);
-        EmitULEB128(32);
-        EmitULEB128(32);
-      } else {
-        OutStreamer.AddComment("DW_OP_bit_piece 32 0");
-        EmitInt8(dwarf::DW_OP_bit_piece);
-        EmitULEB128(32);
-        EmitULEB128(0);
-      }
-    } else if (Reg >= ARM::Q0 && Reg <= ARM::Q15) {
-      assert(ARM::Q0 + 15 == ARM::Q15 && "Unexpected ARM Q register numbering");
-      // Q registers Q0-Q15 are described by composing two D registers together.
-      // Qx = DW_OP_regx(256+2x) DW_OP_piece(8) DW_OP_regx(256+2x+1)
-      // DW_OP_piece(8)
-
-      unsigned QReg = Reg - ARM::Q0;
-      unsigned D1 = 256 + 2 * QReg;
-      unsigned D2 = D1 + 1;
-
-      OutStreamer.AddComment("DW_OP_regx for Q register: D1");
-      EmitInt8(dwarf::DW_OP_regx);
-      EmitULEB128(D1);
-      OutStreamer.AddComment("DW_OP_piece 8");
-      EmitInt8(dwarf::DW_OP_piece);
-      EmitULEB128(8);
-
-      OutStreamer.AddComment("DW_OP_regx for Q register: D2");
-      EmitInt8(dwarf::DW_OP_regx);
-      EmitULEB128(D2);
-      OutStreamer.AddComment("DW_OP_piece 8");
-      EmitInt8(dwarf::DW_OP_piece);
-      EmitULEB128(8);
+    if (odd) {
+      OutStreamer.AddComment("DW_OP_bit_piece 32 32");
+      EmitInt8(dwarf::DW_OP_bit_piece);
+      EmitULEB128(32);
+      EmitULEB128(32);
+    } else {
+      OutStreamer.AddComment("DW_OP_bit_piece 32 0");
+      EmitInt8(dwarf::DW_OP_bit_piece);
+      EmitULEB128(32);
+      EmitULEB128(0);
     }
+  } else if (Reg >= ARM::Q0 && Reg <= ARM::Q15) {
+    assert(ARM::Q0 + 15 == ARM::Q15 && "Unexpected ARM Q register numbering");
+    // Q registers Q0-Q15 are described by composing two D registers together.
+    // Qx = DW_OP_regx(256+2x) DW_OP_piece(8) DW_OP_regx(256+2x+1)
+    // DW_OP_piece(8)
+
+    unsigned QReg = Reg - ARM::Q0;
+    unsigned D1 = 256 + 2 * QReg;
+    unsigned D2 = D1 + 1;
+
+    OutStreamer.AddComment("DW_OP_regx for Q register: D1");
+    EmitInt8(dwarf::DW_OP_regx);
+    EmitULEB128(D1);
+    OutStreamer.AddComment("DW_OP_piece 8");
+    EmitInt8(dwarf::DW_OP_piece);
+    EmitULEB128(8);
+
+    OutStreamer.AddComment("DW_OP_regx for Q register: D2");
+    EmitInt8(dwarf::DW_OP_regx);
+    EmitULEB128(D2);
+    OutStreamer.AddComment("DW_OP_piece 8");
+    EmitInt8(dwarf::DW_OP_piece);
+    EmitULEB128(8);
   }
 }
 
@@ -1092,23 +1082,6 @@ void ARMAsmPrinter::EmitJump2Table(const MachineInstr *MI) {
     OutStreamer.EmitDataRegion(MCDR_DataRegionEnd);
 }
 
-void ARMAsmPrinter::PrintDebugValueComment(const MachineInstr *MI,
-                                           raw_ostream &OS) {
-  unsigned NOps = MI->getNumOperands();
-  assert(NOps==4);
-  OS << '\t' << MAI->getCommentString() << "DEBUG_VALUE: ";
-  // cast away const; DIetc do not take const operands for some reason.
-  DIVariable V(const_cast<MDNode *>(MI->getOperand(NOps-1).getMetadata()));
-  OS << V.getName();
-  OS << " <- ";
-  // Frame address.  Currently handles register +- offset only.
-  assert(MI->getOperand(0).isReg() && MI->getOperand(1).isImm());
-  OS << '['; printOperand(MI, 0, OS); OS << '+'; printOperand(MI, 1, OS);
-  OS << ']';
-  OS << "+";
-  printOperand(MI, NOps-2, OS);
-}
-
 void ARMAsmPrinter::EmitUnwindingInstruction(const MachineInstr *MI) {
   assert(MI->getFlag(MachineInstr::FrameSetup) &&
       "Only instruction which are involved into frame setup code are allowed");
@@ -1272,15 +1245,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   unsigned Opc = MI->getOpcode();
   switch (Opc) {
   case ARM::t2MOVi32imm: llvm_unreachable("Should be lowered by thumb2it pass");
-  case ARM::DBG_VALUE: {
-    if (isVerbose() && OutStreamer.hasRawTextSupport()) {
-      SmallString<128> TmpStr;
-      raw_svector_ostream OS(TmpStr);
-      PrintDebugValueComment(MI, OS);
-      OutStreamer.EmitRawText(StringRef(OS.str()));
-    }
-    return;
-  }
+  case ARM::DBG_VALUE: llvm_unreachable("Should be handled by generic printing");
   case ARM::LEApcrel:
   case ARM::tLEApcrel:
   case ARM::t2LEApcrel: {

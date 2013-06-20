@@ -12,13 +12,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Archive.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/Bitcode/Archive.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/PathV1.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
@@ -96,7 +97,6 @@ bool DontSkipBitcode = false;    ///< 'k' modifier
 bool UseCount = false;           ///< 'N' modifier
 bool OriginalDates = false;      ///< 'o' modifier
 bool FullPath = false;           ///< 'P' modifier
-bool RecurseDirectories = false; ///< 'R' modifier
 bool SymTable = true;            ///< 's' & 'S' modifiers
 bool OnlyUpdate = false;         ///< 'u' modifier
 bool Verbose = false;            ///< 'v' modifier
@@ -122,7 +122,7 @@ std::vector<std::string> Members;
 
 // This variable holds the (possibly expanded) list of path objects that
 // correspond to files we will
-std::set<sys::Path> Paths;
+std::set<std::string> Paths;
 
 // The Archive object to which all the editing operations will be sent.
 Archive* TheArchive = 0;
@@ -218,7 +218,6 @@ ArchiveOperation parseCommandLine() {
     case 'l': /* accepted but unused */ break;
     case 'o': OriginalDates = true; break;
     case 'P': FullPath = true; break;
-    case 'R': RecurseDirectories = true; break;
     case 's': SymTable = true; break;
     case 'S': SymTable = false; break;
     case 'u': OnlyUpdate = true; break;
@@ -268,8 +267,6 @@ ArchiveOperation parseCommandLine() {
       show_help("The 'a', 'b' and 'i' modifiers can only be specified with "
             "the 'm' or 'r' operations");
   }
-  if (RecurseDirectories && Operation != ReplaceOrInsert)
-    show_help("The 'R' modifiers is only applicabe to the 'r' operation");
   if (OriginalDates && Operation != Extract)
     show_help("The 'o' modifier is only applicable to the 'x' operation");
   if (TruncateNames && Operation!=QuickAppend && Operation!=ReplaceOrInsert)
@@ -282,39 +279,6 @@ ArchiveOperation parseCommandLine() {
 
   // Return the parsed operation to the caller
   return Operation;
-}
-
-// recurseDirectories - Implements the "R" modifier. This function scans through
-// the Paths vector (built by buildPaths, below) and replaces any directories it
-// finds with all the files in that directory (recursively). It uses the
-// sys::Path::getDirectoryContent method to perform the actual directory scans.
-bool
-recurseDirectories(const sys::Path& path,
-                   std::set<sys::Path>& result, std::string* ErrMsg) {
-  result.clear();
-  if (RecurseDirectories) {
-    std::set<sys::Path> content;
-    if (path.getDirectoryContents(content, ErrMsg))
-      return true;
-
-    for (std::set<sys::Path>::iterator I = content.begin(), E = content.end();
-         I != E; ++I) {
-      // Make sure it exists and is a directory
-      sys::PathWithStatus PwS(*I);
-      const sys::FileStatus *Status = PwS.getFileStatus(false, ErrMsg);
-      if (!Status)
-        return true;
-      if (Status->isDir) {
-        std::set<sys::Path> moreResults;
-        if (recurseDirectories(*I, moreResults, ErrMsg))
-          return true;
-        result.insert(moreResults.begin(), moreResults.end());
-      } else {
-          result.insert(*I);
-      }
-    }
-  }
-  return false;
 }
 
 // buildPaths - Convert the strings in the Members vector to sys::Path objects
@@ -334,16 +298,12 @@ bool buildPaths(bool checkExistence, std::string* ErrMsg) {
       const sys::FileStatus *si = PwS.getFileStatus(false, &Err);
       if (!si)
         fail(Err);
-      if (si->isDir) {
-        std::set<sys::Path> dirpaths;
-        if (recurseDirectories(aPath, dirpaths, ErrMsg))
-          return true;
-        Paths.insert(dirpaths.begin(),dirpaths.end());
-      } else {
-        Paths.insert(aPath);
-      }
+      if (si->isDir)
+        fail(aPath.str() + " Is a directory");
+
+      Paths.insert(aPath.str());
     } else {
-      Paths.insert(aPath);
+      Paths.insert(aPath.str());
     }
   }
   return false;
@@ -376,7 +336,7 @@ bool doPrint(std::string* ErrMsg) {
         const char* data = reinterpret_cast<const char*>(I->getData());
 
         // Skip things that don't make sense to print
-        if (I->isLLVMSymbolTable() || I->isSVR4SymbolTable() ||
+        if (I->isSVR4SymbolTable() ||
             I->isBSD4SymbolTable() || (!DontSkipBitcode && I->isBitcode()))
           continue;
 
@@ -471,7 +431,7 @@ doExtract(std::string* ErrMsg) {
       // Open up a file stream for writing
       std::ios::openmode io_mode = std::ios::out | std::ios::trunc |
                                    std::ios::binary;
-      std::ofstream file(I->getPath().c_str(), io_mode);
+      std::ofstream file(I->getPath().str().c_str(), io_mode);
 
       // Get the data and its length
       const char* data = reinterpret_cast<const char*>(I->getData());
@@ -481,10 +441,18 @@ doExtract(std::string* ErrMsg) {
       file.write(data,len);
       file.close();
 
+      sys::PathWithStatus PWS(I->getPath());
+      sys::FileStatus Status = *PWS.getFileStatus();
+
+      // Retain the original mode.
+      Status.mode = I->getMode();
+
       // If we're supposed to retain the original modification times, etc. do so
       // now.
       if (OriginalDates)
-        I->getPath().setStatusInfoOnDisk(I->getFileStatus());
+        Status.modTime = I->getModTime();
+
+      PWS.setStatusInfoOnDisk(Status);
     }
   }
   return false;
@@ -555,14 +523,14 @@ doMove(std::string* ErrMsg) {
   }
 
   // Keep a list of the paths remaining to be moved
-  std::set<sys::Path> remaining(Paths);
+  std::set<std::string> remaining(Paths);
 
   // Scan the archive again, this time looking for the members to move to the
   // moveto_spot.
   for (Archive::iterator I = TheArchive->begin(), E= TheArchive->end();
        I != E && !remaining.empty(); ++I ) {
-    std::set<sys::Path>::iterator found =
-      std::find(remaining.begin(),remaining.end(),I->getPath());
+    std::set<std::string>::iterator found =
+      std::find(remaining.begin(),remaining.end(), I->getPath());
     if (found != remaining.end()) {
       if (I != moveto_spot)
         TheArchive->splice(moveto_spot,*TheArchive,I);
@@ -589,9 +557,9 @@ doQuickAppend(std::string* ErrMsg) {
     return false;
 
   // Append them quickly.
-  for (std::set<sys::Path>::iterator PI = Paths.begin(), PE = Paths.end();
+  for (std::set<std::string>::iterator PI = Paths.begin(), PE = Paths.end();
        PI != PE; ++PI) {
-    if (TheArchive->addFileBefore(*PI,TheArchive->end(),ErrMsg))
+    if (TheArchive->addFileBefore(*PI, TheArchive->end(), ErrMsg))
       return true;
   }
 
@@ -615,7 +583,7 @@ doReplaceOrInsert(std::string* ErrMsg) {
     return false;
 
   // Keep track of the paths that remain to be inserted.
-  std::set<sys::Path> remaining(Paths);
+  std::set<std::string> remaining(Paths);
 
   // Default the insertion spot to the end of the archive
   Archive::iterator insert_spot = TheArchive->end();
@@ -627,10 +595,10 @@ doReplaceOrInsert(std::string* ErrMsg) {
     // Determine if this archive member matches one of the paths we're trying
     // to replace.
 
-    std::set<sys::Path>::iterator found = remaining.end();
-    for (std::set<sys::Path>::iterator RI = remaining.begin(),
+    std::set<std::string>::iterator found = remaining.end();
+    for (std::set<std::string>::iterator RI = remaining.begin(),
          RE = remaining.end(); RI != RE; ++RI ) {
-      std::string compare(RI->str());
+      std::string compare(*RI);
       if (TruncateNames && compare.length() > 15) {
         const char* nm = compare.c_str();
         unsigned len = compare.length();
@@ -686,9 +654,9 @@ doReplaceOrInsert(std::string* ErrMsg) {
   // If we didn't replace all the members, some will remain and need to be
   // inserted at the previously computed insert-spot.
   if (!remaining.empty()) {
-    for (std::set<sys::Path>::iterator PI = remaining.begin(),
+    for (std::set<std::string>::iterator PI = remaining.begin(),
          PE = remaining.end(); PI != PE; ++PI) {
-      if (TheArchive->addFileBefore(*PI,insert_spot, ErrMsg))
+      if (TheArchive->addFileBefore(*PI, insert_spot, ErrMsg))
         return true;
     }
   }
@@ -736,11 +704,11 @@ int main(int argc, char **argv) {
     // Produce a warning if we should and we're creating the archive
     if (!Create)
       errs() << argv[0] << ": creating " << ArchivePath.str() << "\n";
-    TheArchive = Archive::CreateEmpty(ArchivePath, Context);
+    TheArchive = Archive::CreateEmpty(ArchivePath.str(), Context);
     TheArchive->writeToDisk();
   } else {
     std::string Error;
-    TheArchive = Archive::OpenAndLoad(ArchivePath, Context, &Error);
+    TheArchive = Archive::OpenAndLoad(ArchivePath.str(), Context, &Error);
     if (TheArchive == 0) {
       errs() << argv[0] << ": error loading '" << ArchivePath.str() << "': "
              << Error << "!\n";

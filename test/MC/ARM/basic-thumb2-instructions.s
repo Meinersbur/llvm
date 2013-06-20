@@ -2616,6 +2616,7 @@ _func:
         strb r9, [r2], #4
         strb r3, [sp], #-4
         strb r4, [r8, #-0]!
+        strb r1, [r0], #-0
 
 @ CHECK: strb	r5, [r5, #-4]           @ encoding: [0x05,0xf8,0x04,0x5c]
 @ CHECK: strb.w	r5, [r6, #32]           @ encoding: [0x86,0xf8,0x20,0x50]
@@ -2629,6 +2630,7 @@ _func:
 @ CHECK: strb	r9, [r2], #4            @ encoding: [0x02,0xf8,0x04,0x9b]
 @ CHECK: strb	r3, [sp], #-4           @ encoding: [0x0d,0xf8,0x04,0x39]
 @ CHECK: strb	r4, [r8, #-0]!          @ encoding: [0x08,0xf8,0x00,0x4d]
+@ CHECK: strb	r1, [r0], #-0           @ encoding: [0x00,0xf8,0x00,0x19]
 
 
 @------------------------------------------------------------------------------
@@ -3513,12 +3515,31 @@ _func:
 @------------------------------------------------------------------------------
 @ Alternate syntax for LDR*(literal) encodings
 @------------------------------------------------------------------------------
+        ldrb r11, [pc, #22]
+        ldrh r11, [pc, #22]
+        ldrsb r11, [pc, #22]
+        ldrsh r11, [pc, #22]
+        ldr.w r11, [pc, #22]
+        ldrb.w r11, [pc, #22]
+        ldrh.w r11, [pc, #22]
+        ldrsb.w r11, [pc, #22]
+        ldrsh.w r11, [pc, #22]
+
+@ CHECK: ldrb.w r11, [pc, #22]        @ encoding: [0x9f,0xf8,0x16,0xb0]
+@ CHECK: ldrh.w r11, [pc, #22]        @ encoding: [0xbf,0xf8,0x16,0xb0]
+@ CHECK: ldrsb.w r11, [pc, #22]       @ encoding: [0x9f,0xf9,0x16,0xb0]
+@ CHECK: ldrsh.w r11, [pc, #22]       @ encoding: [0xbf,0xf9,0x16,0xb0]
+@ CHECK: ldr.w r11, [pc, #22]         @ encoding: [0xdf,0xf8,0x16,0xb0]
+@ CHECK: ldrb.w r11, [pc, #22]        @ encoding: [0x9f,0xf8,0x16,0xb0]
+@ CHECK: ldrh.w r11, [pc, #22]        @ encoding: [0xbf,0xf8,0x16,0xb0]
+@ CHECK: ldrsb.w r11, [pc, #22]       @ encoding: [0x9f,0xf9,0x16,0xb0]
+@ CHECK: ldrsh.w r11, [pc, #22]       @ encoding: [0xbf,0xf9,0x16,0xb0]
+
         ldr r11, [pc, #-22]
         ldrb r11, [pc, #-22]
         ldrh r11, [pc, #-22]
         ldrsb r11, [pc, #-22]
         ldrsh r11, [pc, #-22]
-
         ldr.w r11, [pc, #-22]
         ldrb.w r11, [pc, #-22]
         ldrh.w r11, [pc, #-22]

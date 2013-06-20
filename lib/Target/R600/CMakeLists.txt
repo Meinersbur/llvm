@@ -24,7 +24,6 @@ add_llvm_target(R600CodeGen
   AMDGPUMCInstLower.cpp
   AMDGPUMachineFunction.cpp
   AMDGPUSubtarget.cpp
-  AMDGPUStructurizeCFG.cpp
   AMDGPUTargetMachine.cpp
   AMDGPUISelLowering.cpp
   AMDGPUConvertToISA.cpp

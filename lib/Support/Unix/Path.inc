@@ -109,21 +109,6 @@ Path::isValid() const {
   return !path.empty();
 }
 
-bool
-Path::isAbsolute(const char *NameStart, unsigned NameLen) {
-  assert(NameStart);
-  if (NameLen == 0)
-    return false;
-  return NameStart[0] == '/';
-}
-
-bool
-Path::isAbsolute() const {
-  if (path.empty())
-    return false;
-  return path[0] == '/';
-}
-
 Path
 Path::GetTemporaryDirectory(std::string *ErrMsg) {
 #if defined(HAVE_MKDTEMP)
@@ -318,37 +303,6 @@ Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
   return Path();
 }
 
-
-StringRef
-Path::getSuffix() const {
-  // Find the last slash
-  std::string::size_type slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  std::string::size_type dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef();
-  else
-    return StringRef(path).substr(dot + 1);
-}
-
-bool Path::getMagicNumber(std::string &Magic, unsigned len) const {
-  assert(len < 1024 && "Request for magic string too long");
-  char Buf[1025];
-  int fd = ::open(path.c_str(), O_RDONLY);
-  if (fd < 0)
-    return false;
-  ssize_t bytes_read = ::read(fd, Buf, len);
-  ::close(fd);
-  if (ssize_t(len) != bytes_read)
-    return false;
-  Magic.assign(Buf, len);
-  return true;
-}
-
 bool
 Path::exists() const {
   return 0 == access(path.c_str(), F_OK );
@@ -370,17 +324,6 @@ Path::isSymLink() const {
   return S_ISLNK(buf.st_mode);
 }
 
-
-bool
-Path::canRead() const {
-  return 0 == access(path.c_str(), R_OK);
-}
-
-bool
-Path::canWrite() const {
-  return 0 == access(path.c_str(), W_OK);
-}
-
 bool
 Path::isRegularFile() const {
   // Get the status so we can determine if it's a file or directory
@@ -393,18 +336,6 @@ Path::isRegularFile() const {
     return true;
 
   return false;
-}
-
-bool
-Path::canExecute() const {
-  if (0 != access(path.c_str(), R_OK | X_OK ))
-    return false;
-  struct stat buf;
-  if (0 != stat(path.c_str(), &buf))
-    return false;
-  if (!S_ISREG(buf.st_mode))
-    return false;
-  return true;
 }
 
 const FileStatus *
@@ -420,7 +351,6 @@ PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
     status.mode = buf.st_mode;
     status.user = buf.st_uid;
     status.group = buf.st_gid;
-    status.uniqueID = uint64_t(buf.st_ino);
     status.isDir  = S_ISDIR(buf.st_mode);
     status.isFile = S_ISREG(buf.st_mode);
     fsIsValid = true;
@@ -456,42 +386,6 @@ bool Path::makeReadableOnDisk(std::string* ErrMsg) {
 bool Path::makeWriteableOnDisk(std::string* ErrMsg) {
   if (!AddPermissionBits(*this, 0222))
     return MakeErrMsg(ErrMsg, path + ": can't make file writable");
-  return false;
-}
-
-bool Path::makeExecutableOnDisk(std::string* ErrMsg) {
-  if (!AddPermissionBits(*this, 0111))
-    return MakeErrMsg(ErrMsg, path + ": can't make file executable");
-  return false;
-}
-
-bool
-Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
-  DIR* direntries = ::opendir(path.c_str());
-  if (direntries == 0)
-    return MakeErrMsg(ErrMsg, path + ": can't open directory");
-
-  std::string dirPath = path;
-  if (!lastIsSlash(dirPath))
-    dirPath += '/';
-
-  result.clear();
-  struct dirent* de = ::readdir(direntries);
-  for ( ; de != 0; de = ::readdir(direntries)) {
-    if (de->d_name[0] != '.') {
-      Path aPath(dirPath + (const char*)de->d_name);
-      struct stat st;
-      if (0 != lstat(aPath.path.c_str(), &st)) {
-        if (S_ISLNK(st.st_mode))
-          continue; // dangling symlink -- ignore
-        return MakeErrMsg(ErrMsg,
-                          aPath.path +  ": can't determine file object type");
-      }
-      result.insert(aPath);
-    }
-  }
-
-  closedir(direntries);
   return false;
 }
 
@@ -591,16 +485,6 @@ Path::createDirectoryOnDisk( bool create_parents, std::string* ErrMsg ) {
 }
 
 bool
-Path::createFileOnDisk(std::string* ErrMsg) {
-  // Create the file
-  int fd = ::creat(path.c_str(), S_IRUSR | S_IWUSR);
-  if (fd < 0)
-    return MakeErrMsg(ErrMsg, path + ": can't create file");
-  ::close(fd);
-  return false;
-}
-
-bool
 Path::createTemporaryFileOnDisk(bool reuse_current, std::string* ErrMsg) {
   // Make this into a unique file name
   if (makeUnique( reuse_current, ErrMsg ))
@@ -683,53 +567,6 @@ Path::setStatusInfoOnDisk(const FileStatus &si, std::string *ErrStr) const {
 }
 
 bool
-sys::CopyFile(const sys::Path &Dest, const sys::Path &Src, std::string* ErrMsg){
-  int inFile = -1;
-  int outFile = -1;
-  inFile = ::open(Src.c_str(), O_RDONLY);
-  if (inFile == -1)
-    return MakeErrMsg(ErrMsg, Src.str() +
-      ": can't open source file to copy");
-
-  outFile = ::open(Dest.c_str(), O_WRONLY|O_CREAT, 0666);
-  if (outFile == -1) {
-    ::close(inFile);
-    return MakeErrMsg(ErrMsg, Dest.str() +
-      ": can't create destination file for copy");
-  }
-
-  char Buffer[16*1024];
-  while (ssize_t Amt = ::read(inFile, Buffer, 16*1024)) {
-    if (Amt == -1) {
-      if (errno != EINTR && errno != EAGAIN) {
-        ::close(inFile);
-        ::close(outFile);
-        return MakeErrMsg(ErrMsg, Src.str()+": can't read source file");
-      }
-    } else {
-      char *BufPtr = Buffer;
-      while (Amt) {
-        ssize_t AmtWritten = ::write(outFile, BufPtr, Amt);
-        if (AmtWritten == -1) {
-          if (errno != EINTR && errno != EAGAIN) {
-            ::close(inFile);
-            ::close(outFile);
-            return MakeErrMsg(ErrMsg, Dest.str() +
-              ": can't write destination file");
-          }
-        } else {
-          Amt -= AmtWritten;
-          BufPtr += AmtWritten;
-        }
-      }
-    }
-  }
-  ::close(inFile);
-  ::close(outFile);
-  return false;
-}
-
-bool
 Path::makeUnique(bool reuse_current, std::string* ErrMsg) {
   bool Exists;
   if (reuse_current && (fs::exists(path, Exists) || !Exists))
@@ -789,21 +626,4 @@ Path::makeUnique(bool reuse_current, std::string* ErrMsg) {
 #endif
   return false;
 }
-
-const char *Path::MapInFilePages(int FD, size_t FileSize, off_t Offset) {
-  int Flags = MAP_PRIVATE;
-#ifdef MAP_FILE
-  Flags |= MAP_FILE;
-#endif
-  void *BasePtr = ::mmap(0, FileSize, PROT_READ, Flags, FD, Offset);
-  if (BasePtr == MAP_FAILED)
-    return 0;
-  return (const char*)BasePtr;
-}
-
-void Path::UnMapFilePages(const char *BasePtr, size_t FileSize) {
-  const void *Addr = static_cast<const void *>(BasePtr);
-  ::munmap(const_cast<void *>(Addr), FileSize);
-}
-
 } // end llvm namespace

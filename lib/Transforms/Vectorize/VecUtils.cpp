@@ -104,6 +104,8 @@ bool BoUpSLP::isConsecutiveAccess(Value *A, Value *B) {
 }
 
 bool BoUpSLP::vectorizeStoreChain(ArrayRef<Value *> Chain, int CostThreshold) {
+  unsigned ChainLen = Chain.size();
+    DEBUG(dbgs()<<"SLP: Analyzing a store chain of length " <<ChainLen<< "\n");
   Type *StoreTy = cast<StoreInst>(Chain[0])->getValueOperand()->getType();
   unsigned Sz = DL->getTypeSizeInBits(StoreTy);
   unsigned VF = MinVecRegSize / Sz;
@@ -112,8 +114,8 @@ bool BoUpSLP::vectorizeStoreChain(ArrayRef<Value *> Chain, int CostThreshold) {
 
   bool Changed = false;
   // Look for profitable vectorizable trees at all offsets, starting at zero.
-  for (unsigned i = 0, e = Chain.size(); i < e; ++i) {
-    if (i + VF > e) return Changed;
+  for (unsigned i = 0, e = ChainLen; i < e; ++i) {
+    if (i + VF > e) break;
     DEBUG(dbgs()<<"SLP: Analyzing " << VF << " stores at offset "<< i << "\n");
     ArrayRef<Value *> Operands = Chain.slice(i, VF);
 
@@ -128,7 +130,19 @@ bool BoUpSLP::vectorizeStoreChain(ArrayRef<Value *> Chain, int CostThreshold) {
     }
   }
 
-  return Changed;
+  if (Changed)
+    return true;
+
+  int Cost = getTreeCost(Chain);
+  if (Cost < CostThreshold) {
+    DEBUG(dbgs() << "SLP: Found store chain cost = "<< Cost <<" for size = " <<
+          ChainLen << "\n");
+    Builder.SetInsertPoint(getInsertionPoint(getLastIndex(Chain, ChainLen)));
+    vectorizeTree(Chain, ChainLen);
+    return true;
+  }
+
+  return false;
 }
 
 bool BoUpSLP::vectorizeStores(ArrayRef<StoreInst *> Stores, int costThreshold) {
@@ -225,7 +239,7 @@ Value *BoUpSLP::isUnsafeToSink(Instruction *Src, Instruction *Dst) {
   return 0;
 }
 
-void BoUpSLP::vectorizeArith(ArrayRef<Value *> Operands) {
+Value *BoUpSLP::vectorizeArith(ArrayRef<Value *> Operands) {
   int LastIdx = getLastIndex(Operands, Operands.size());
   Instruction *Loc = getInsertionPoint(LastIdx);
   Builder.SetInsertPoint(Loc);
@@ -241,6 +255,8 @@ void BoUpSLP::vectorizeArith(ArrayRef<Value *> Operands) {
     Value *S = Builder.CreateExtractElement(Vec, Builder.getInt32(i));
     Operands[i]->replaceAllUsesWith(S);
   }
+
+  return Vec;
 }
 
 int BoUpSLP::getTreeCost(ArrayRef<Value *> VL) {
@@ -315,6 +331,34 @@ int BoUpSLP::getTreeCost(ArrayRef<Value *> VL) {
   return getTreeCost_rec(VL, 0);
 }
 
+static bool CanReuseExtract(ArrayRef<Value *> VL, unsigned VF,
+                            VectorType *VecTy) {
+  // Check if all of the extracts come from the same vector and from the
+  // correct offset.
+  Value *VL0 = VL[0];
+  ExtractElementInst *E0 = cast<ExtractElementInst>(VL0);
+  Value *Vec = E0->getOperand(0);
+
+  // We have to extract from the same vector type.
+  if (Vec->getType() != VecTy)
+    return false;
+
+  // Check that all of the indices extract from the correct offset.
+  ConstantInt *CI = dyn_cast<ConstantInt>(E0->getOperand(1));
+  if (!CI || CI->getZExtValue())
+    return false;
+
+  for (unsigned i = 1, e = VF; i < e; ++i) {
+    ExtractElementInst *E = cast<ExtractElementInst>(VL[i]);
+    ConstantInt *CI = dyn_cast<ConstantInt>(E->getOperand(1));
+
+    if (!CI || CI->getZExtValue() != i || E->getOperand(0) != Vec)
+      return false;
+  }
+
+  return true;
+}
+
 void BoUpSLP::getTreeUses_rec(ArrayRef<Value *> VL, unsigned Depth) {
   if (Depth == RecursionMaxDepth) return;
 
@@ -370,6 +414,12 @@ void BoUpSLP::getTreeUses_rec(ArrayRef<Value *> VL, unsigned Depth) {
   }
 
   switch (Opcode) {
+    case Instruction::ExtractElement: {
+      VectorType *VecTy = VectorType::get(VL[0]->getType(), VL.size());
+      // No need to follow ExtractElements that are going to be optimized away.
+      if (CanReuseExtract(VL, VL.size(), VecTy)) return;
+      // Fall through.
+    }
     case Instruction::ZExt:
     case Instruction::SExt:
     case Instruction::FPToUI:
@@ -382,6 +432,9 @@ void BoUpSLP::getTreeUses_rec(ArrayRef<Value *> VL, unsigned Depth) {
     case Instruction::Trunc:
     case Instruction::FPTrunc:
     case Instruction::BitCast:
+    case Instruction::Select:
+    case Instruction::ICmp:
+    case Instruction::FCmp:
     case Instruction::Add:
     case Instruction::FAdd:
     case Instruction::Sub:
@@ -504,6 +557,11 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
         TTI->getVectorInstrCost(Instruction::ExtractElement, VecTy, i);
 
   switch (Opcode) {
+  case Instruction::ExtractElement: {
+    if (CanReuseExtract(VL, VL.size(), VecTy))
+      return 0;
+    return getScalarizationCost(VecTy);
+  }
   case Instruction::ZExt:
   case Instruction::SExt:
   case Instruction::FPToUI:
@@ -539,6 +597,18 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     Cost += (VecCost - ScalarCost);
     return Cost;
   }
+  case Instruction::FCmp:
+  case Instruction::ICmp: {
+    // Check that all of the compares have the same predicate.
+    CmpInst::Predicate P0 = dyn_cast<CmpInst>(VL0)->getPredicate();
+    for (unsigned i = 1, e = VL.size(); i < e; ++i) {
+      CmpInst *Cmp = cast<CmpInst>(VL[i]);
+      if (Cmp->getPredicate() != P0)
+        return getScalarizationCost(VecTy);
+    }
+    // Fall through.
+  }
+  case Instruction::Select:
   case Instruction::Add:
   case Instruction::FAdd:
   case Instruction::Sub:
@@ -570,10 +640,19 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
 
     // Calculate the cost of this instruction.
-    int ScalarCost = VecTy->getNumElements() *
+    int ScalarCost = 0;
+    int VecCost = 0;
+    if (Opcode == Instruction::FCmp || Opcode == Instruction::ICmp ||
+        Opcode == Instruction::Select) {
+      VectorType *MaskTy = VectorType::get(Builder.getInt1Ty(), VL.size());
+      ScalarCost = VecTy->getNumElements() *
+        TTI->getCmpSelInstrCost(Opcode, ScalarTy, Builder.getInt1Ty());
+      VecCost = TTI->getCmpSelInstrCost(Opcode, VecTy, MaskTy);
+    } else {
+      ScalarCost = VecTy->getNumElements() *
       TTI->getArithmeticInstrCost(Opcode, ScalarTy);
-
-    int VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy);
+      VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy);
+    }
     Cost += (VecCost - ScalarCost);
     return Cost;
   }
@@ -746,6 +825,11 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
   }
 
   switch (Opcode) {
+  case Instruction::ExtractElement: {
+    if (CanReuseExtract(VL, VL.size(), VecTy))
+      return VL0->getOperand(0);
+    return Scalarize(VL, VecTy);
+  }
   case Instruction::ZExt:
   case Instruction::SExt:
   case Instruction::FPToUI:
@@ -764,6 +848,54 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
     Value *InVec = vectorizeTree_rec(INVL, VF);
     CastInst *CI = dyn_cast<CastInst>(VL0);
     Value *V = Builder.CreateCast(CI->getOpcode(), InVec, VecTy);
+
+    for (int i = 0; i < VF; ++i)
+      VectorizedValues[VL[i]] = V;
+
+    return V;
+  }
+  case Instruction::FCmp:
+  case Instruction::ICmp: {
+    // Check that all of the compares have the same predicate.
+    CmpInst::Predicate P0 = dyn_cast<CmpInst>(VL0)->getPredicate();
+    for (unsigned i = 1, e = VF; i < e; ++i) {
+      CmpInst *Cmp = cast<CmpInst>(VL[i]);
+      if (Cmp->getPredicate() != P0)
+        return Scalarize(VL, VecTy);
+    }
+
+    ValueList LHSV, RHSV;
+    for (int i = 0; i < VF; ++i) {
+      LHSV.push_back(cast<Instruction>(VL[i])->getOperand(0));
+      RHSV.push_back(cast<Instruction>(VL[i])->getOperand(1));
+    }
+
+    Value *L = vectorizeTree_rec(LHSV, VF);
+    Value *R = vectorizeTree_rec(RHSV, VF);
+    Value *V;
+    if (VL0->getOpcode() == Instruction::FCmp)
+      V = Builder.CreateFCmp(P0, L, R);
+    else
+      V = Builder.CreateICmp(P0, L, R);
+
+    for (int i = 0; i < VF; ++i)
+      VectorizedValues[VL[i]] = V;
+
+    return V;
+
+  }
+  case Instruction::Select: {
+    ValueList TrueVec, FalseVec, CondVec;
+    for (int i = 0; i < VF; ++i) {
+      CondVec.push_back(cast<Instruction>(VL[i])->getOperand(0));
+      TrueVec.push_back(cast<Instruction>(VL[i])->getOperand(1));
+      FalseVec.push_back(cast<Instruction>(VL[i])->getOperand(2));
+    }
+
+    Value *True = vectorizeTree_rec(TrueVec, VF);
+    Value *False = vectorizeTree_rec(FalseVec, VF);
+    Value *Cond = vectorizeTree_rec(CondVec, VF);
+    Value *V = Builder.CreateSelect(Cond, True, False);
 
     for (int i = 0; i < VF; ++i)
       VectorizedValues[VL[i]] = V;

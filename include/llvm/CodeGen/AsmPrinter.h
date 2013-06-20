@@ -402,16 +402,13 @@ namespace llvm {
     void EmitSectionOffset(const MCSymbol *Label,
                            const MCSymbol *SectionLabel) const;
 
-    /// getDebugValueLocation - Get location information encoded by DBG_VALUE
-    /// operands.
-    virtual MachineLocation getDebugValueLocation(const MachineInstr *MI) const;
-
     /// getISAEncoding - Get the value for DW_AT_APPLE_isa. Zero if no isa
     /// encoding specified.
     virtual unsigned getISAEncoding() { return 0; }
 
     /// EmitDwarfRegOp - Emit dwarf register operation.
-    virtual void EmitDwarfRegOp(const MachineLocation &MLoc) const;
+    virtual void EmitDwarfRegOp(const MachineLocation &MLoc,
+                                bool Indirect) const;
 
     //===------------------------------------------------------------------===//
     // Dwarf Lowering Routines

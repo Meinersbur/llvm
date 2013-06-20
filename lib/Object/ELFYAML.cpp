@@ -212,17 +212,131 @@ void ScalarEnumerationTraits<ELFYAML::ELF_ELFDATA>::enumeration(
 #undef ECase
 }
 
+void ScalarEnumerationTraits<ELFYAML::ELF_ELFOSABI>::enumeration(
+    IO &IO, ELFYAML::ELF_ELFOSABI &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(ELFOSABI_NONE)
+  ECase(ELFOSABI_HPUX)
+  ECase(ELFOSABI_NETBSD)
+  ECase(ELFOSABI_GNU)
+  ECase(ELFOSABI_GNU)
+  ECase(ELFOSABI_HURD)
+  ECase(ELFOSABI_SOLARIS)
+  ECase(ELFOSABI_AIX)
+  ECase(ELFOSABI_IRIX)
+  ECase(ELFOSABI_FREEBSD)
+  ECase(ELFOSABI_TRU64)
+  ECase(ELFOSABI_MODESTO)
+  ECase(ELFOSABI_OPENBSD)
+  ECase(ELFOSABI_OPENVMS)
+  ECase(ELFOSABI_NSK)
+  ECase(ELFOSABI_AROS)
+  ECase(ELFOSABI_FENIXOS)
+  ECase(ELFOSABI_C6000_ELFABI)
+  ECase(ELFOSABI_C6000_LINUX)
+  ECase(ELFOSABI_ARM)
+  ECase(ELFOSABI_STANDALONE)
+#undef ECase
+}
+
+void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
+    IO &IO, ELFYAML::ELF_SHT &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(SHT_NULL)
+  ECase(SHT_PROGBITS)
+  ECase(SHT_SYMTAB)
+  ECase(SHT_STRTAB)
+  ECase(SHT_RELA)
+  ECase(SHT_HASH)
+  ECase(SHT_DYNAMIC)
+  ECase(SHT_NOTE)
+  ECase(SHT_NOBITS)
+  ECase(SHT_REL)
+  ECase(SHT_SHLIB)
+  ECase(SHT_DYNSYM)
+  ECase(SHT_INIT_ARRAY)
+  ECase(SHT_FINI_ARRAY)
+  ECase(SHT_PREINIT_ARRAY)
+  ECase(SHT_GROUP)
+  ECase(SHT_SYMTAB_SHNDX)
+#undef ECase
+}
+
+void ScalarBitSetTraits<ELFYAML::ELF_SHF>::bitset(IO &IO,
+                                                  ELFYAML::ELF_SHF &Value) {
+#define BCase(X) IO.bitSetCase(Value, #X, ELF::X);
+  BCase(SHF_WRITE)
+  BCase(SHF_ALLOC)
+  BCase(SHF_EXECINSTR)
+  BCase(SHF_MERGE)
+  BCase(SHF_STRINGS)
+  BCase(SHF_INFO_LINK)
+  BCase(SHF_LINK_ORDER)
+  BCase(SHF_OS_NONCONFORMING)
+  BCase(SHF_GROUP)
+  BCase(SHF_TLS)
+#undef BCase
+}
+
+void ScalarEnumerationTraits<ELFYAML::ELF_STB>::enumeration(
+    IO &IO, ELFYAML::ELF_STB &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(STB_LOCAL)
+  ECase(STB_GLOBAL)
+  ECase(STB_WEAK)
+#undef ECase
+}
+
+void ScalarEnumerationTraits<ELFYAML::ELF_STT>::enumeration(
+    IO &IO, ELFYAML::ELF_STT &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(STT_NOTYPE)
+  ECase(STT_OBJECT)
+  ECase(STT_FUNC)
+  ECase(STT_SECTION)
+  ECase(STT_FILE)
+  ECase(STT_COMMON)
+  ECase(STT_TLS)
+  ECase(STT_GNU_IFUNC)
+#undef ECase
+}
+
 void MappingTraits<ELFYAML::FileHeader>::mapping(IO &IO,
                                                  ELFYAML::FileHeader &FileHdr) {
   IO.mapRequired("Class", FileHdr.Class);
   IO.mapRequired("Data", FileHdr.Data);
+  IO.mapOptional("OSABI", FileHdr.OSABI, ELFYAML::ELF_ELFOSABI(0));
   IO.mapRequired("Type", FileHdr.Type);
   IO.mapRequired("Machine", FileHdr.Machine);
   IO.mapOptional("Entry", FileHdr.Entry, Hex64(0));
 }
 
+void MappingTraits<ELFYAML::Symbol>::mapping(IO &IO, ELFYAML::Symbol &Symbol) {
+  IO.mapOptional("Name", Symbol.Name, StringRef());
+  IO.mapOptional("Binding", Symbol.Binding, ELFYAML::ELF_STB(0));
+  IO.mapOptional("Type", Symbol.Type, ELFYAML::ELF_STT(0));
+}
+
+void MappingTraits<ELFYAML::Section>::mapping(IO &IO,
+                                              ELFYAML::Section &Section) {
+  IO.mapOptional("Name", Section.Name, StringRef());
+  IO.mapRequired("Type", Section.Type);
+  IO.mapOptional("Flags", Section.Flags, ELFYAML::ELF_SHF(0));
+  IO.mapOptional("Address", Section.Address, Hex64(0));
+  IO.mapOptional("Content", Section.Content);
+  IO.mapOptional("Link", Section.Link);
+  IO.mapOptional("AddressAlign", Section.AddressAlign, Hex64(0));
+  // TODO: Error if `Type` is SHT_SYMTAB and this is not present, or if
+  // `Type` is *not* SHT_SYMTAB and this *is* present. (By SHT_SYMTAB I
+  // also mean SHT_DYNSYM, but for simplicity right now we just do
+  // SHT_SYMTAB). Want to be able to share the predicate with consumers of
+  // this structure.
+  IO.mapOptional("Symbols", Section.Symbols);
+}
+
 void MappingTraits<ELFYAML::Object>::mapping(IO &IO, ELFYAML::Object &Object) {
   IO.mapRequired("FileHeader", Object.Header);
+  IO.mapOptional("Sections", Object.Sections);
 }
 
 } // end namespace yaml
