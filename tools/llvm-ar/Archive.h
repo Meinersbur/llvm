@@ -20,6 +20,7 @@
 #include "llvm/ADT/ilist.h"
 #include "llvm/ADT/ilist_node.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TimeValue.h"
 #include <map>
 #include <set>
@@ -52,9 +53,8 @@ class ArchiveMember : public ilist_node<ArchiveMember> {
       SVR4SymbolTableFlag = 1,     ///< Member is a SVR4 symbol table
       BSD4SymbolTableFlag = 2,     ///< Member is a BSD4 symbol table
       BitcodeFlag         = 4,     ///< Member is bitcode
-      HasPathFlag         = 8,     ///< Member has a full or partial path
-      HasLongFilenameFlag = 16,    ///< Member uses the long filename syntax
-      StringTableFlag     = 32     ///< Member is an ar(1) format string table
+      HasLongFilenameFlag = 8,     ///< Member uses the long filename syntax
+      StringTableFlag     = 16     ///< Member is an ar(1) format string table
     };
 
   /// @}
@@ -124,10 +124,6 @@ class ArchiveMember : public ilist_node<ArchiveMember> {
     /// @returns true iff the archive member is a bitcode file.
     /// @brief Determine if this member is a bitcode file.
     bool isBitcode() const { return flags&BitcodeFlag; }
-
-    /// @returns true iff the file name contains a path (directory) component.
-    /// @brief Determine if the member has a path
-    bool hasPath() const { return flags&HasPathFlag; }
 
     /// Long filenames are an artifact of the ar(1) file format which allows
     /// up to sixteen characters in its header and doesn't allow a path
@@ -380,7 +376,7 @@ class Archive {
     /// returns true if writing member failed, \p error set to error message.
     bool writeMember(
       const ArchiveMember& member, ///< The member to be written
-      std::ofstream& ARFile,       ///< The file to write member onto
+      raw_fd_ostream& ARFile,      ///< The file to write member onto
       bool TruncateNames,          ///< Should names be truncated to 11 chars?
       std::string* ErrMessage      ///< If non-null, place were error msg is set
     );

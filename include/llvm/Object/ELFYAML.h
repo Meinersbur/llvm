@@ -40,7 +40,6 @@ LLVM_YAML_STRONG_TYPEDEF(uint8_t, ELF_ELFOSABI)
 LLVM_YAML_STRONG_TYPEDEF(uint32_t, ELF_SHT)
 // Just use 64, since it can hold 32-bit values too.
 LLVM_YAML_STRONG_TYPEDEF(uint64_t, ELF_SHF)
-LLVM_YAML_STRONG_TYPEDEF(uint8_t, ELF_STB)
 LLVM_YAML_STRONG_TYPEDEF(uint8_t, ELF_STT)
 
 // For now, hardcode 64 bits everywhere that 32 or 64 would be needed
@@ -55,8 +54,15 @@ struct FileHeader {
 };
 struct Symbol {
   StringRef Name;
-  ELF_STB Binding;
   ELF_STT Type;
+  StringRef Section;
+  llvm::yaml::Hex64 Value;
+  llvm::yaml::Hex64 Size;
+};
+struct LocalGlobalWeakSymbols {
+  std::vector<Symbol> Local;
+  std::vector<Symbol> Global;
+  std::vector<Symbol> Weak;
 };
 struct Section {
   StringRef Name;
@@ -66,12 +72,15 @@ struct Section {
   object::yaml::BinaryRef Content;
   StringRef Link;
   llvm::yaml::Hex64 AddressAlign;
-  // For SHT_SYMTAB; should be empty otherwise.
-  std::vector<Symbol> Symbols;
 };
 struct Object {
   FileHeader Header;
   std::vector<Section> Sections;
+  // Although in reality the symbols reside in a section, it is a lot
+  // cleaner and nicer if we read them from the YAML as a separate
+  // top-level key, which automatically ensures that invariants like there
+  // being a single SHT_SYMTAB section are upheld.
+  LocalGlobalWeakSymbols Symbols;
 };
 
 } // end namespace ELFYAML
@@ -119,11 +128,6 @@ struct ScalarBitSetTraits<ELFYAML::ELF_SHF> {
 };
 
 template <>
-struct ScalarEnumerationTraits<ELFYAML::ELF_STB> {
-  static void enumeration(IO &IO, ELFYAML::ELF_STB &Value);
-};
-
-template <>
 struct ScalarEnumerationTraits<ELFYAML::ELF_STT> {
   static void enumeration(IO &IO, ELFYAML::ELF_STT &Value);
 };
@@ -136,6 +140,11 @@ struct MappingTraits<ELFYAML::FileHeader> {
 template <>
 struct MappingTraits<ELFYAML::Symbol> {
   static void mapping(IO &IO, ELFYAML::Symbol &Symbol);
+};
+
+template <>
+struct MappingTraits<ELFYAML::LocalGlobalWeakSymbols> {
+  static void mapping(IO &IO, ELFYAML::LocalGlobalWeakSymbols &Symbols);
 };
 
 template <>

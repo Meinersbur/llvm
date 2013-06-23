@@ -5,5 +5,4 @@ add_llvm_library(LLVMVectorize
   Vectorize.cpp
   LoopVectorize.cpp
   SLPVectorizer.cpp
-  VecUtils.cpp
   )

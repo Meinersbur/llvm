@@ -19,14 +19,20 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/PathV1.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
+#include <fcntl.h>
 #include <memory>
+
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
+#include <unistd.h>
+#else
+#include <io.h>
+#endif
+
 using namespace llvm;
 
 // Option for compatibility with AIX, not used but must allow it to be present.
@@ -399,39 +405,43 @@ doExtract(std::string* ErrMsg) {
     if (Paths.empty() ||
         (std::find(Paths.begin(), Paths.end(), I->getPath()) != Paths.end())) {
 
-      // Make sure the intervening directories are created
-      if (I->hasPath()) {
-        sys::Path dirs(I->getPath());
-        dirs.eraseComponent();
-        if (dirs.createDirectoryOnDisk(/*create_parents=*/true, ErrMsg))
-          return true;
+      // Open up a file stream for writing
+      int OpenFlags = O_TRUNC | O_WRONLY | O_CREAT;
+#ifdef O_BINARY
+      OpenFlags |= O_BINARY;
+#endif
+
+      int FD = open(I->getPath().str().c_str(), OpenFlags, 0664);
+      if (FD < 0)
+        return true;
+
+      {
+        raw_fd_ostream file(FD, false);
+
+        // Get the data and its length
+        const char* data = reinterpret_cast<const char*>(I->getData());
+        unsigned len = I->getSize();
+
+        // Write the data.
+        file.write(data, len);
       }
 
-      // Open up a file stream for writing
-      std::ios::openmode io_mode = std::ios::out | std::ios::trunc |
-                                   std::ios::binary;
-      std::ofstream file(I->getPath().str().c_str(), io_mode);
-
-      // Get the data and its length
-      const char* data = reinterpret_cast<const char*>(I->getData());
-      unsigned len = I->getSize();
-
-      // Write the data.
-      file.write(data,len);
-      file.close();
-
-      sys::PathWithStatus PWS(I->getPath());
-      sys::FileStatus Status = *PWS.getFileStatus();
-
       // Retain the original mode.
-      Status.mode = I->getMode();
+      sys::fs::perms Mode = sys::fs::perms(I->getMode());
+      // FIXME: at least on posix we should be able to reuse FD (fchmod).
+      error_code EC = sys::fs::permissions(I->getPath(), Mode);
+      if (EC)
+        fail(EC.message());
 
       // If we're supposed to retain the original modification times, etc. do so
       // now.
-      if (OriginalDates)
-        Status.modTime = I->getModTime();
-
-      PWS.setStatusInfoOnDisk(Status);
+      if (OriginalDates) {
+        EC = sys::fs::setLastModificationAndAccessTime(FD, I->getModTime());
+        if (EC)
+          fail(EC.message());
+      }
+      if (close(FD))
+        return true;
     }
   }
   return false;
@@ -571,7 +581,7 @@ doReplaceOrInsert(std::string* ErrMsg) {
     std::set<std::string>::iterator found = remaining.end();
     for (std::set<std::string>::iterator RI = remaining.begin(),
          RE = remaining.end(); RI != RE; ++RI ) {
-      std::string compare(*RI);
+      std::string compare(sys::path::filename(*RI));
       if (TruncateNames && compare.length() > 15) {
         const char* nm = compare.c_str();
         unsigned len = compare.length();
@@ -591,15 +601,14 @@ doReplaceOrInsert(std::string* ErrMsg) {
     }
 
     if (found != remaining.end()) {
-      std::string Err;
-      sys::PathWithStatus PwS(*found);
-      const sys::FileStatus *si = PwS.getFileStatus(false, &Err);
-      if (!si)
+      sys::fs::file_status Status;
+      error_code EC = sys::fs::status(*found, Status);
+      if (EC)
         return true;
-      if (!si->isDir) {
+      if (!sys::fs::is_directory(Status)) {
         if (OnlyUpdate) {
           // Replace the item only if it is newer.
-          if (si->modTime > I->getModTime())
+          if (Status.getLastModificationTime() > I->getModTime())
             if (I->replaceWith(*found, ErrMsg))
               return true;
         } else {
@@ -662,26 +671,19 @@ int main(int argc, char **argv) {
   // can't handle the grouped positional parameters without a dash.
   ArchiveOperation Operation = parseCommandLine();
 
-  // Check the path name of the archive
-  sys::Path ArchivePath;
-  if (!ArchivePath.set(ArchiveName)) {
-    errs() << argv[0] << ": Archive name invalid: " << ArchiveName << "\n";
-    return 1;
-  }
-
   // Create or open the archive object.
   bool Exists;
-  if (llvm::sys::fs::exists(ArchivePath.str(), Exists) || !Exists) {
+  if (llvm::sys::fs::exists(ArchiveName, Exists) || !Exists) {
     // Produce a warning if we should and we're creating the archive
     if (!Create)
-      errs() << argv[0] << ": creating " << ArchivePath.str() << "\n";
-    TheArchive = Archive::CreateEmpty(ArchivePath.str(), Context);
+      errs() << argv[0] << ": creating " << ArchiveName << "\n";
+    TheArchive = Archive::CreateEmpty(ArchiveName, Context);
     TheArchive->writeToDisk();
   } else {
     std::string Error;
-    TheArchive = Archive::OpenAndLoad(ArchivePath.str(), Context, &Error);
+    TheArchive = Archive::OpenAndLoad(ArchiveName, Context, &Error);
     if (TheArchive == 0) {
-      errs() << argv[0] << ": error loading '" << ArchivePath.str() << "': "
+      errs() << argv[0] << ": error loading '" << ArchiveName << "': "
              << Error << "!\n";
       return 1;
     }

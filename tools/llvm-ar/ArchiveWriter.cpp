@@ -18,7 +18,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/PathV1.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/system_error.h"
@@ -98,13 +97,7 @@ Archive::fillHeader(const ArchiveMember &mbr, ArchiveMemberHeader& hdr,
   sprintf(buffer,"%-12u", unsigned(secondsSinceEpoch));
   memcpy(hdr.date,buffer,12);
 
-  // Get rid of trailing blanks in the name
-  std::string mbrPath = mbr.getPath().str();
-  size_t mbrLen = mbrPath.length();
-  while (mbrLen > 0 && mbrPath[mbrLen-1] == ' ') {
-    mbrPath.erase(mbrLen-1,1);
-    mbrLen--;
-  }
+  std::string mbrPath = sys::path::filename(mbr.getPath());
 
   // Set the name field in one of its various flavors.
   bool writeLongName = false;
@@ -165,24 +158,26 @@ bool Archive::addFileBefore(StringRef filePath, iterator where,
   ArchiveMember* mbr = new ArchiveMember(this);
 
   mbr->data = 0;
-  mbr->path = filePath.str();
-  sys::PathWithStatus PWS(mbr->path);
-  const sys::FileStatus *FSInfo = PWS.getFileStatus(false, ErrMsg);
-  if (!FSInfo) {
+  mbr->path = filePath;
+  sys::fs::file_status Status;
+  error_code EC = sys::fs::status(filePath, Status);
+  if (EC) {
     delete mbr;
     return true;
   }
-  mbr->User = FSInfo->getUser();
-  mbr->Group = FSInfo->getGroup();
-  mbr->Mode = FSInfo->getMode();
-  mbr->ModTime = FSInfo->getTimestamp();
-  mbr->Size = FSInfo->getSize();
+  mbr->User = Status.getUser();
+  mbr->Group = Status.getGroup();
+  mbr->Mode = Status.permissions();
+  mbr->ModTime = Status.getLastModificationTime();
+  // FIXME: On posix this is a second stat.
+  EC =  sys::fs::file_size(filePath, mbr->Size);
+  if (EC) {
+    delete mbr;
+    return true;
+  }
 
   unsigned flags = 0;
-  bool hasSlash = filePath.str().find('/') != std::string::npos;
-  if (hasSlash)
-    flags |= ArchiveMember::HasPathFlag;
-  if (hasSlash || filePath.str().length() > 15)
+  if (sys::path::filename(filePath).size() > 15)
     flags |= ArchiveMember::HasLongFilenameFlag;
 
   sys::fs::file_magic type;
@@ -204,12 +199,12 @@ bool Archive::addFileBefore(StringRef filePath, iterator where,
 bool
 Archive::writeMember(
   const ArchiveMember& member,
-  std::ofstream& ARFile,
+  raw_fd_ostream& ARFile,
   bool TruncateNames,
   std::string* ErrMsg
 ) {
 
-  unsigned filepos = ARFile.tellp();
+  uint64_t filepos = ARFile.tell();
   filepos -= 8;
 
   // Get the data and its size either from the
@@ -240,15 +235,15 @@ Archive::writeMember(
 
   // Write the long filename if its long
   if (writeLongName) {
-    ARFile.write(member.getPath().str().data(),
-                 member.getPath().str().length());
+    StringRef Name = sys::path::filename(member.getPath());
+    ARFile.write(Name.data(), Name.size());
   }
 
   // Write the (possibly compressed) member's content to the file.
   ARFile.write(data,fSize);
 
   // Make sure the member is an even length
-  if ((ARFile.tellp() & 1) == 1)
+  if ((ARFile.tell() & 1) == 1)
     ARFile << ARFILE_PAD;
 
   // Close the mapped file if it was opened
@@ -270,25 +265,18 @@ bool Archive::writeToDisk(bool TruncateNames, std::string *ErrMsg) {
   }
 
   // Create a temporary file to store the archive in
-  sys::Path TmpArchive(archPath);
-  if (TmpArchive.createTemporaryFileOnDisk(ErrMsg))
+  int TmpArchiveFD;
+  SmallString<128> TmpArchive;
+  error_code EC = sys::fs::unique_file("temp-archive-%%%%%%%.a", TmpArchiveFD,
+                                       TmpArchive, true, 0666);
+  if (EC)
     return true;
 
   // Make sure the temporary gets removed if we crash
-  sys::RemoveFileOnSignal(TmpArchive.str());
+  sys::RemoveFileOnSignal(TmpArchive);
 
   // Create archive file for output.
-  std::ios::openmode io_mode = std::ios::out | std::ios::trunc |
-                               std::ios::binary;
-  std::ofstream ArchiveFile(TmpArchive.c_str(), io_mode);
-
-  // Check for errors opening or creating archive file.
-  if (!ArchiveFile.is_open() || ArchiveFile.bad()) {
-    TmpArchive.eraseFromDisk();
-    if (ErrMsg)
-      *ErrMsg = "Error opening archive file: " + archPath;
-    return true;
-  }
+  raw_fd_ostream ArchiveFile(TmpArchiveFD, true);
 
   // Write magic string to archive.
   ArchiveFile << ARFILE_MAGIC;
@@ -297,7 +285,7 @@ bool Archive::writeToDisk(bool TruncateNames, std::string *ErrMsg) {
   // builds the symbol table, symTab.
   for (MembersList::iterator I = begin(), E = end(); I != E; ++I) {
     if (writeMember(*I, ArchiveFile, TruncateNames, ErrMsg)) {
-      TmpArchive.eraseFromDisk();
+      sys::fs::remove(Twine(TmpArchive));
       ArchiveFile.close();
       return true;
     }
@@ -311,15 +299,10 @@ bool Archive::writeToDisk(bool TruncateNames, std::string *ErrMsg) {
   // this because we cannot replace an open file on Windows.
   cleanUpMemory();
 
-  if (TmpArchive.renamePathOnDisk(sys::Path(archPath), ErrMsg))
+  if (sys::fs::rename(Twine(TmpArchive), archPath)) {
+    *ErrMsg = EC.message();
     return true;
-
-  // Set correct read and write permissions after temporary file is moved
-  // to final destination path.
-  if (sys::Path(archPath).makeReadableOnDisk(ErrMsg))
-    return true;
-  if (sys::Path(archPath).makeWriteableOnDisk(ErrMsg))
-    return true;
+  }
 
   return false;
 }

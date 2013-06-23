@@ -18,7 +18,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/PathV1.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/system_error.h"
 #include <cstring>
@@ -97,15 +96,8 @@ bool ArchiveMember::replaceWith(StringRef newFile, std::string* ErrMsg) {
   else
     flags &= ~StringTableFlag;
 
-  // If it has a slash then it has a path
-  bool hasSlash = path.find('/') != std::string::npos;
-  if (hasSlash)
-    flags |= HasPathFlag;
-  else
-    flags &= ~HasPathFlag;
-
   // If it has a slash or its over 15 chars then its a long filename format
-  if (hasSlash || path.length() > 15)
+  if (path.length() > 15)
     flags |= HasLongFilenameFlag;
   else
     flags &= ~HasLongFilenameFlag;
@@ -116,15 +108,21 @@ bool ArchiveMember::replaceWith(StringRef newFile, std::string* ErrMsg) {
   if (!signature) {
     sys::fs::get_magic(path, magic.capacity(), magic);
     signature = magic.c_str();
-    sys::PathWithStatus PWS(path);
-    const sys::FileStatus *FSinfo = PWS.getFileStatus(false, ErrMsg);
-    if (!FSinfo)
+
+    sys::fs::file_status Status;
+    error_code EC = sys::fs::status(path, Status);
+    if (EC)
       return true;
-    User = FSinfo->getUser();
-    Group = FSinfo->getGroup();
-    Mode = FSinfo->getMode();
-    ModTime = FSinfo->getTimestamp();
-    Size = FSinfo->getSize();
+
+    User = Status.getUser();
+    Group = Status.getGroup();
+    Mode = Status.permissions();
+    ModTime = Status.getLastModificationTime();
+
+    // FIXME: On posix this is a second stat.
+    EC = sys::fs::file_size(path, Size);
+    if (EC)
+      return true;
   }
 
   // Determine what kind of file it is.

@@ -110,6 +110,12 @@ namespace llvm {
 namespace sys  {
 namespace fs {
 
+TimeValue file_status::getLastModificationTime() const {
+  TimeValue Ret;
+  Ret.fromEpochTime(fs_st_mtime);
+  return Ret;
+}
+
 error_code current_path(SmallVectorImpl<char> &result) {
 #ifdef MAXPATHLEN
   result.reserve(MAXPATHLEN);
@@ -356,7 +362,7 @@ error_code file_size(const Twine &path, uint64_t &result) {
   return error_code::success();
 }
 
-error_code GetUniqueID(const Twine Path, uint64_t &Result) {
+error_code getUniqueID(const Twine Path, uint64_t &Result) {
   SmallString<128> Storage;
   StringRef P = Path.toNullTerminatedStringRef(Storage);
 
@@ -401,6 +407,9 @@ error_code status(const Twine &path, file_status &result) {
 
   result.fs_st_dev = status.st_dev;
   result.fs_st_ino = status.st_ino;
+  result.fs_st_mtime = status.st_mtime;
+  result.fs_st_uid = status.st_uid;
+  result.fs_st_gid = status.st_gid;
 
   return error_code::success();
 }
@@ -411,6 +420,7 @@ error_code permissions(const Twine &path, perms prms) {
     llvm_unreachable("add_perms and remove_perms are mutually exclusive");
 
   // Get current permissions
+  // FIXME: We only need this stat for add_perms and remove_perms.
   file_status info;
   if (error_code ec = status(path, info)) {
     return ec;
@@ -431,6 +441,16 @@ error_code permissions(const Twine &path, perms prms) {
     return error_code(errno, system_category()); 
   }
 
+  return error_code::success();
+}
+
+error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
+  timeval Times[2];
+  Times[0].tv_sec = Time.toPosixTime();
+  Times[0].tv_usec = 0;
+  Times[1] = Times[0];
+  if (::futimes(FD, Times))
+    return error_code(errno, system_category());
   return error_code::success();
 }
 
@@ -694,7 +714,7 @@ error_code get_magic(const Twine &path, uint32_t len,
   if (std::ferror(file) != 0) {
     std::fclose(file);
     return error_code(errno, system_category());
-  } else if (size != result.size()) {
+  } else if (size != len) {
     if (std::feof(file) != 0) {
       std::fclose(file);
       result.set_size(size);
@@ -702,7 +722,7 @@ error_code get_magic(const Twine &path, uint32_t len,
     }
   }
   std::fclose(file);
-  result.set_size(len);
+  result.set_size(size);
   return error_code::success();
 }
 

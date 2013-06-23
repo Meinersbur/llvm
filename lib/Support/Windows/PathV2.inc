@@ -128,6 +128,16 @@ namespace llvm {
 namespace sys  {
 namespace fs {
 
+TimeValue file_status::getLastModificationTime() const {
+  ULARGE_INTEGER UI;
+  UI.LowPart = LastWriteTimeLow;
+  UI.HighPart = LastWriteTimeHigh;
+
+  TimeValue Ret;
+  Ret.fromWin32Time(UI.QuadPart);
+  return Ret;
+}
+
 error_code current_path(SmallVectorImpl<char> &result) {
   SmallVector<wchar_t, 128> cur_path;
   cur_path.reserve(128);
@@ -425,7 +435,7 @@ error_code file_size(const Twine &path, uint64_t &result) {
   return error_code::success();
 }
 
-error_code GetUniqueID(const Twine Path, uint64_t &Result) {
+error_code getUniqueID(const Twine Path, uint64_t &Result) {
   file_status Status;
   if (error_code E = status(Path, Status))
     return E;
@@ -575,6 +585,17 @@ error_code permissions(const Twine &path, perms prms) {
   return error_code::success();
 }
 
+error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
+  ULARGE_INTEGER UI;
+  UI.QuadPart = Time.toWin32Time();
+  FILETIME FT;
+  FT.dwLowDateTime = UI.LowPart;
+  FT.dwHighDateTime = UI.HighPart;
+  HANDLE FileHandle = reinterpret_cast<HANDLE>(_get_osfhandle(FD));
+  if (!SetFileTime(FileHandle, NULL, &FT, &FT))
+    return windows_error(::GetLastError());
+  return error_code::success();
+}
 
 // FIXME: mode should be used here and default to user r/w only,
 // it currently comes in as a UNIX mode.
