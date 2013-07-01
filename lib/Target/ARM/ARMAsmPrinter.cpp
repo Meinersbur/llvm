@@ -464,8 +464,14 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
       // This takes advantage of the 2 operand-ness of ldm/stm and that we've
       // already got the operands in registers that are operands to the
       // inline asm statement.
-
-      O << "{" << ARMInstPrinter::getRegisterName(RegBegin);
+      O << "{";
+      if (ARM::GPRPairRegClass.contains(RegBegin)) {
+        const TargetRegisterInfo *TRI = MF->getTarget().getRegisterInfo();
+        unsigned Reg0 = TRI->getSubReg(RegBegin, ARM::gsub_0);
+        O << ARMInstPrinter::getRegisterName(Reg0) << ", ";;
+        RegBegin = TRI->getSubReg(RegBegin, ARM::gsub_1);
+      }
+      O << ARMInstPrinter::getRegisterName(RegBegin);
 
       // FIXME: The register allocator not only may not have given us the
       // registers in sequence, but may not be in ascending registers. This
@@ -491,6 +497,20 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
         return true;
       unsigned Flags = FlagsOP.getImm();
       unsigned NumVals = InlineAsm::getNumOperandRegisters(Flags);
+      unsigned RC;
+      InlineAsm::hasRegClassConstraint(Flags, RC);
+      if (RC == ARM::GPRPairRegClassID) {
+        if (NumVals != 1)
+          return true;
+        const MachineOperand &MO = MI->getOperand(OpNum);
+        if (!MO.isReg())
+          return true;
+        const TargetRegisterInfo *TRI = MF->getTarget().getRegisterInfo();
+        unsigned Reg = TRI->getSubReg(MO.getReg(), ExtraCode[0] == 'Q' ?
+            ARM::gsub_0 : ARM::gsub_1);
+        O << ARMInstPrinter::getRegisterName(Reg);
+        return false;
+      }
       if (NumVals != 2)
         return true;
       unsigned RegOp = ExtraCode[0] == 'Q' ? OpNum : OpNum + 1;
@@ -749,16 +769,9 @@ void ARMAsmPrinter::emitAttributes() {
                                ARMBuildAttrs::Allowed);
     AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
                                ARMBuildAttrs::Allowed);
-  } else if (CPUString == "generic") {
-    // For a generic CPU, we assume a standard v7a architecture in Subtarget.
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v7);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch_profile,
-                               ARMBuildAttrs::ApplicationProfile);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::ARM_ISA_use,
-                               ARMBuildAttrs::Allowed);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
-                               ARMBuildAttrs::AllowThumb32);
-  } else if (Subtarget->hasV7Ops()) {
+  } else if (Subtarget->hasV8Ops())
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v8);
+  else if (Subtarget->hasV7Ops()) {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v7);
     AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
                                ARMBuildAttrs::AllowThumb32);
@@ -772,6 +785,8 @@ void ARMAsmPrinter::emitAttributes() {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v5T);
   else if (Subtarget->hasV4TOps())
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v4T);
+  else
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v4);
 
   if (Subtarget->hasNEON() && emitFPU) {
     /* NEON is not exactly a VFP architecture, but GAS emit one of
@@ -786,8 +801,14 @@ void ARMAsmPrinter::emitAttributes() {
     emitFPU = false;
   }
 
-  /* VFPv4 + .fpu */
-  if (Subtarget->hasVFP4()) {
+  /* V8FP + .fpu */
+  if (Subtarget->hasV8FP()) {
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::VFP_arch,
+                               ARMBuildAttrs::AllowV8FPA);
+    if (emitFPU)
+      AttrEmitter->EmitTextAttribute(ARMBuildAttrs::VFP_arch, "v8fp");
+    /* VFPv4 + .fpu */
+  } else if (Subtarget->hasVFP4()) {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::VFP_arch,
                                ARMBuildAttrs::AllowFPv4A);
     if (emitFPU)
@@ -811,8 +832,12 @@ void ARMAsmPrinter::emitAttributes() {
   /* TODO: ARMBuildAttrs::Allowed is not completely accurate,
    * since NEON can have 1 (allowed) or 2 (MAC operations) */
   if (Subtarget->hasNEON()) {
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
-                               ARMBuildAttrs::Allowed);
+    if (Subtarget->hasV8Ops())
+      AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
+                                 ARMBuildAttrs::AllowedNeonV8);
+    else
+      AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
+                                 ARMBuildAttrs::Allowed);
   }
 
   // Signal various FP modes.

@@ -38,29 +38,11 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::FDIV, MVT::v4f32, Expand);
   setOperationAction(ISD::FSUB, MVT::v4f32, Expand);
 
-  setOperationAction(ISD::ADD,  MVT::v4i32, Expand);
-  setOperationAction(ISD::AND,  MVT::v4i32, Expand);
   setOperationAction(ISD::FP_TO_SINT, MVT::v4i32, Expand);
   setOperationAction(ISD::FP_TO_UINT, MVT::v4i32, Expand);
-  setOperationAction(ISD::MUL,  MVT::v2i32, Expand);
-  setOperationAction(ISD::MUL,  MVT::v4i32, Expand);
-  setOperationAction(ISD::OR, MVT::v4i32, Expand);
-  setOperationAction(ISD::OR, MVT::v2i32, Expand);
   setOperationAction(ISD::SINT_TO_FP, MVT::v4i32, Expand);
-  setOperationAction(ISD::SHL, MVT::v4i32, Expand);
-  setOperationAction(ISD::SHL, MVT::v2i32, Expand);
-  setOperationAction(ISD::SRL, MVT::v4i32, Expand);
-  setOperationAction(ISD::SRL, MVT::v2i32, Expand);
-  setOperationAction(ISD::SRA, MVT::v4i32, Expand);
-  setOperationAction(ISD::SRA, MVT::v2i32, Expand);
-  setOperationAction(ISD::SUB, MVT::v4i32, Expand);
-  setOperationAction(ISD::SUB, MVT::v2i32, Expand);
   setOperationAction(ISD::UINT_TO_FP, MVT::v4i32, Expand);
-  setOperationAction(ISD::UDIV, MVT::v4i32, Expand);
-  setOperationAction(ISD::UREM, MVT::v4i32, Expand);
   setOperationAction(ISD::SETCC, MVT::v4i32, Expand);
-  setOperationAction(ISD::XOR, MVT::v4i32, Expand);
-  setOperationAction(ISD::XOR, MVT::v2i32, Expand);
 
   setOperationAction(ISD::BR_CC, MVT::i32, Expand);
   setOperationAction(ISD::BR_CC, MVT::f32, Expand);
@@ -156,6 +138,19 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
     break;
   }
 
+  case AMDGPU::LDS_READ_RET: {
+    MachineInstrBuilder NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
+                                        TII->get(MI->getOpcode()),
+                                        AMDGPU::OQAP);
+    for (unsigned i = 1, e = MI->getNumOperands(); i < e; ++i) {
+      NewMI.addOperand(MI->getOperand(i));
+    }
+    TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
+                                 MI->getOperand(0).getReg(),
+                                 AMDGPU::OQAP);
+    break;
+  }
+
   case AMDGPU::MOV_IMM_F32:
     TII->buildMovImm(*BB, I, MI->getOperand(0).getReg(),
                      MI->getOperand(1).getFPImm()->getValueAPF()
@@ -168,7 +163,7 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
   case AMDGPU::CONST_COPY: {
     MachineInstr *NewMI = TII->buildDefaultInstruction(*BB, MI, AMDGPU::MOV,
         MI->getOperand(0).getReg(), AMDGPU::ALU_CONST);
-    TII->setImmOperand(NewMI, R600Operands::SRC0_SEL,
+    TII->setImmOperand(NewMI, AMDGPU::OpName::src0_sel,
         MI->getOperand(1).getImm());
     break;
   }
@@ -474,6 +469,8 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
 //===----------------------------------------------------------------------===//
 
 SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  R600MachineFunctionInfo *MFI = MF.getInfo<R600MachineFunctionInfo>();
   switch (Op.getOpcode()) {
   default: return AMDGPUTargetLowering::LowerOperation(Op, DAG);
   case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
@@ -481,14 +478,13 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
   case ISD::STORE: return LowerSTORE(Op, DAG);
   case ISD::LOAD: return LowerLOAD(Op, DAG);
   case ISD::FrameIndex: return LowerFrameIndex(Op, DAG);
+  case ISD::GlobalAddress: return LowerGlobalAddress(MFI, Op, DAG);
   case ISD::INTRINSIC_VOID: {
     SDValue Chain = Op.getOperand(0);
     unsigned IntrinsicID =
                          cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
     switch (IntrinsicID) {
     case AMDGPUIntrinsic::AMDGPU_store_output: {
-      MachineFunction &MF = DAG.getMachineFunction();
-      R600MachineFunctionInfo *MFI = MF.getInfo<R600MachineFunctionInfo>();
       int64_t RegIndex = cast<ConstantSDNode>(Op.getOperand(3))->getZExtValue();
       unsigned Reg = AMDGPU::R600_TReg32RegClass.getRegister(RegIndex);
       MFI->LiveOuts.push_back(Reg);

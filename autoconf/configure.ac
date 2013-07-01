@@ -222,10 +222,15 @@ AC_CACHE_CHECK([type of operating system we're going to host on],
     llvm_cv_no_link_all_option="-Wl,-noall_load"
     llvm_cv_os_type="Minix"
     llvm_cv_platform_type="Unix" ;;
-  *-*-freebsd* | *-*-kfreebsd-gnu)
+  *-*-freebsd*)
     llvm_cv_link_all_option="-Wl,--whole-archive"
     llvm_cv_no_link_all_option="-Wl,--no-whole-archive"
     llvm_cv_os_type="FreeBSD"
+    llvm_cv_platform_type="Unix" ;;
+  *-*-kfreebsd-gnu)
+    llvm_cv_link_all_option="-Wl,--whole-archive"
+    llvm_cv_no_link_all_option="-Wl,--no-whole-archive"
+    llvm_cv_os_type="GNU/kFreeBSD"
     llvm_cv_platform_type="Unix" ;;
   *-*-openbsd*)
     llvm_cv_link_all_option="-Wl,--whole-archive"
@@ -317,8 +322,10 @@ AC_CACHE_CHECK([type of operating system we're going to target],
     llvm_cv_target_os_type="Darwin" ;;
   *-*-minix*)
     llvm_cv_target_os_type="Minix" ;;
-  *-*-freebsd* | *-*-kfreebsd-gnu)
+  *-*-freebsd*)
     llvm_cv_target_os_type="FreeBSD" ;;
+  *-*-kfreebsd-gnu)
+    llvm_cv_target_os_type="GNU/kFreeBSD" ;;
   *-*-openbsd*)
     llvm_cv_target_os_type="OpenBSD" ;;
   *-*-netbsd*)
@@ -508,6 +515,19 @@ case "$enableval" in
   no)  AC_SUBST(ENABLE_CXX11,[0]) ;;
   default) AC_SUBST(ENABLE_CXX11,[0]);;
   *) AC_MSG_ERROR([Invalid setting for --enable-cxx11. Use "yes" or "no"]) ;;
+esac
+
+dnl --enable-fission : check whether or not to use -gsplit-dwarf on the command
+dnl line
+AC_ARG_ENABLE(split-dwarf,
+              AS_HELP_STRING([--enable-split-dwarf],
+                             [Use split-dwarf if available (default is NO)]),,
+                             enableval=default)
+case "$enableval" in
+  yes) AC_SUBST(ENABLE_SPLIT_DWARF,[1]) ;;
+  no)  AC_SUBST(ENABLE_SPLIT_DWARF,[0]) ;;
+  default) AC_SUBST(ENABLE_SPLIT_DWARF,[0]);;
+  *) AC_MSG_ERROR([Invalid setting for --enable-split-dwarf. Use "yes" or "no"]) ;;
 esac
 
 dnl --enable-clang-arcmt: check whether to enable clang arcmt

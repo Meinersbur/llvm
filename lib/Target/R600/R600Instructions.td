@@ -114,7 +114,9 @@ class R600_1OP <bits<11> inst, string opName, list<dag> pattern,
   let update_pred = 0;
   let HasNativeOperands = 1;
   let Op1 = 1;
+  let ALUInst = 1;
   let DisableEncoding = "$literal";
+  let UseNamedOperandTable = 1;
 
   let Inst{31-0}  = Word0;
   let Inst{63-32} = Word1;
@@ -126,7 +128,7 @@ class R600_1OP_Helper <bits<11> inst, string opName, SDPatternOperator node,
               [(set R600_Reg32:$dst, (node R600_Reg32:$src0))]
 >;
 
-// If you add our change the operands for R600_2OP instructions, you must
+// If you add or change the operands for R600_2OP instructions, you must
 // also update the R600Op2OperandIndex::ROI enum in R600Defines.h,
 // R600InstrInfo::buildDefaultInstruction(), and R600InstrInfo::getOperandIdx().
 class R600_2OP <bits<11> inst, string opName, list<dag> pattern,
@@ -150,7 +152,9 @@ class R600_2OP <bits<11> inst, string opName, list<dag> pattern,
 
   let HasNativeOperands = 1;
   let Op2 = 1;
+  let ALUInst = 1;
   let DisableEncoding = "$literal";
+  let UseNamedOperandTable = 1;
 
   let Inst{31-0}  = Word0;
   let Inst{63-32} = Word1;
@@ -190,6 +194,8 @@ class R600_3OP <bits<5> inst, string opName, list<dag> pattern,
   let HasNativeOperands = 1;
   let DisableEncoding = "$literal";
   let Op3 = 1;
+  let UseNamedOperandTable = 1;
+  let ALUInst = 1;
 
   let Inst{31-0}  = Word0;
   let Inst{63-32} = Word1;
@@ -931,7 +937,11 @@ class R600_VEC2OP<list<dag> pattern> : InstR600 <(outs R600_Reg32:$dst), (ins
    LITERAL:$literal0, LITERAL:$literal1),
   "",
   pattern,
-  AnyALU> {}
+  AnyALU> {
+
+  let UseNamedOperandTable = 1;
+
+}
 }
 
 def DOT_4 : R600_VEC2OP<[(set R600_Reg32:$dst, (DOT4
@@ -949,12 +959,13 @@ multiclass CUBE_Common <bits<11> inst> {
 
   def _pseudo : InstR600 <
     (outs R600_Reg128:$dst),
-    (ins R600_Reg128:$src),
-    "CUBE $dst $src",
-    [(set v4f32:$dst, (int_AMDGPU_cube v4f32:$src))],
+    (ins R600_Reg128:$src0),
+    "CUBE $dst $src0",
+    [(set v4f32:$dst, (int_AMDGPU_cube v4f32:$src0))],
     VecALU
   > {
     let isPseudo = 1;
+    let UseNamedOperandTable = 1;
   }
 
   def _real : R600_2OP <inst, "CUBE", []>;
@@ -1478,6 +1489,8 @@ let hasSideEffects = 1 in {
 
   def FLT_TO_INT_eg : FLT_TO_INT_Common<0x50> {
     let Pattern = [];
+    let TransOnly = 0;
+    let Itinerary = AnyALU;
   }
 
   def INT_TO_FLT_eg : INT_TO_FLT_Common<0x9B>;
@@ -1487,6 +1500,111 @@ let hasSideEffects = 1 in {
   }
 
   def UINT_TO_FLT_eg : UINT_TO_FLT_Common<0x9C>;
+
+def GROUP_BARRIER : InstR600 <
+    (outs), (ins), "  GROUP_BARRIER", [(int_AMDGPU_barrier_local)], AnyALU>,
+    R600ALU_Word0,
+    R600ALU_Word1_OP2 <0x54> {
+
+  let dst = 0;
+  let dst_rel = 0;
+  let src0 = 0;
+  let src0_rel = 0;
+  let src0_neg = 0;
+  let src0_abs = 0;
+  let src1 = 0;
+  let src1_rel = 0;
+  let src1_neg = 0;
+  let src1_abs = 0;
+  let write = 0;
+  let omod = 0;
+  let clamp = 0;
+  let last = 1;
+  let bank_swizzle = 0;
+  let pred_sel = 0;
+  let update_exec_mask = 0;
+  let update_pred = 0;
+
+  let Inst{31-0}  = Word0;
+  let Inst{63-32} = Word1;
+
+  let ALUInst = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// LDS Instructions
+//===----------------------------------------------------------------------===//
+class R600_LDS  <bits<6> op, dag outs, dag ins, string asm,
+                 list<dag> pattern = []> :
+
+    InstR600 <outs, ins, asm, pattern, XALU>,
+    R600_ALU_LDS_Word0,
+    R600LDS_Word1 {
+
+  bits<6>  offset = 0;
+  let lds_op = op;
+
+  let Word1{27} = offset{0};
+  let Word1{12} = offset{1};
+  let Word1{28} = offset{2};
+  let Word1{31} = offset{3};
+  let Word0{12} = offset{4};
+  let Word0{25} = offset{5};
+
+
+  let Inst{31-0}  = Word0;
+  let Inst{63-32} = Word1;
+
+  let ALUInst = 1;
+  let HasNativeOperands = 1;
+  let UseNamedOperandTable = 1;
+}
+
+class R600_LDS_1A <bits<6> lds_op, string name, list<dag> pattern> : R600_LDS <
+  lds_op,
+  (outs R600_Reg32:$dst),
+  (ins R600_Reg32:$src0, REL:$src0_rel, SEL:$src0_sel,
+       LAST:$last, R600_Pred:$pred_sel,
+       BANK_SWIZZLE:$bank_swizzle),
+  "  "#name#" $last OQAP, $src0$src0_rel $pred_sel",
+  pattern
+  > {
+
+  let src1 = 0;
+  let src1_rel = 0;
+  let src2 = 0;
+  let src2_rel = 0;
+
+  let Defs = [OQAP];
+  let usesCustomInserter = 1;
+  let LDS_1A = 1;
+  let DisableEncoding = "$dst";
+}
+
+class R600_LDS_1A1D <bits<6> lds_op, string name, list<dag> pattern> :
+    R600_LDS <
+  lds_op,
+  (outs),
+  (ins R600_Reg32:$src0, REL:$src0_rel, SEL:$src0_sel,
+       R600_Reg32:$src1, REL:$src1_rel, SEL:$src1_sel,
+       LAST:$last, R600_Pred:$pred_sel,
+       BANK_SWIZZLE:$bank_swizzle),
+  "  "#name#" $last $src0$src0_rel, $src1$src1_rel, $pred_sel",
+  pattern
+  > {
+
+  let src2 = 0;
+  let src2_rel = 0;
+  let LDS_1A1D = 1;
+}
+
+def LDS_READ_RET : R600_LDS_1A <0x32, "LDS_READ_RET",
+  [(set (i32 R600_Reg32:$dst), (local_load R600_Reg32:$src0))]
+>;
+
+def LDS_WRITE : R600_LDS_1A1D <0xD, "LDS_WRITE",
+  [(local_store (i32 R600_Reg32:$src1), R600_Reg32:$src0)]
+>;
 
   // TRUNC is used for the FLT_TO_INT instructions to work around a
   // perceived problem where the rounding modes are applied differently
@@ -1753,6 +1871,15 @@ def VTX_READ_GLOBAL_32_cm : VTX_READ_32_cm <1,
 // 128-bit reads
 def VTX_READ_GLOBAL_128_cm : VTX_READ_128_cm <1,
   [(set v4i32:$dst_gpr, (global_load ADDRVTX_READ:$src_gpr))]
+>;
+
+//===----------------------------------------------------------------------===//
+// Constant Loads
+// XXX: We are currently storing all constants in the global address space.
+//===----------------------------------------------------------------------===//
+
+def CONSTANT_LOAD_cm : VTX_READ_32_cm <1,
+  [(set i32:$dst_gpr, (constant_load ADDRVTX_READ:$src_gpr))]
 >;
 
 } // End isCayman

@@ -30,6 +30,11 @@ namespace {
     virtual unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
                                   bool IsPCRel, bool IsRelocWithSymbol,
                                   int64_t Addend) const;
+    virtual const MCSymbol *ExplicitRelSym(const MCAssembler &Asm,
+                                           const MCValue &Target,
+                                           const MCFragment &F,
+                                           const MCFixup &Fixup,
+                                           bool IsPCRel) const;
     virtual const MCSymbol *undefinedExplicitRelSym(const MCValue &Target,
                                                     const MCFixup &Fixup,
                                                     bool IsPCRel) const;
@@ -58,9 +63,11 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
     default:
       llvm_unreachable("Unimplemented");
     case PPC::fixup_ppc_br24:
+    case PPC::fixup_ppc_br24abs:
       Type = ELF::R_PPC_REL24;
       break;
     case PPC::fixup_ppc_brcond14:
+    case PPC::fixup_ppc_brcond14abs:
       Type = ELF::R_PPC_REL14;
       break;
     case PPC::fixup_ppc_half16:
@@ -92,10 +99,10 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
   } else {
     switch ((unsigned)Fixup.getKind()) {
       default: llvm_unreachable("invalid fixup kind!");
-    case PPC::fixup_ppc_br24:
+    case PPC::fixup_ppc_br24abs:
       Type = ELF::R_PPC_ADDR24;
       break;
-    case PPC::fixup_ppc_brcond14:
+    case PPC::fixup_ppc_brcond14abs:
       Type = ELF::R_PPC_ADDR14; // XXX: or BRNTAKEN?_
       break;
     case PPC::fixup_ppc_half16:
@@ -124,6 +131,18 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
         break;
       case MCSymbolRefExpr::VK_PPC_HIGHESTA:
         Type = ELF::R_PPC64_ADDR16_HIGHESTA;
+        break;
+      case MCSymbolRefExpr::VK_GOT:
+        Type = ELF::R_PPC_GOT16;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_LO:
+        Type = ELF::R_PPC_GOT16_LO;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_HI:
+        Type = ELF::R_PPC_GOT16_HI;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_HA:
+        Type = ELF::R_PPC_GOT16_HA;
         break;
       case MCSymbolRefExpr::VK_PPC_TOC:
         Type = ELF::R_PPC64_TOC16;
@@ -232,6 +251,12 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
       case MCSymbolRefExpr::VK_PPC_LO:
         Type = ELF::R_PPC64_ADDR16_LO_DS;
         break;
+      case MCSymbolRefExpr::VK_GOT:
+        Type = ELF::R_PPC64_GOT16_DS;
+	break;
+      case MCSymbolRefExpr::VK_PPC_GOT_LO:
+        Type = ELF::R_PPC64_GOT16_LO_DS;
+        break;
       case MCSymbolRefExpr::VK_PPC_TOC:
         Type = ELF::R_PPC64_TOC16_DS;
 	break;
@@ -306,6 +331,35 @@ unsigned PPCELFObjectWriter::GetRelocType(const MCValue &Target,
                                           bool IsRelocWithSymbol,
                                           int64_t Addend) const {
   return getRelocTypeInner(Target, Fixup, IsPCRel);
+}
+
+const MCSymbol *PPCELFObjectWriter::ExplicitRelSym(const MCAssembler &Asm,
+                                                   const MCValue &Target,
+                                                   const MCFragment &F,
+                                                   const MCFixup &Fixup,
+                                                   bool IsPCRel) const {
+  assert(Target.getSymA() && "SymA cannot be 0");
+  MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
+    MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
+
+  bool EmitThisSym;
+  switch (Modifier) {
+  // GOT references always need a relocation, even if the
+  // target symbol is local.
+  case MCSymbolRefExpr::VK_GOT:
+  case MCSymbolRefExpr::VK_PPC_GOT_LO:
+  case MCSymbolRefExpr::VK_PPC_GOT_HI:
+  case MCSymbolRefExpr::VK_PPC_GOT_HA:
+    EmitThisSym = true;
+    break;
+  default:
+    EmitThisSym = false;
+    break;
+  } 
+
+  if (EmitThisSym)
+    return &Target.getSymA()->getSymbol().AliasedSymbol();
+  return NULL;
 }
 
 const MCSymbol *PPCELFObjectWriter::undefinedExplicitRelSym(const MCValue &Target,

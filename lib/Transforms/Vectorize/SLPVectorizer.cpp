@@ -47,13 +47,13 @@ using namespace llvm;
 
 static cl::opt<int>
     SLPCostThreshold("slp-threshold", cl::init(0), cl::Hidden,
-                     cl::desc("Only vectorize trees if the gain is above this "
-                              "number. (gain = -cost of vectorization)"));
+                     cl::desc("Only vectorize if you gain more than this "
+                              "number "));
 namespace {
 
 static const unsigned MinVecRegSize = 128;
 
-static const unsigned RecursionMaxDepth = 6;
+static const unsigned RecursionMaxDepth = 12;
 
 /// RAII pattern to save the insertion point of the IR builder.
 class BuilderLocGuard {
@@ -127,8 +127,9 @@ public:
   static const int MAX_COST = INT_MIN;
 
   FuncSLP(Function *Func, ScalarEvolution *Se, DataLayout *Dl,
-          TargetTransformInfo *Tti, AliasAnalysis *Aa, LoopInfo *Li) :
-    F(Func), SE(Se), DL(Dl), TTI(Tti), AA(Aa), LI(Li),
+          TargetTransformInfo *Tti, AliasAnalysis *Aa, LoopInfo *Li, 
+          DominatorTree *Dt) :
+    F(Func), SE(Se), DL(Dl), TTI(Tti), AA(Aa), LI(Li), DT(Dt),
     Builder(Se->getContext()) {
     for (Function::iterator it = F->begin(), e = F->end(); it != e; ++it) {
       BasicBlock *BB = it;
@@ -220,6 +221,11 @@ public:
     return false;
   }
 
+  void forgetNumbering() {
+    for (Function::iterator it = F->begin(), e = F->end(); it != e; ++it)
+      BlocksNumbers[it].forget();
+  }
+
   /// -- Vectorization State --
 
   /// Maps values in the tree to the vector lanes that uses them. This map must
@@ -238,9 +244,24 @@ public:
   /// NOTICE: The vectorization methods also use this set.
   ValueSet MustGather;
 
-  /// Contains a list of values that are used outside the current tree. This
+  /// Contains PHINodes that are being processed. We use this data structure
+  /// to stop cycles in the graph.
+  ValueSet VisitedPHIs;
+
+  /// Contains a list of values that are used outside the current tree, the
+  /// first element in the bundle and the insertion point for extracts. This
   /// set must be reset between runs.
-  SetVector<Value *> MultiUserVals;
+  struct UseInfo{
+    UseInfo(Instruction *VL0, int I) :
+      Leader(VL0), LastIndex(I) {}
+    UseInfo() : Leader(0), LastIndex(0) {}
+    /// The first element in the bundle.
+    Instruction *Leader;
+    /// The insertion index.
+    int LastIndex;
+  };
+  MapVector<Instruction*, UseInfo> MultiUserVals;
+  SetVector<Instruction*> ExtractedLane;
 
   /// Holds all of the instructions that we gathered.
   SetVector<Instruction *> GatherSeq;
@@ -255,6 +276,7 @@ public:
   TargetTransformInfo *TTI;
   AliasAnalysis *AA;
   LoopInfo *LI;
+  DominatorTree *DT;
   /// Instruction builder to construct the vectorized tree.
   IRBuilder<> Builder;
 };
@@ -454,15 +476,36 @@ void FuncSLP::getTreeUses_rec(ArrayRef<Value *> VL, unsigned Depth) {
   assert(VL0 && "Invalid instruction");
 
   // Mark instructions with multiple users.
+  int LastIndex = getLastIndex(VL);
   for (unsigned i = 0, e = VL.size(); i < e; ++i) {
+    if (PHINode *PN = dyn_cast<PHINode>(VL[i])) {
+      unsigned NumUses = 0;
+      // Check that PHINodes have only one external (non-self) use.
+      for (Value::use_iterator U = VL[i]->use_begin(), UE = VL[i]->use_end();
+           U != UE; ++U) {
+        // Don't count self uses.
+        if (*U == PN)
+          continue;
+        NumUses++;
+      }
+      if (NumUses > 1) {
+        DEBUG(dbgs() << "SLP: Adding PHI to MultiUserVals "
+              "because it has " << NumUses << " users:" << *PN << " \n");
+        UseInfo UI(VL0, 0);
+        MultiUserVals[PN] = UI;
+      }
+      continue;
+    }
+
     Instruction *I = dyn_cast<Instruction>(VL[i]);
     // Remember to check if all of the users of this instruction are vectorized
     // within our tree. At depth zero we have no local users, only external
     // users that we don't care about.
     if (Depth && I && I->getNumUses() > 1) {
       DEBUG(dbgs() << "SLP: Adding to MultiUserVals "
-                      "because it has multiple users:" << *I << " \n");
-      MultiUserVals.insert(I);
+            "because it has " << I->getNumUses() << " users:" << *I << " \n");
+      UseInfo UI(VL0, LastIndex);
+      MultiUserVals[I] = UI;
     }
   }
 
@@ -481,6 +524,24 @@ void FuncSLP::getTreeUses_rec(ArrayRef<Value *> VL, unsigned Depth) {
     return MustGather.insert(VL.begin(), VL.end());
 
   switch (Opcode) {
+  case Instruction::PHI: {
+    PHINode *PH = dyn_cast<PHINode>(VL0);
+
+    // Stop self cycles.
+    if (VisitedPHIs.count(PH))
+        return;
+
+    VisitedPHIs.insert(PH);
+    for (unsigned i = 0, e = PH->getNumIncomingValues(); i < e; ++i) {
+      ValueList Operands;
+      // Prepare the operand vector.
+      for (unsigned j = 0; j < VL.size(); ++j)
+        Operands.push_back(cast<PHINode>(VL[j])->getIncomingValue(i));
+
+      getTreeUses_rec(Operands, Depth + 1);
+    }
+    return;
+  }
   case Instruction::ExtractElement: {
     VectorType *VecTy = VectorType::get(VL[0]->getType(), VL.size());
     // No need to follow ExtractElements that are going to be optimized away.
@@ -603,16 +664,17 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
   if (ScalarTy->isVectorTy())
     return FuncSLP::MAX_COST;
 
-  VectorType *VecTy = VectorType::get(ScalarTy, VL.size());
-
   if (allConstant(VL))
     return 0;
+
+  VectorType *VecTy = VectorType::get(ScalarTy, VL.size());
 
   if (isSplat(VL))
     return TTI->getShuffleCost(TargetTransformInfo::SK_Broadcast, VecTy, 0);
 
+  int GatherCost = getGatherCost(VecTy);
   if (Depth == RecursionMaxDepth || needToGatherAny(VL))
-    return getGatherCost(VecTy);
+    return GatherCost;
 
   BasicBlock *BB = getSameBlock(VL);
   unsigned Opcode = getSameOpcode(VL);
@@ -635,8 +697,44 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
   }
 
+  // Calculate the extract cost.
+  unsigned ExternalUserExtractCost = 0;
+  for (unsigned i = 0, e = VL.size(); i < e; ++i)
+    if (ExtractedLane.count(cast<Instruction>(VL[i])))
+      ExternalUserExtractCost +=
+        TTI->getVectorInstrCost(Instruction::ExtractElement, VecTy, i);
+
   Instruction *VL0 = cast<Instruction>(VL[0]);
   switch (Opcode) {
+  case Instruction::PHI: {
+    PHINode *PH = dyn_cast<PHINode>(VL0);
+
+    // Stop self cycles.
+    if (VisitedPHIs.count(PH))
+        return 0;
+
+    VisitedPHIs.insert(PH);
+    int TotalCost = 0;
+    // Calculate the cost of all of the operands.
+    for (unsigned i = 0, e = PH->getNumIncomingValues(); i < e; ++i) {      
+      ValueList Operands;
+      // Prepare the operand vector.
+      for (unsigned j = 0; j < VL.size(); ++j)
+        Operands.push_back(cast<PHINode>(VL[j])->getIncomingValue(i));
+
+      int Cost = getTreeCost_rec(Operands, Depth + 1);
+      if (Cost == MAX_COST)
+        return MAX_COST;
+      TotalCost += TotalCost;
+    }
+
+    if (TotalCost > GatherCost) {
+      MustGather.insert(VL.begin(), VL.end());
+      return GatherCost;
+    }
+
+    return TotalCost + ExternalUserExtractCost;
+  }
   case Instruction::ExtractElement: {
     if (CanReuseExtract(VL, VL.size(), VecTy))
       return 0;
@@ -665,8 +763,8 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
 
     int Cost = getTreeCost_rec(Operands, Depth + 1);
-    if (Cost == FuncSLP::MAX_COST)
-      return Cost;
+    if (Cost == MAX_COST)
+      return MAX_COST;
 
     // Calculate the cost of this instruction.
     int ScalarCost = VL.size() * TTI->getCastInstrCost(VL0->getOpcode(),
@@ -675,7 +773,13 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     VectorType *SrcVecTy = VectorType::get(SrcTy, VL.size());
     int VecCost = TTI->getCastInstrCost(VL0->getOpcode(), VecTy, SrcVecTy);
     Cost += (VecCost - ScalarCost);
-    return Cost;
+
+    if (Cost > GatherCost) {
+      MustGather.insert(VL.begin(), VL.end());
+      return GatherCost;
+    }
+
+    return Cost + ExternalUserExtractCost;
   }
   case Instruction::FCmp:
   case Instruction::ICmp: {
@@ -718,7 +822,7 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
       int Cost = getTreeCost_rec(Operands, Depth + 1);
       if (Cost == MAX_COST)
         return MAX_COST;
-      TotalCost += TotalCost;
+      TotalCost += Cost;
     }
 
     // Calculate the cost of this instruction.
@@ -737,7 +841,13 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
       VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy);
     }
     TotalCost += (VecCost - ScalarCost);
-    return TotalCost;
+
+    if (TotalCost > GatherCost) {
+      MustGather.insert(VL.begin(), VL.end());
+      return GatherCost;
+    }
+
+    return TotalCost + ExternalUserExtractCost;
   }
   case Instruction::Load: {
     // If we are scalarize the loads, add the cost of forming the vector.
@@ -749,7 +859,14 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     int ScalarLdCost = VecTy->getNumElements() *
                        TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
     int VecLdCost = TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
-    return VecLdCost - ScalarLdCost;
+    int TotalCost = VecLdCost - ScalarLdCost;
+
+    if (TotalCost > GatherCost) {
+      MustGather.insert(VL.begin(), VL.end());
+      return GatherCost;
+    }
+
+    return TotalCost + ExternalUserExtractCost;
   }
   case Instruction::Store: {
     // We know that we can merge the stores. Calculate the cost.
@@ -769,7 +886,7 @@ int FuncSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
       return MAX_COST;
 
     int TotalCost = StoreCost + Cost;
-    return TotalCost;
+    return TotalCost + ExternalUserExtractCost;
   }
   default:
     // Unable to vectorize unknown instructions.
@@ -783,7 +900,9 @@ int FuncSLP::getTreeCost(ArrayRef<Value *> VL) {
   MemBarrierIgnoreList.clear();
   LaneMap.clear();
   MultiUserVals.clear();
+  ExtractedLane.clear();
   MustGather.clear();
+  VisitedPHIs.clear();
 
   if (!getSameBlock(VL))
     return MAX_COST;
@@ -801,21 +920,58 @@ int FuncSLP::getTreeCost(ArrayRef<Value *> VL) {
   // must be scalarized.
   getTreeUses_rec(VL, 0);
 
-  // Check that instructions with multiple users can be vectorized. Mark unsafe
-  // instructions.
-  for (SetVector<Value *>::iterator it = MultiUserVals.begin(),
-                                    e = MultiUserVals.end();
-       it != e; ++it) {
+  // Check that instructions with multiple users can be vectorized. Mark
+  // unsafe instructions.
+  for (MapVector<Instruction *, UseInfo>::iterator UI = MultiUserVals.begin(),
+       e = MultiUserVals.end(); UI != e; ++UI) {
+    Instruction *Scalar = UI->first;
+
+    if (MustGather.count(Scalar))
+      continue;
+
+    assert(LaneMap.count(Scalar) && "Unknown scalar");
+    int ScalarLane = LaneMap[Scalar];
+
+    bool ExternalUse = false;
     // Check that all of the users of this instr are within the tree.
-    for (Value::use_iterator I = (*it)->use_begin(), E = (*it)->use_end();
-         I != E; ++I) {
-      if (LaneMap.find(*I) == LaneMap.end()) {
-        DEBUG(dbgs() << "SLP: Adding to MustExtract "
-                        "because of an out of tree usage.\n");
-        MustGather.insert(*it);
+    for (Value::use_iterator Usr = Scalar->use_begin(),
+         UE = Scalar->use_end(); Usr != UE; ++Usr) {
+      // If this user is within the tree, make sure it is from the same lane.
+      // Notice that we have both in-tree and out-of-tree users.
+      if (LaneMap.count(*Usr)) {
+        if (LaneMap[*Usr] != ScalarLane) {
+          DEBUG(dbgs() << "SLP: Adding to MustExtract "
+                "because of an out-of-lane usage.\n");
+          MustGather.insert(Scalar);
+          break;
+        }
         continue;
       }
+
+      // We have an out-of-tree user. Check if we can place an 'extract'.
+      Instruction *User = cast<Instruction>(*Usr);
+      // We care about the order only if the user is in the same block.
+      if (User->getParent() == Scalar->getParent()) {
+        int LastLoc = UI->second.LastIndex;
+        BlockNumbering &BN = BlocksNumbers[User->getParent()];
+        int UserIdx = BN.getIndex(User);
+        if (UserIdx <= LastLoc) {
+          DEBUG(dbgs() << "SLP: Adding to MustExtract because of an external "
+                "user that we can't schedule.\n");
+          MustGather.insert(Scalar);
+          break;
+        }
+      }
+      // We have an external user.
+      ExternalUse = true;
     }
+
+    if (ExternalUse) {
+      // Items that are left in MultiUserVals are to be extracted.
+      // ExtractLane is used for the lookup.
+      ExtractedLane.insert(Scalar);
+    }
+
   }
 
   // Now calculate the cost of vectorizing the tree.
@@ -848,6 +1004,12 @@ bool FuncSLP::vectorizeStoreChain(ArrayRef<Value *> Chain, int CostThreshold) {
     if (Cost < CostThreshold) {
       DEBUG(dbgs() << "SLP: Decided to vectorize cost=" << Cost << "\n");
       vectorizeTree(Operands);
+
+      // Remove the scalar stores.
+      for (int j = 0, e = VF; j < e; ++j)
+        cast<Instruction>(Operands[j])->eraseFromParent();
+
+      // Move to the next bundle.
       i += VF - 1;
       Changed = true;
     }
@@ -865,6 +1027,11 @@ bool FuncSLP::vectorizeStoreChain(ArrayRef<Value *> Chain, int CostThreshold) {
     DEBUG(dbgs() << "SLP: Found store chain cost = " << Cost
                  << " for size = " << ChainLen << "\n");
     vectorizeTree(Chain);
+
+    // Remove all of the scalar stores.
+    for (int i = 0, e = Chain.size(); i < e; ++i)
+      cast<Instruction>(Chain[i])->eraseFromParent();
+
     return true;
   }
 
@@ -957,6 +1124,30 @@ Value *FuncSLP::vectorizeTree_rec(ArrayRef<Value *> VL) {
   assert(Opcode == getSameOpcode(VL) && "Invalid opcode");
 
   switch (Opcode) {
+  case Instruction::PHI: {
+    PHINode *PH = dyn_cast<PHINode>(VL0);
+    Builder.SetInsertPoint(PH->getParent()->getFirstInsertionPt());
+    PHINode *NewPhi = Builder.CreatePHI(VecTy, PH->getNumIncomingValues());
+    VectorizedValues[VL0] = NewPhi;
+
+    for (unsigned i = 0, e = PH->getNumIncomingValues(); i < e; ++i) {
+      ValueList Operands;
+      BasicBlock *IBB = PH->getIncomingBlock(i);
+
+      // Prepare the operand vector.
+      for (unsigned j = 0; j < VL.size(); ++j)
+        Operands.push_back(cast<PHINode>(VL[j])->getIncomingValueForBlock(IBB));
+
+      Builder.SetInsertPoint(IBB->getTerminator());
+      Value *Vec = vectorizeTree_rec(Operands);
+      NewPhi->addIncoming(Vec, IBB);
+    }
+
+    assert(NewPhi->getNumIncomingValues() == PH->getNumIncomingValues() &&
+           "Invalid number of incoming values");
+    return NewPhi;
+  }
+
   case Instruction::ExtractElement: {
     if (CanReuseExtract(VL, VL.size(), VecTy))
       return VL0->getOperand(0);
@@ -1100,9 +1291,6 @@ Value *FuncSLP::vectorizeTree_rec(ArrayRef<Value *> VL) {
     Value *VecPtr =
         Builder.CreateBitCast(SI->getPointerOperand(), VecTy->getPointerTo());
     Builder.CreateStore(VecValue, VecPtr)->setAlignment(Alignment);
-
-    for (int i = 0, e = VL.size(); i < e; ++i)
-      cast<Instruction>(VL[i])->eraseFromParent();
     return 0;
   }
   default:
@@ -1114,27 +1302,79 @@ Value *FuncSLP::vectorizeTree(ArrayRef<Value *> VL) {
   Builder.SetInsertPoint(getLastInstruction(VL));
   Value *V = vectorizeTree_rec(VL);
 
+  DEBUG(dbgs() << "SLP: Placing 'extracts'\n");
+  for (SetVector<Instruction*>::iterator it = ExtractedLane.begin(), e =
+       ExtractedLane.end(); it != e; ++it) {
+    Instruction *Scalar = *it;
+    DEBUG(dbgs() << "SLP: Looking at " << *Scalar);
+
+    if (!Scalar)
+      continue;
+
+    Instruction *Loc = 0;
+
+    assert(MultiUserVals.count(Scalar) && "Can't find the lane to extract");
+    Instruction *Leader = MultiUserVals[Scalar].Leader;
+
+    // This value is gathered so we don't need to extract from anywhere.
+    if (!VectorizedValues.count(Leader))
+      continue;
+
+    Value *Vec = VectorizedValues[Leader];
+    if (PHINode *PN = dyn_cast<PHINode>(Vec)) {
+      Loc = PN->getParent()->getFirstInsertionPt();
+    } else {
+      Instruction *I = cast<Instruction>(Vec);
+      BasicBlock::iterator L = *I;
+      Loc = ++L;
+    }
+
+    Builder.SetInsertPoint(Loc);
+    assert(LaneMap.count(Scalar) && "Can't find the extracted lane.");
+    int Lane = LaneMap[Scalar];
+    Value *Idx = Builder.getInt32(Lane);
+    Value *Extract = Builder.CreateExtractElement(Vec, Idx);
+
+    bool Replaced = false;;
+    for (Value::use_iterator U = Scalar->use_begin(), UE = Scalar->use_end();
+         U != UE; ++U) {
+      Instruction *UI = cast<Instruction>(*U);
+      // No need to replace instructions that are inside our lane map.
+      if (LaneMap.count(UI))
+        continue;
+
+      UI->replaceUsesOfWith(Scalar ,Extract);
+      Replaced = true;
+    }
+    assert(Replaced && "Must replace at least one outside user");
+    (void)Replaced;
+  }
+
   // We moved some instructions around. We have to number them again
   // before we can do any analysis.
-  for (Function::iterator it = F->begin(), e = F->end(); it != e; ++it)
-    BlocksNumbers[it].forget();
+  forgetNumbering();
+
   // Clear the state.
   MustGather.clear();
+  VisitedPHIs.clear();
   VectorizedValues.clear();
   MemBarrierIgnoreList.clear();
   return V;
 }
 
 Value *FuncSLP::vectorizeArith(ArrayRef<Value *> Operands) {
+  Instruction *LastInst = getLastInstruction(Operands);
   Value *Vec = vectorizeTree(Operands);
   // After vectorizing the operands we need to generate extractelement
   // instructions and replace all of the uses of the scalar values with
   // the values that we extracted from the vectorized tree.
+  Builder.SetInsertPoint(LastInst);
   for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
     Value *S = Builder.CreateExtractElement(Vec, Builder.getInt32(i));
     Operands[i]->replaceAllUsesWith(S);
   }
 
+  forgetNumbering();
   return Vec;
 }
 
@@ -1155,7 +1395,7 @@ void FuncSLP::optimizeGatherSequence() {
     // Check if it has a preheader.
     BasicBlock *PreHeader = L->getLoopPreheader();
     if (!PreHeader)
-      return;
+      continue;
 
     // If the vector or the element that we insert into it are
     // instructions that are defined in this basic block then we can't
@@ -1175,6 +1415,7 @@ void FuncSLP::optimizeGatherSequence() {
   // instructions. TODO: We can further optimize this scan if we split the
   // instructions into different buckets based on the insert lane.
   SmallPtrSet<Instruction*, 16> Visited;
+  SmallVector<Instruction*, 16> ToRemove;
   ReversePostOrderTraversal<Function*> RPOT(F);
   for (ReversePostOrderTraversal<Function*>::rpo_iterator I = RPOT.begin(),
        E = RPOT.end(); I != E; ++I) {
@@ -1185,18 +1426,31 @@ void FuncSLP::optimizeGatherSequence() {
       if (!Insert || !GatherSeq.count(Insert))
         continue;
 
-     // Check if we can replace this instruction with any of the
-     // visited instructions.
+      // Check if we can replace this instruction with any of the
+      // visited instructions.
       for (SmallPtrSet<Instruction*, 16>::iterator v = Visited.begin(),
            ve = Visited.end(); v != ve; ++v) {
-        if (Insert->isIdenticalTo(*v)) {
+        if (Insert->isIdenticalTo(*v) &&
+            DT->dominates((*v)->getParent(), Insert->getParent())) {
           Insert->replaceAllUsesWith(*v);
+          ToRemove.push_back(Insert);
+          Insert = 0;
           break;
         }
       }
-      Visited.insert(Insert);
+      if (Insert)
+        Visited.insert(Insert);
     }
   }
+
+  // Erase all of the instructions that we RAUWed.
+  for (SmallVector<Instruction*, 16>::iterator v = ToRemove.begin(),
+       ve = ToRemove.end(); v != ve; ++v) {
+    assert((*v)->getNumUses() == 0 && "Can't remove instructions with uses");
+    (*v)->eraseFromParent();
+  }
+
+  forgetNumbering();
 }
 
 /// The SLPVectorizer Pass.
@@ -1216,6 +1470,7 @@ struct SLPVectorizer : public FunctionPass {
   TargetTransformInfo *TTI;
   AliasAnalysis *AA;
   LoopInfo *LI;
+  DominatorTree *DT;
 
   virtual bool runOnFunction(Function &F) {
     SE = &getAnalysis<ScalarEvolution>();
@@ -1223,6 +1478,7 @@ struct SLPVectorizer : public FunctionPass {
     TTI = &getAnalysis<TargetTransformInfo>();
     AA = &getAnalysis<AliasAnalysis>();
     LI = &getAnalysis<LoopInfo>();
+    DT = &getAnalysis<DominatorTree>();
 
     StoreRefs.clear();
     bool Changed = false;
@@ -1236,10 +1492,12 @@ struct SLPVectorizer : public FunctionPass {
 
     // Use the bollom up slp vectorizer to construct chains that start with
     // he store instructions.
-    FuncSLP R(&F, SE, DL, TTI, AA, LI);
+    FuncSLP R(&F, SE, DL, TTI, AA, LI, DT);
 
-    for (Function::iterator it = F.begin(), e = F.end(); it != e; ++it) {
-      BasicBlock *BB = it;
+    // Scan the blocks in the function in post order.
+    for (po_iterator<BasicBlock*> it = po_begin(&F.getEntryBlock()),
+         e = po_end(&F.getEntryBlock()); it != e; ++it) {
+      BasicBlock *BB = *it;
 
       // Vectorize trees that end at reductions.
       Changed |= vectorizeChainsInBlock(BB, R);
@@ -1266,6 +1524,10 @@ struct SLPVectorizer : public FunctionPass {
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<TargetTransformInfo>();
     AU.addRequired<LoopInfo>();
+    AU.addRequired<DominatorTree>();
+    AU.addPreserved<LoopInfo>();
+    AU.addPreserved<DominatorTree>();
+    AU.setPreservesCFG();
   }
 
 private:
