@@ -131,6 +131,8 @@ static const char *stripRegisterPrefix(const char *RegName) {
     case 'f':
     case 'v': return RegName + 1;
     case 'c': if (RegName[1] == 'r') return RegName + 2;
+    case 'd': if (RegName[1] == 'f') return RegName + 2; // for FP2
+    case 'q': if (RegName[1] == 'f') return RegName + 2; // for QPX
   }
   
   return RegName;

@@ -40,6 +40,9 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
   initializeIndVarSimplifyPass(Registry);
   initializeJumpThreadingPass(Registry);
   initializeLICMPass(Registry);
+  initializeLoopIncAMPrepPass(Registry);
+  initializeQPXUnalignedPass(Registry);
+  initializeLoopDataPrefetchPass(Registry);
   initializeLoopDeletionPass(Registry);
   initializeLoopInstSimplifyPass(Registry);
   initializeLoopRotatePass(Registry);
@@ -97,6 +100,18 @@ void LLVMAddJumpThreadingPass(LLVMPassManagerRef PM) {
 
 void LLVMAddLICMPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createLICMPass());
+}
+
+void LLVMAddLoopIncAMPrepPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createLoopIncAMPrepPass());
+}
+
+void LLVMAddQPXUnalignedPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createQPXUnalignedPass());
+}
+
+void LLVMAddLoopDataPrefetchPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createLoopDataPrefetchPass());
 }
 
 void LLVMAddLoopDeletionPass(LLVMPassManagerRef PM) {

@@ -471,6 +471,24 @@ std::string sys::getHostCPUName() {
   if (CPUStart == 0)
     return generic;
 
+  if (CPULen == 2 && CPUStart[0] == 'A' && CPUStart[1] == '2') {
+    // The BG/Q variant of the A2 has a distinct name: a2q.
+
+    while (CIP < CPUInfoEnd && (*CIP == ' ' || *CIP == '\t'))
+      ++CIP;
+
+    if (CIP < CPUInfoEnd) {
+      const char *CPUDescStart = CIP;
+      while (CIP < CPUInfoEnd && *CIP != '\n')
+        ++CIP;
+      size_t CPUDescLen = CIP - CPUDescStart;
+      if (StringRef(CPUDescStart, CPUDescLen) == "(Blue Gene/Q)")
+        return "a2q";
+    }
+
+    return "a2";
+  }
+
   return StringSwitch<const char *>(StringRef(CPUStart, CPULen))
     .Case("604e", "604e")
     .Case("604", "604")
@@ -484,7 +502,6 @@ std::string sys::getHostCPUName() {
     .Case("PPC970MP", "970")
     .Case("G5", "g5")
     .Case("POWER5", "g5")
-    .Case("A2", "a2")
     .Case("POWER6", "pwr6")
     .Case("POWER7", "pwr7")
     .Default(generic);

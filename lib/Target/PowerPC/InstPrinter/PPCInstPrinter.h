@@ -44,10 +44,11 @@ public:
   void printPredicateOperand(const MCInst *MI, unsigned OpNo,
                              raw_ostream &O, const char *Modifier = 0);
 
-
+  void printU2ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printS5ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printU5ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printU6ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printU12ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printS16ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printU16ImmOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printBranchOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);

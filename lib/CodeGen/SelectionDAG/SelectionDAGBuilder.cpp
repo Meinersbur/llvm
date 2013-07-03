@@ -4511,6 +4511,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     bool isVol = cast<ConstantInt>(I.getArgOperand(4))->getZExtValue();
     DAG.setRoot(DAG.getMemset(getRoot(), sdl, Op1, Op2, Op3, Align, isVol,
                               MachinePointerInfo(I.getArgOperand(0))));
+    // FIXME: When DAG.getMemset turns this into stores, they should really be
+    // added to PendingMemOps.
     return 0;
   }
   case Intrinsic::memmove: {

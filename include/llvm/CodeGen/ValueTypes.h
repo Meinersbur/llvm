@@ -411,7 +411,13 @@ namespace llvm {
     /// getStoreSize - Return the number of bytes overwritten by a store
     /// of the specified value type.
     unsigned getStoreSize() const {
-      return (getSizeInBits() + 7) / 8;
+      switch (SimpleTy) {
+      default:    return (getSizeInBits() + 7) / 8;
+      case v2i1:  return 2;
+      case v4i1:  return 4;
+      case v8i1:  return 8;
+      case v16i1: return 16;
+      }
     }
 
     /// getStoreSizeInBits - Return the number of bits overwritten by a store
@@ -760,6 +766,9 @@ namespace llvm {
     /// getStoreSize - Return the number of bytes overwritten by a store
     /// of the specified value type.
     unsigned getStoreSize() const {
+      if (isVector() && getScalarType().getSizeInBits() < 8)
+        return getVectorNumElements();
+
       return (getSizeInBits() + 7) / 8;
     }
 

@@ -2547,7 +2547,7 @@ isProfitableChain(IVChain &Chain, SmallPtrSet<Instruction*, 4> &Users,
   DEBUG(dbgs() << "Chain: " << *Chain.Incs[0].UserInst << " Cost: " << cost
                << "\n");
 
-  return cost < 0;
+  return cost <= 0;
 }
 
 /// ChainInstruction - Add this IV user to an existing chain or make it the head

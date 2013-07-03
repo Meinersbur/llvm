@@ -296,9 +296,7 @@ public:
   /// getTypeStoreSize - Return the maximum number of bytes that may be
   /// overwritten by storing the specified type.  For example, returns 5
   /// for i36 and 10 for x86_fp80.
-  uint64_t getTypeStoreSize(Type *Ty) const {
-    return (getTypeSizeInBits(Ty)+7)/8;
-  }
+  uint64_t getTypeStoreSize(Type *Ty) const;
 
   /// getTypeStoreSizeInBits - Return the maximum number of bits that may be
   /// overwritten by storing the specified type; always a multiple of 8.  For

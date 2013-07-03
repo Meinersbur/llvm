@@ -55,6 +55,8 @@ def FeatureAltivec   : SubtargetFeature<"altivec","HasAltivec", "true",
                                         "Enable Altivec instructions">;
 def FeatureMFOCRF    : SubtargetFeature<"mfocrf","HasMFOCRF", "true",
                                         "Enable the MFOCRF instruction">;
+def FeatureFP2       : SubtargetFeature<"fp2","HasFP2", "true",
+                              "Enable FP2 (Double Hummer) instructions [beta]">;
 def FeatureFSqrt     : SubtargetFeature<"fsqrt","HasFSQRT", "true",
                                         "Enable the fsqrt instruction">;
 def FeatureFRE       : SubtargetFeature<"fre", "HasFRE", "true",
@@ -147,9 +149,25 @@ def : Processor<"generic", G3Itineraries, [Directive32]>;
 def : Processor<"440", PPC440Itineraries, [Directive440, FeatureISEL,
                                            FeatureFRES, FeatureFRSQRTE,
                                            FeatureBookE]>;
+def : Processor<"440fp2", PPC440Itineraries, // BG/L
+                          [Directive440, FeatureFSqrt,
+                           FeatureSTFIWX, FeatureISEL, FeatureFP2,
+                           FeatureBookE]>;
+def : Processor<"440d", PPC440Itineraries,   // BG/L
+                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
+                           FeatureISEL, FeatureFP2,
+                           FeatureBookE]>;
 def : Processor<"450", PPC440Itineraries, [Directive440, FeatureISEL,
                                            FeatureFRES, FeatureFRSQRTE,
                                            FeatureBookE]>;
+def : Processor<"450fp2", PPC440Itineraries, // BG/P
+                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
+                           FeatureISEL, FeatureFP2,
+                           FeatureBookE]>;
+def : Processor<"450d", PPC440Itineraries,   // BG/P
+                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
+                           FeatureISEL, FeatureFP2,
+                           FeatureBookE]>;
 def : Processor<"601", G3Itineraries, [Directive601]>;
 def : Processor<"602", G3Itineraries, [Directive602]>;
 def : Processor<"603", G3Itineraries, [Directive603,

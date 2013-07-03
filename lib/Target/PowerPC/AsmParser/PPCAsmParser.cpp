@@ -257,6 +257,7 @@ public:
 
   bool isToken() const { return Kind == Token; }
   bool isImm() const { return Kind == Immediate || Kind == Expression; }
+  bool isU2Imm() const { return Kind == Immediate && isUInt<2>(getImm()); }
   bool isU5Imm() const { return Kind == Immediate && isUInt<5>(getImm()); }
   bool isS5Imm() const { return Kind == Immediate && isInt<5>(getImm()); }
   bool isU6Imm() const { return Kind == Immediate && isUInt<6>(getImm()); }

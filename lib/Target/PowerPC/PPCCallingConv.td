@@ -31,9 +31,12 @@ def RetCC_PPC : CallingConv<[
   
   CCIfType<[f32], CCAssignToReg<[F1, F2]>>,
   CCIfType<[f64], CCAssignToReg<[F1, F2, F3, F4]>>,
+  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2]>>,
+  CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()", CCAssignToReg<[QF1, QF2]>>>,
   
   // Vector types are always returned in V2.
-  CCIfType<[v16i8, v8i16, v4i32, v4f32], CCAssignToReg<[V2]>>
+  CCIfType<[v16i8, v8i16, v4i32, v4f32], CCIfSubtarget<"hasAltivec()",
+                                           CCAssignToReg<[V2]>>>
 ]>;
 
 
@@ -55,6 +58,9 @@ def CC_PPC32_SVR4_Common : CallingConv<[
   
   // FP values are passed in F1 - F8.
   CCIfType<[f32, f64], CCAssignToReg<[F1, F2, F3, F4, F5, F6, F7, F8]>>,
+  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8]>>,
+  CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()",
+    CCAssignToReg<[QF1, QF2, QF3, QF4, QF5, QF6, QF7, QF8]>>>,
 
   // Split arguments have an alignment of 8 bytes on the stack.
   CCIfType<[i32], CCIfSplit<CCAssignToStack<4, 8>>>,
@@ -64,6 +70,8 @@ def CC_PPC32_SVR4_Common : CallingConv<[
   // Floats are stored in double precision format, thus they have the same
   // alignment and size as doubles.
   CCIfType<[f32,f64], CCAssignToStack<8, 8>>,  
+  CCIfType<[v2f64], CCAssignToStack<16, 16>>,
+  CCIfType<[v4f64, v4i1], CCAssignToStack<32, 32>>,
 
   // Vectors get 16-byte stack slots that are 16-byte aligned.
   CCIfType<[v16i8, v8i16, v4i32, v4f32], CCAssignToStack<16, 16>>
@@ -80,8 +88,8 @@ def CC_PPC32_SVR4_VarArg : CallingConv<[
 // put vector arguments in vector registers before putting them on the stack.
 def CC_PPC32_SVR4 : CallingConv<[
   // The first 12 Vector arguments are passed in AltiVec registers.
-  CCIfType<[v16i8, v8i16, v4i32, v4f32],
-           CCAssignToReg<[V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13]>>,
+  CCIfType<[v16i8, v8i16, v4i32, v4f32], CCIfSubtarget<"hasAltivec()",
+           CCAssignToReg<[V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13]>>>,
            
   CCDelegateTo<CC_PPC32_SVR4_Common>
 ]>;  

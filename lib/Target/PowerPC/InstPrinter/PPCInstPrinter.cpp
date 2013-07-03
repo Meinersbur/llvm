@@ -24,7 +24,12 @@ using namespace llvm;
 #include "PPCGenAsmWriter.inc"
 
 void PPCInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
-  OS << getRegisterName(RegNo);
+  const char *RegName = getRegisterName(RegNo);
+  if ((RegName[0] == 'd' /* FP2 */ || RegName[0] == 'q' /* QPX */) &&
+      RegName[1] == 'f')
+    RegName += 1;
+
+  OS << RegName;
 }
 
 void PPCInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
@@ -174,6 +179,13 @@ void PPCInstPrinter::printPredicateOperand(const MCInst *MI, unsigned OpNo,
   printOperand(MI, OpNo+1, O);
 }
 
+void PPCInstPrinter::printU2ImmOperand(const MCInst *MI, unsigned OpNo,
+                                       raw_ostream &O) {
+  unsigned char Value = MI->getOperand(OpNo).getImm();
+  assert(Value <= 3 && "Invalid u2imm argument!");
+  O << (unsigned int)Value;
+}
+
 void PPCInstPrinter::printS5ImmOperand(const MCInst *MI, unsigned OpNo,
                                        raw_ostream &O) {
   int Value = MI->getOperand(OpNo).getImm();
@@ -193,6 +205,13 @@ void PPCInstPrinter::printU6ImmOperand(const MCInst *MI, unsigned OpNo,
   unsigned int Value = MI->getOperand(OpNo).getImm();
   assert(Value <= 63 && "Invalid u6imm argument!");
   O << (unsigned int)Value;
+}
+
+void PPCInstPrinter::printU12ImmOperand(const MCInst *MI, unsigned OpNo,
+                                        raw_ostream &O) {
+  unsigned short Value = MI->getOperand(OpNo).getImm();
+  assert(Value <= 4095 && "Invalid u12imm argument!");
+  O << (unsigned short)Value;
 }
 
 void PPCInstPrinter::printS16ImmOperand(const MCInst *MI, unsigned OpNo,
@@ -283,6 +302,8 @@ static const char *stripRegisterPrefix(const char *RegName) {
   case 'f':
   case 'v': return RegName + 1;
   case 'c': if (RegName[1] == 'r') return RegName + 2;
+  case 'd': if (RegName[1] == 'f') return RegName + 2; // for FP2
+  case 'q': if (RegName[1] == 'f') return RegName + 2; // for QPX 
   }
   
   return RegName;

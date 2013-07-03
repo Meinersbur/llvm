@@ -28,6 +28,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetLowering.h"
 using namespace llvm;
 
@@ -154,28 +155,61 @@ SDValue VectorLegalizer::LegalizeOp(SDValue Op) {
   if (Op.getOpcode() == ISD::LOAD) {
     LoadSDNode *LD = cast<LoadSDNode>(Op.getNode());
     ISD::LoadExtType ExtType = LD->getExtensionType();
-    if (LD->getMemoryVT().isVector() && ExtType != ISD::NON_EXTLOAD) {
-      if (TLI.isLoadExtLegal(LD->getExtensionType(), LD->getMemoryVT()))
-        return TranslateLegalizeResults(Op, Result);
-      Changed = true;
-      return LegalizeOp(ExpandLoad(Op));
+    if (LD->getMemoryVT().isVector()) {
+      if (ExtType != ISD::NON_EXTLOAD) {
+        if (TLI.isLoadExtLegal(LD->getExtensionType(), LD->getMemoryVT()))
+          return TranslateLegalizeResults(Op, Result);
+        Changed = true;
+        return LegalizeOp(ExpandLoad(Op));
+      }
+
+      // If this is unaligned, and the alignment is sufficient for scalar
+      // loads, then load all elements and build the resulting vector.
+      if (!TLI.allowsUnalignedMemoryAccesses(LD->getMemoryVT())) {
+        Type *Ty = LD->getMemoryVT().getTypeForEVT(*DAG.getContext());
+        Type *STy = LD->getMemoryVT().getScalarType().
+                      getTypeForEVT(*DAG.getContext());
+        unsigned ABIAlignment= TLI.getDataLayout()->getABITypeAlignment(Ty);
+        unsigned SABIAlignment= TLI.getDataLayout()->getABITypeAlignment(STy);
+        if (LD->getAlignment() < ABIAlignment &&
+            LD->getAlignment() >= SABIAlignment) {
+          Changed = true;
+          return LegalizeOp(ExpandLoad(Op));
+        }
+      }
     }
   } else if (Op.getOpcode() == ISD::STORE) {
     StoreSDNode *ST = cast<StoreSDNode>(Op.getNode());
     EVT StVT = ST->getMemoryVT();
     MVT ValVT = ST->getValue().getSimpleValueType();
-    if (StVT.isVector() && ST->isTruncatingStore())
-      switch (TLI.getTruncStoreAction(ValVT, StVT.getSimpleVT())) {
-      default: llvm_unreachable("This action is not supported yet!");
-      case TargetLowering::Legal:
-        return TranslateLegalizeResults(Op, Result);
-      case TargetLowering::Custom:
-        Changed = true;
-        return LegalizeOp(TLI.LowerOperation(Result, DAG));
-      case TargetLowering::Expand:
-        Changed = true;
-        return LegalizeOp(ExpandStore(Op));
+    if (StVT.isVector()) {
+      if (ST->isTruncatingStore())
+        switch (TLI.getTruncStoreAction(ValVT, StVT.getSimpleVT())) {
+        default: llvm_unreachable("This action is not supported yet!");
+        case TargetLowering::Legal:
+          return TranslateLegalizeResults(Op, Result);
+        case TargetLowering::Custom:
+          Changed = true;
+          return LegalizeOp(TLI.LowerOperation(Result, DAG));
+        case TargetLowering::Expand:
+          Changed = true;
+          return LegalizeOp(ExpandStore(Op));
+        }
+
+      // If this is unaligned, and the alignment is sufficient for scalar
+      // stores, then extract all elements are store them.
+      if (!TLI.allowsUnalignedMemoryAccesses(StVT)) {
+        Type *Ty = StVT.getTypeForEVT(*DAG.getContext());
+        Type *STy = StVT.getScalarType().getTypeForEVT(*DAG.getContext());
+        unsigned ABIAlignment= TLI.getDataLayout()->getABITypeAlignment(Ty);
+        unsigned SABIAlignment= TLI.getDataLayout()->getABITypeAlignment(STy);
+        if (ST->getAlignment() < ABIAlignment &&
+            ST->getAlignment() >= SABIAlignment) {
+          Changed = true;
+          return LegalizeOp(ExpandStore(Op)); 
+        }
       }
+    }
   }
 
   bool HasVectorValue = false;
@@ -492,12 +526,19 @@ SDValue VectorLegalizer::ExpandLoad(SDValue Op) {
     unsigned Stride = SrcVT.getScalarType().getSizeInBits()/8;
 
     for (unsigned Idx=0; Idx<NumElem; Idx++) {
-      SDValue ScalarLoad = DAG.getExtLoad(ExtType, dl,
-                Op.getNode()->getValueType(0).getScalarType(),
-                Chain, BasePTR, LD->getPointerInfo().getWithOffset(Idx * Stride),
-                SrcVT.getScalarType(),
-                LD->isVolatile(), LD->isNonTemporal(),
-                LD->getAlignment());
+      SDValue ScalarLoad;
+      if (ExtType != ISD::NON_EXTLOAD)
+        ScalarLoad = DAG.getExtLoad(ExtType, dl,
+          Op.getNode()->getValueType(0).getScalarType(),
+          Chain, BasePTR, LD->getPointerInfo().getWithOffset(Idx * Stride),
+          SrcVT.getScalarType(),
+          LD->isVolatile(), LD->isNonTemporal(),
+          LD->getAlignment());
+      else
+        ScalarLoad = DAG.getLoad(SrcVT.getScalarType(), dl, Chain, BasePTR,
+          LD->getPointerInfo().getWithOffset(Idx * Stride),
+          LD->isVolatile(), LD->isNonTemporal(), LD->isInvariant(),
+          LD->getAlignment());
 
       BasePTR = DAG.getNode(ISD::ADD, dl, BasePTR.getValueType(), BasePTR,
                          DAG.getIntPtrConstant(Stride));
@@ -553,10 +594,17 @@ SDValue VectorLegalizer::ExpandStore(SDValue Op) {
     SDValue Ex = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl,
                RegSclVT, Value, DAG.getIntPtrConstant(Idx));
 
-    // This scalar TruncStore may be illegal, but we legalize it later.
-    SDValue Store = DAG.getTruncStore(Chain, dl, Ex, BasePTR,
-               ST->getPointerInfo().getWithOffset(Idx*Stride), MemSclVT,
-               isVolatile, isNonTemporal, Alignment);
+    // FIXME: The alignment on the scalar stores is incorrect.
+    SDValue Store;
+    if (ST->isTruncatingStore())
+      // This scalar TruncStore may be illegal, but we legalize it later.
+      Store = DAG.getTruncStore(Chain, dl, Ex, BasePTR,
+                ST->getPointerInfo().getWithOffset(Idx*Stride), MemSclVT,
+                isVolatile, isNonTemporal, Alignment);
+    else
+      Store = DAG.getStore(Chain, dl, Ex, BasePTR,
+                ST->getPointerInfo().getWithOffset(Idx*Stride),
+                isVolatile, isNonTemporal, Alignment);
 
     BasePTR = DAG.getNode(ISD::ADD, dl, BasePTR.getValueType(), BasePTR,
                                 DAG.getIntPtrConstant(Stride));

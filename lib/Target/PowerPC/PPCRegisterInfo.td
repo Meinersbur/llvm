@@ -16,8 +16,9 @@ def sub_gt : SubRegIndex<1, 1>;
 def sub_eq : SubRegIndex<1, 2>;
 def sub_un : SubRegIndex<1, 3>;
 def sub_32 : SubRegIndex<32>;
+def sub_64 : SubRegIndex<64>;
+def sub_fext : SubRegIndex<192, 64>;
 }
-
 
 class PPCReg<string n> : Register<n> {
   let Namespace = "PPC";
@@ -45,6 +46,23 @@ class SPR<bits<10> num, string n> : PPCReg<n> {
 // FPR - One of the 32 64-bit floating-point registers
 class FPR<bits<5> num, string n> : PPCReg<n> {
   let HWEncoding{4-0} = num;
+}
+
+// The extended part of the FP2 or QPX registers (these are call-clobbered)
+class FPR_ext<string n> : PPCReg<n>;
+
+// DFPR - One of the 32 128-bit floating-point vector registers (used for FP2)
+class DFPR<FPR SubReg, FPR_ext SubReg_ext, string n> : PPCReg<n> {
+  let HWEncoding = SubReg.HWEncoding;
+  let SubRegs = [SubReg, SubReg_ext];
+  let SubRegIndices = [sub_64, sub_fext];
+}
+
+// QFPR - One of the 32 256-bit floating-point vector registers (used for QPX)
+class QFPR<FPR SubReg, FPR_ext SubReg_ext, string n> : PPCReg<n> {
+  let HWEncoding = SubReg.HWEncoding;
+  let SubRegs = [SubReg, SubReg_ext];
+  let SubRegIndices = [sub_64, sub_fext];
 }
 
 // VR - One of the 32 128-bit vector registers
@@ -79,6 +97,108 @@ foreach Index = 0-31 in {
   def F#Index : FPR<Index, "f"#Index>,
                 DwarfRegNum<[!add(Index, 32), !add(Index, 32)]>;
 }
+
+// Extended FPR parts (used for FP2 and QPX)
+def F0_ext  : FPR_ext<"f0_ext">;
+def F1_ext  : FPR_ext<"f1_ext">;
+def F2_ext  : FPR_ext<"f2_ext">;
+def F3_ext  : FPR_ext<"f3_ext">;
+def F4_ext  : FPR_ext<"f4_ext">;
+def F5_ext  : FPR_ext<"f5_ext">;
+def F6_ext  : FPR_ext<"f6_ext">;
+def F7_ext  : FPR_ext<"f7_ext">;
+def F8_ext  : FPR_ext<"f8_ext">;
+def F9_ext  : FPR_ext<"f9_ext">;
+def F10_ext : FPR_ext<"f10_ext">;
+def F11_ext : FPR_ext<"f11_ext">;
+def F12_ext : FPR_ext<"f12_ext">;
+def F13_ext : FPR_ext<"f13_ext">;
+def F14_ext : FPR_ext<"f14_ext">;
+def F15_ext : FPR_ext<"f15_ext">;
+def F16_ext : FPR_ext<"f16_ext">;
+def F17_ext : FPR_ext<"f17_ext">;
+def F18_ext : FPR_ext<"f18_ext">;
+def F19_ext : FPR_ext<"f19_ext">;
+def F20_ext : FPR_ext<"f20_ext">;
+def F21_ext : FPR_ext<"f21_ext">;
+def F22_ext : FPR_ext<"f22_ext">;
+def F23_ext : FPR_ext<"f23_ext">;
+def F24_ext : FPR_ext<"f24_ext">;
+def F25_ext : FPR_ext<"f25_ext">;
+def F26_ext : FPR_ext<"f26_ext">;
+def F27_ext : FPR_ext<"f27_ext">;
+def F28_ext : FPR_ext<"f28_ext">;
+def F29_ext : FPR_ext<"f29_ext">;
+def F30_ext : FPR_ext<"f30_ext">;
+def F31_ext : FPR_ext<"f31_ext">;
+
+// FP2 (Double Hummer) Floating-point registers
+def DF0  : DFPR< F0,  F0_ext,  "df0">, DwarfRegNum<[32, 32]>;
+def DF1  : DFPR< F1,  F1_ext,  "df1">, DwarfRegNum<[33, 33]>;
+def DF2  : DFPR< F2,  F2_ext,  "df2">, DwarfRegNum<[34, 34]>;
+def DF3  : DFPR< F3,  F3_ext,  "df3">, DwarfRegNum<[35, 35]>;
+def DF4  : DFPR< F4,  F4_ext,  "df4">, DwarfRegNum<[36, 36]>;
+def DF5  : DFPR< F5,  F5_ext,  "df5">, DwarfRegNum<[37, 37]>;
+def DF6  : DFPR< F6,  F6_ext,  "df6">, DwarfRegNum<[38, 38]>;
+def DF7  : DFPR< F7,  F7_ext,  "df7">, DwarfRegNum<[39, 39]>;
+def DF8  : DFPR< F8,  F8_ext,  "df8">, DwarfRegNum<[40, 40]>;
+def DF9  : DFPR< F9,  F9_ext,  "df9">, DwarfRegNum<[41, 41]>;
+def DF10 : DFPR<F10, F10_ext, "df10">, DwarfRegNum<[42, 42]>;
+def DF11 : DFPR<F11, F11_ext, "df11">, DwarfRegNum<[43, 43]>;
+def DF12 : DFPR<F12, F12_ext, "df12">, DwarfRegNum<[44, 44]>;
+def DF13 : DFPR<F13, F13_ext, "df13">, DwarfRegNum<[45, 45]>;
+def DF14 : DFPR<F14, F14_ext, "df14">, DwarfRegNum<[46, 46]>;
+def DF15 : DFPR<F15, F15_ext, "df15">, DwarfRegNum<[47, 47]>;
+def DF16 : DFPR<F16, F16_ext, "df16">, DwarfRegNum<[48, 48]>;
+def DF17 : DFPR<F17, F17_ext, "df17">, DwarfRegNum<[49, 49]>;
+def DF18 : DFPR<F18, F18_ext, "df18">, DwarfRegNum<[50, 50]>;
+def DF19 : DFPR<F19, F19_ext, "df19">, DwarfRegNum<[51, 51]>;
+def DF20 : DFPR<F20, F20_ext, "df20">, DwarfRegNum<[52, 52]>;
+def DF21 : DFPR<F21, F21_ext, "df21">, DwarfRegNum<[53, 53]>;
+def DF22 : DFPR<F22, F22_ext, "df22">, DwarfRegNum<[54, 54]>;
+def DF23 : DFPR<F23, F23_ext, "df23">, DwarfRegNum<[55, 55]>;
+def DF24 : DFPR<F24, F24_ext, "df24">, DwarfRegNum<[56, 56]>;
+def DF25 : DFPR<F25, F25_ext, "df25">, DwarfRegNum<[57, 57]>;
+def DF26 : DFPR<F26, F26_ext, "df26">, DwarfRegNum<[58, 58]>;
+def DF27 : DFPR<F27, F27_ext, "df27">, DwarfRegNum<[59, 59]>;
+def DF28 : DFPR<F28, F28_ext, "df28">, DwarfRegNum<[60, 60]>;
+def DF29 : DFPR<F29, F29_ext, "df29">, DwarfRegNum<[61, 61]>;
+def DF30 : DFPR<F30, F30_ext, "df30">, DwarfRegNum<[62, 62]>;
+def DF31 : DFPR<F31, F31_ext, "df31">, DwarfRegNum<[63, 63]>;
+
+// QPX Floating-point registers
+def QF0  : QFPR< F0,  F0_ext,  "qf0">, DwarfRegNum<[32, 32]>;
+def QF1  : QFPR< F1,  F1_ext,  "qf1">, DwarfRegNum<[33, 33]>;
+def QF2  : QFPR< F2,  F2_ext,  "qf2">, DwarfRegNum<[34, 34]>;
+def QF3  : QFPR< F3,  F3_ext,  "qf3">, DwarfRegNum<[35, 35]>;
+def QF4  : QFPR< F4,  F4_ext,  "qf4">, DwarfRegNum<[36, 36]>;
+def QF5  : QFPR< F5,  F5_ext,  "qf5">, DwarfRegNum<[37, 37]>;
+def QF6  : QFPR< F6,  F6_ext,  "qf6">, DwarfRegNum<[38, 38]>;
+def QF7  : QFPR< F7,  F7_ext,  "qf7">, DwarfRegNum<[39, 39]>;
+def QF8  : QFPR< F8,  F8_ext,  "qf8">, DwarfRegNum<[40, 40]>;
+def QF9  : QFPR< F9,  F9_ext,  "qf9">, DwarfRegNum<[41, 41]>;
+def QF10 : QFPR<F10, F10_ext, "qf10">, DwarfRegNum<[42, 42]>;
+def QF11 : QFPR<F11, F11_ext, "qf11">, DwarfRegNum<[43, 43]>;
+def QF12 : QFPR<F12, F12_ext, "qf12">, DwarfRegNum<[44, 44]>;
+def QF13 : QFPR<F13, F13_ext, "qf13">, DwarfRegNum<[45, 45]>;
+def QF14 : QFPR<F14, F14_ext, "qf14">, DwarfRegNum<[46, 46]>;
+def QF15 : QFPR<F15, F15_ext, "qf15">, DwarfRegNum<[47, 47]>;
+def QF16 : QFPR<F16, F16_ext, "qf16">, DwarfRegNum<[48, 48]>;
+def QF17 : QFPR<F17, F17_ext, "qf17">, DwarfRegNum<[49, 49]>;
+def QF18 : QFPR<F18, F18_ext, "qf18">, DwarfRegNum<[50, 50]>;
+def QF19 : QFPR<F19, F19_ext, "qf19">, DwarfRegNum<[51, 51]>;
+def QF20 : QFPR<F20, F20_ext, "qf20">, DwarfRegNum<[52, 52]>;
+def QF21 : QFPR<F21, F21_ext, "qf21">, DwarfRegNum<[53, 53]>;
+def QF22 : QFPR<F22, F22_ext, "qf22">, DwarfRegNum<[54, 54]>;
+def QF23 : QFPR<F23, F23_ext, "qf23">, DwarfRegNum<[55, 55]>;
+def QF24 : QFPR<F24, F24_ext, "qf24">, DwarfRegNum<[56, 56]>;
+def QF25 : QFPR<F25, F25_ext, "qf25">, DwarfRegNum<[57, 57]>;
+def QF26 : QFPR<F26, F26_ext, "qf26">, DwarfRegNum<[58, 58]>;
+def QF27 : QFPR<F27, F27_ext, "qf27">, DwarfRegNum<[59, 59]>;
+def QF28 : QFPR<F28, F28_ext, "qf28">, DwarfRegNum<[60, 60]>;
+def QF29 : QFPR<F29, F29_ext, "qf29">, DwarfRegNum<[61, 61]>;
+def QF30 : QFPR<F30, F30_ext, "qf30">, DwarfRegNum<[62, 62]>;
+def QF31 : QFPR<F31, F31_ext, "qf31">, DwarfRegNum<[63, 63]>;
 
 // Vector registers
 foreach Index = 0-31 in {
@@ -199,6 +319,20 @@ def VRRC : RegisterClass<"PPC", [v16i8,v8i16,v4i32,v4f32], 128,
                          (add V2, V3, V4, V5, V0, V1, V6, V7, V8, V9, V10, V11,
                              V12, V13, V14, V15, V16, V17, V18, V19, V31, V30,
                              V29, V28, V27, V26, V25, V24, V23, V22, V21, V20)>;
+
+// For FP2
+def DFRC : RegisterClass<"PPC", [v2f64], 64, (add (sequence "DF%u", 0, 13),
+                                                (sequence "DF%u", 31, 14))>;
+
+// For QPX
+def QFRC : RegisterClass<"PPC", [v4f64], 256, (add (sequence "QF%u", 0, 13),
+                                                (sequence "QF%u", 31, 14))>;
+def QSRC : RegisterClass<"PPC", [v4f32], 128, (add QFRC)>;
+def QBRC : RegisterClass<"PPC", [v4i1], 256, (add QFRC)> {
+  // These are actually stored as floating-point values where a positive
+  // number is true and anything else (including NaN) is false.
+  let Size = 256;
+}
 
 def CRBITRC : RegisterClass<"PPC", [i32], 32,
   (add CR0LT, CR0GT, CR0EQ, CR0UN,

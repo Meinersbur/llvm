@@ -93,6 +93,9 @@ static cl::opt<bool> DisableSchedHeight(
 static cl::opt<bool> Disable2AddrHack(
   "disable-2addr-hack", cl::Hidden, cl::init(true),
   cl::desc("Disable scheduler's two-address hack"));
+static cl::opt<bool> DisableCallSpillCheck(
+  "disable-call-spill-check", cl::Hidden, cl::init(false),
+  cl::desc("Disable boosting call scheduling priority to prevent spilling"));
 
 static cl::opt<int> MaxReorderWindow(
   "max-sched-reorder", cl::Hidden, cl::init(6),
@@ -1718,6 +1721,10 @@ public:
 
   void dumpRegPressure() const;
 
+  bool CallMaySpill() const;
+
+  bool MayLoad(const SUnit *SU) const;
+
   bool HighRegPressure(const SUnit *SU) const;
 
   bool MayReduceRegPressure(SUnit *SU) const;
@@ -1940,6 +1947,41 @@ void RegReductionPQBase::dumpRegPressure() const {
           << '\n');
   }
 #endif
+}
+
+// If there are more registers allocated in a given class than there are
+// callee-saved registers, then a call would have to spill those registers to
+// the stack.
+bool RegReductionPQBase::CallMaySpill() const {
+  if (!RegPressure.size())
+    return false;
+
+  const uint16_t* CSR = TRI->getCalleeSavedRegs(&MF);
+  for (TargetRegisterInfo::regclass_iterator I = TRI->regclass_begin(),
+         E = TRI->regclass_end(); I != E; ++I) {
+    const TargetRegisterClass *RC = *I;
+    unsigned Id = RC->getID();
+    unsigned RP = RegPressure[Id];
+
+    unsigned Count = 0;
+    for (const uint16_t *J = CSR; *J; ++J) {
+      if (RC->contains(*J))
+        ++Count;
+    }
+
+    if (Count > RP)
+      return true;
+  }
+
+  return false;
+}
+
+bool RegReductionPQBase::MayLoad(const SUnit *SU) const {
+  if (!SU->getNode()->isMachineOpcode()) 
+    return false; 
+ 
+  const MCInstrDesc &II = TII->get(SU->getNode()->getMachineOpcode()); 
+  return II.mayLoad(); 
 }
 
 bool RegReductionPQBase::HighRegPressure(const SUnit *SU) const {
@@ -2392,6 +2434,17 @@ static int BUCompareLatency(SUnit *left, SUnit *right, bool checkPref,
 }
 
 static bool BURRSort(SUnit *left, SUnit *right, RegReductionPQBase *SPQ) {
+  // FIXME: The scheduler currently does not adjust for the register
+  // pressure from caller-saved registers across a call. Until it does, always
+  // schedule a call over a non-call to prevent excess spilling. This, however,
+  // does not apply to loads (which should be scheduled after calls).
+  if (!DisableCallSpillCheck && SPQ->CallMaySpill()) {
+    if (left->isCall && !right->isCall)
+      return SPQ->MayLoad(right);
+    else if (right->isCall && !left->isCall)
+      return !SPQ->MayLoad(left);
+  }
+
   // Schedule physical register definitions close to their use. This is
   // motivated by microarchitectures that can fuse cmp+jump macro-ops. But as
   // long as shortening physreg live ranges is generally good, we can defer

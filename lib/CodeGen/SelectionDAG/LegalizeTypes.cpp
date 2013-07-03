@@ -254,9 +254,30 @@ bool DAGTypeLegalizer::run() {
         Changed = true;
         goto NodeDone;
       case TargetLowering::TypeWidenVector:
-        WidenVectorResult(N, i);
-        Changed = true;
-        goto NodeDone;
+        bool OpsReqSplit = false;
+        {
+          unsigned NumOperands = N->getNumOperands();
+          for (unsigned j = 0; j != NumOperands; ++j) {
+            if (IgnoreNodeResults(N->getOperand(j).getNode()))
+              continue;
+
+            EVT OpVT = N->getOperand(j).getValueType();
+            TargetLowering::LegalizeTypeAction Act = getTypeAction(OpVT);
+            if (Act == TargetLowering::TypeLegal) {
+              continue;
+            } else if (Act ==TargetLowering::TypeSplitVector) {
+              OpsReqSplit = true;
+              break;
+            } else
+              break;
+          }
+        }
+
+        if (!OpsReqSplit) {
+          WidenVectorResult(N, i);
+          Changed = true;
+          goto NodeDone;
+        }
       }
     }
 

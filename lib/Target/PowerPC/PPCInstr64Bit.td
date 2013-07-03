@@ -103,9 +103,12 @@ let isBranch = 1, isTerminator = 1, hasCtrlDep = 1, PPC970_Unit = 7 in {
   }
 }
 
-
-
-let isCall = 1, PPC970_Unit = 7, Defs = [LR8] in {
+let isCall = 1, PPC970_Unit = 7,
+  Defs = [LR8,
+          F0_ext,F1_ext,F2_ext,F3_ext,F4_ext,F5_ext,F6_ext,F7_ext,F8_ext,F9_ext,
+          F10_ext,F11_ext,F12_ext,F13_ext,F14_ext,F15_ext,F16_ext,F17_ext,F18_ext,F19_ext,
+          F20_ext,F21_ext,F22_ext,F23_ext,F24_ext,F25_ext,F26_ext,F27_ext,F28_ext,F29_ext,
+          F30_ext,F31_ext] in {
   // Convenient aliases for call instructions
   let Uses = [RM] in {
     def BL8  : IForm<18, 0, 1, (outs), (ins calltarget:$func),

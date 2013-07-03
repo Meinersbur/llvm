@@ -1872,8 +1872,14 @@ SDValue DAGTypeLegalizer::WidenVecRes_BUILD_VECTOR(SDNode *N) {
   SDLoc dl(N);
   // Build a vector with undefined for the new nodes.
   EVT VT = N->getValueType(0);
-  EVT EltVT = VT.getVectorElementType();
   unsigned NumElts = VT.getVectorNumElements();
+
+  // We cannot safely use EltVT = VT.getVectorElementType() here because the
+  // element type of each operand of the BUILD_VECTOR node does not necessarily
+  // match the scalar member type of the node's value type. For example,
+  // SelectionDAG::getConstant creates BUILD_VECTOR nodes like this for legal
+  // vectors of illegal scalar types.
+  EVT EltVT = N->getOperand(0)->getValueType(0);
 
   EVT WidenVT = TLI.getTypeToTransformTo(*DAG.getContext(), VT);
   unsigned WidenNumElts = WidenVT.getVectorNumElements();

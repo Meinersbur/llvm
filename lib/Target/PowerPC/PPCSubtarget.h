@@ -75,6 +75,7 @@ protected:
   bool Use64BitRegs;
   bool IsPPC64;
   bool HasAltivec;
+  bool HasFP2;
   bool HasQPX;
   bool HasFSQRT;
   bool HasFRE, HasFRES, HasFRSQRTE, HasFRSQRTES;
@@ -89,6 +90,11 @@ protected:
   bool IsBookE;
   bool HasLazyResolverStubs;
   bool IsJITCodeModel;
+
+  /// When targeting QPX running a stock PPC64 Linux kernel where the stack
+  /// alignment has not been changed, we need to keep the 16-byte alignment
+  /// of the stack.
+  bool IsQPXStackUnaligned;
 
   /// TargetTriple - What processor and OS we're targeting.
   Triple TargetTriple;
@@ -171,12 +177,21 @@ public:
   bool hasFPRND() const { return HasFPRND; }
   bool hasFPCVT() const { return HasFPCVT; }
   bool hasAltivec() const { return HasAltivec; }
-  bool hasQPX() const { return HasQPX; }
   bool hasMFOCRF() const { return HasMFOCRF; }
   bool hasISEL() const { return HasISEL; }
   bool hasPOPCNTD() const { return HasPOPCNTD; }
   bool hasLDBRX() const { return HasLDBRX; }
+  bool hasFP2() const { return HasFP2; }
+  bool hasQPX() const { return HasQPX; }
   bool isBookE() const { return IsBookE; }
+
+  bool isQPXStackUnaligned() const { return IsQPXStackUnaligned; }
+  unsigned getPlatformStackAlignment() const {
+    if ((hasQPX() || isBGQ()) && !isQPXStackUnaligned())
+      return 32;
+
+    return 16;
+  }
 
   const Triple &getTargetTriple() const { return TargetTriple; }
 

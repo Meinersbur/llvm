@@ -507,6 +507,12 @@ std::string DataLayout::getStringRepresentation() const {
   return OS.str();
 }
 
+uint64_t DataLayout::getTypeStoreSize(Type *Ty) const {
+  if (Ty->isVectorTy() && getTypeSizeInBits(Ty->getScalarType()) < 8)
+    return Ty->getVectorNumElements();
+
+  return (getTypeSizeInBits(Ty)+7)/8;
+}
 
 /*!
   \param abi_or_pref Flag that determines which alignment is returned. true

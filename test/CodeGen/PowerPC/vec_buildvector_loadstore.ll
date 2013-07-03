@@ -6,6 +6,7 @@
 
 define void @foo() nounwind ssp {
 ; CHECK: _foo:
+; CHECK: mtspr
 ; CHECK-NOT: stw
 entry:
     %tmp0 = load <16 x i8>* @a, align 16

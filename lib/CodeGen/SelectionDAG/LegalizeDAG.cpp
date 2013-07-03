@@ -1843,6 +1843,77 @@ SDValue SelectionDAGLegalize::ExpandBUILD_VECTOR(SDNode *Node) {
       // Return shuffle(LowValVec, undef, <0,0,0,0>)
       return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
     }
+  } else {
+    // Try to group the scalars into pairs, shuffle the pairs together, then
+    // shuffle the pairs of pairs together, etc. until the vector has
+    // been built. This will work only if all of the necessary shuffle masks
+    // are legal.
+
+    // FIXME: TLI.isShuffleMaskLegal check before creating new nodes!
+
+    SmallVector<std::pair<SDValue, SmallVector<int, 16> >, 16> IntermedVals,
+                                                               NewIntermedVals;
+    for (unsigned i = 0; i < NumElems; ++i) {
+      SDValue V = Node->getOperand(i);
+      if (V.getOpcode() == ISD::UNDEF)
+        continue;
+
+      SDValue Vec = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, V);
+      IntermedVals.push_back(std::make_pair(Vec, SmallVector<int, 16>(1, i)));
+    }
+
+    while (IntermedVals.size() > 2) {
+      NewIntermedVals.clear();
+      for (unsigned i = 0, e = (IntermedVals.size() & ~1u); i < e; i += 2) {
+        // This vector and the next vector are shuffled together (simply to
+        // append the one to the other).
+        SmallVector<int, 16> ShuffleVec(NumElems, -1);
+
+        SmallVector<int, 16> FinalIndices;
+        FinalIndices.reserve(IntermedVals[i].second.size() +
+                             IntermedVals[i+1].second.size());
+        
+        int k = 0;
+        for (unsigned j = 0, f = IntermedVals[i].second.size(); j != f;
+             ++j, ++k) {
+          ShuffleVec[k] = j;
+          FinalIndices.push_back(IntermedVals[i].second[j]);
+        }
+        for (unsigned j = 0, f = IntermedVals[i+1].second.size(); j != f;
+             ++j, ++k) {
+          ShuffleVec[k] = NumElems + j;
+          FinalIndices.push_back(IntermedVals[i+1].second[j]);
+        }
+
+        SDValue Shuffle = DAG.getVectorShuffle(VT, dl, IntermedVals[i].first,
+          IntermedVals[i+1].first, ShuffleVec.data());
+        NewIntermedVals.push_back(std::make_pair(Shuffle, FinalIndices));
+      }
+
+      // If we had an odd number of defined values, then append the last
+      // element to the array of new vectors.
+      if ((IntermedVals.size() & 1) != 0)
+        NewIntermedVals.push_back(IntermedVals.back());
+
+      IntermedVals.swap(NewIntermedVals);
+    }
+
+    assert(IntermedVals.size() <= 2 && IntermedVals.size() > 0 &&
+           "Invalid number of intermediate vectors");
+    SDValue Vec1 = IntermedVals[0].first;
+    SDValue Vec2;
+    if (IntermedVals.size() > 1)
+      Vec2 = IntermedVals[1].first;
+    else
+      Vec2 = DAG.getUNDEF(VT);
+
+    SmallVector<int, 16> ShuffleVec(NumElems, -1);
+    for (unsigned i = 0, e = IntermedVals[0].second.size(); i != e; ++i)
+      ShuffleVec[IntermedVals[0].second[i]] = i;
+    for (unsigned i = 0, e = IntermedVals[1].second.size(); i != e; ++i)
+      ShuffleVec[IntermedVals[1].second[i]] = NumElems + i;
+
+    return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
   }
 
   // Otherwise, we can't handle this case efficiently.

@@ -247,6 +247,25 @@ namespace llvm {
       /// operand identifies the operating system entry point.
       SC,
 
+      /// QVFPERM = This corresponds to the QPX qvfperm instruction.
+      QVFPERM,
+
+      /// QVGPCI = This corresponds to the QPX qvgpci instruction.
+      QVGPCI,
+
+      /// QVALIGNI = This corresponds to the QPX qvaligni instruction.
+      QVALIGNI,
+
+      /// QVESPLATI = This corresponds to the QPX qvesplati instruction.
+      QVESPLATI,
+
+      /// QBFLT = Access the underlying QPX floating-point boolean
+      /// representation.
+      QBFLT,
+
+      /// STD_32 - This is the STD instruction for use with "32-bit" registers.
+      STD_32 = ISD::FIRST_TARGET_MEMORY_OPCODE,
+
       /// CHAIN = STBRX CHAIN, GPRC, Ptr, Type - This is a
       /// byte-swapping store instruction.  It byte-swaps the low "Type" bits of
       /// the GPRC input, then stores it through Ptr.  Type can be either i16 or
@@ -286,7 +305,11 @@ namespace llvm {
       /// G8RC = ADDI_TOC_L G8RReg, Symbol - For medium code model, produces
       /// an ADDI8 instruction that adds G8RReg to sym\@toc\@l.
       /// Preceded by an ADDIS_TOC_HA to form a full 32-bit offset.
-      ADDI_TOC_L
+      ADDI_TOC_L,
+
+      /// QBRC, CHAIN = QVLFSb CHAIN, Ptr
+      /// The 4xf32 load used for v4i1 constants.
+      QVLFSb
     };
   }
 
@@ -332,6 +355,10 @@ namespace llvm {
     /// size, return the constant being splatted.  The ByteSize field indicates
     /// the number of bytes of each element [124] -> [bhw].
     SDValue get_VSPLTI_elt(SDNode *N, unsigned ByteSize, SelectionDAG &DAG);
+
+    /// qvaligni - If this is a qvaligni shuffle mask, return the shift
+    /// amount, otherwise return -1.
+    int isQVALIGNIShuffleMask(SDNode *N);
   }
 
   class PPCTargetLowering : public TargetLowering {
@@ -440,6 +467,8 @@ namespace llvm {
 
     virtual bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const;
 
+    virtual bool isShuffleMaskLegal(const SmallVectorImpl<int> &Mask, EVT VT) const;
+
     /// getOptimalMemOpType - Returns the target specific optimal type for load
     /// and store operations as a result of memset, memcpy, and memmove
     /// lowering. If DstAlign is zero that means it's safe to destination
@@ -512,9 +541,12 @@ namespace llvm {
     SDValue LowerSRA_PARTS(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerCallResult(SDValue Chain, SDValue InFlag,
                             CallingConv::ID CallConv, bool isVarArg,
