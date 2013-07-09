@@ -86,7 +86,7 @@ bool ADCE::runOnFunction(Function& F) {
       I->dropAllReferences();
     }
 
-  for (SmallVector<Instruction*, 1024>::iterator I = worklist.begin(),
+  for (SmallVectorImpl<Instruction *>::iterator I = worklist.begin(),
        E = worklist.end(); I != E; ++I) {
     ++NumRemoved;
     (*I)->eraseFromParent();

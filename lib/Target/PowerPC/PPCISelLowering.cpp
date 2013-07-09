@@ -228,11 +228,6 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   // We cannot sextinreg(i1).  Expand to shifts.
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
 
-  setOperationAction(ISD::EXCEPTIONADDR, MVT::i64, Expand);
-  setOperationAction(ISD::EHSELECTION,   MVT::i64, Expand);
-  setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
-  setOperationAction(ISD::EHSELECTION,   MVT::i32, Expand);
-
   // NOTE: EH_SJLJ_SETJMP/_LONGJMP supported here is NOT intended to support
   // SjLj exception handling but a light-weight setjmp/longjmp replacement to
   // support continuation, user-level threading, and etc.. As a result, no
@@ -397,6 +392,7 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
       setOperationAction(ISD::UDIV, VT, Expand);
       setOperationAction(ISD::UREM, VT, Expand);
       setOperationAction(ISD::FDIV, VT, Expand);
+      setOperationAction(ISD::FREM, VT, Expand);
       setOperationAction(ISD::FNEG, VT, Expand);
       setOperationAction(ISD::FSQRT, VT, Expand);
       setOperationAction(ISD::FLOG, VT, Expand);
@@ -491,6 +487,9 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setCondCodeAction(ISD::SETUGE, MVT::v4f32, Expand);
     setCondCodeAction(ISD::SETULT, MVT::v4f32, Expand);
     setCondCodeAction(ISD::SETULE, MVT::v4f32, Expand);
+
+    setCondCodeAction(ISD::SETO,   MVT::v4f32, Expand);
+    setCondCodeAction(ISD::SETONE, MVT::v4f32, Expand);
   }
 
   if (Subtarget->has64BitSupport()) {
@@ -626,7 +625,7 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::RET_FLAG:        return "PPCISD::RET_FLAG";
   case PPCISD::EH_SJLJ_SETJMP:  return "PPCISD::EH_SJLJ_SETJMP";
   case PPCISD::EH_SJLJ_LONGJMP: return "PPCISD::EH_SJLJ_LONGJMP";
-  case PPCISD::MFCR:            return "PPCISD::MFCR";
+  case PPCISD::MFOCRF:          return "PPCISD::MFOCRF";
   case PPCISD::VCMP:            return "PPCISD::VCMP";
   case PPCISD::VCMPo:           return "PPCISD::VCMPo";
   case PPCISD::LBRX:            return "PPCISD::LBRX";
@@ -1031,6 +1030,35 @@ bool PPCTargetLowering::SelectAddressRegReg(SDValue N, SDValue &Base,
   return false;
 }
 
+// If we happen to be doing an i64 load or store into a stack slot that has
+// less than a 4-byte alignment, then the frame-index elimination may need to
+// use an indexed load or store instruction (because the offset may not be a
+// multiple of 4). The extra register needed to hold the offset comes from the
+// register scavenger, and it is possible that the scavenger will need to use
+// an emergency spill slot. As a result, we need to make sure that a spill slot
+// is allocated when doing an i64 load/store into a less-than-4-byte-aligned
+// stack slot.
+static void fixupFuncForFI(SelectionDAG &DAG, int FrameIdx, EVT VT) {
+  // FIXME: This does not handle the LWA case.
+  if (VT != MVT::i64)
+    return;
+
+  // This should not be needed for negative FIs, which come from argument
+  // lowering, because the ABI should guarentee the necessary alignment.
+  if (FrameIdx < 0)
+    return;
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  MachineFrameInfo *MFI = MF.getFrameInfo();
+
+  unsigned Align = MFI->getObjectAlignment(FrameIdx);
+  if (Align >= 4)
+    return;
+
+  PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
+  FuncInfo->setHasNonRISpills();
+}
+
 /// Returns true if the address N can be represented by a base register plus
 /// a signed 16-bit displacement [r+imm], and if it is not better
 /// represented as reg+reg.  If Aligned is true, only accept displacements
@@ -1052,6 +1080,7 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
       Disp = DAG.getTargetConstant(imm, N.getValueType());
       if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N.getOperand(0))) {
         Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
+        fixupFuncForFI(DAG, FI->getIndex(), N.getValueType());
       } else {
         Base = N.getOperand(0);
       }
@@ -1116,9 +1145,10 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
   }
 
   Disp = DAG.getTargetConstant(0, getPointerTy());
-  if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N))
+  if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N)) {
     Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
-  else
+    fixupFuncForFI(DAG, FI->getIndex(), N.getValueType());
+  } else
     Base = N;
   return true;      // [r+0]
 }
@@ -1364,12 +1394,14 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddress(SDValue Op,
 
   if (Model == TLSModel::InitialExec) {
     SDValue TGA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, 0, 0);
+    SDValue TGATLS = DAG.getTargetGlobalAddress(GV, dl, PtrVT, 0,
+                                                PPCII::MO_TLS);
     SDValue GOTReg = DAG.getRegister(PPC::X2, MVT::i64);
     SDValue TPOffsetHi = DAG.getNode(PPCISD::ADDIS_GOT_TPREL_HA, dl,
                                      PtrVT, GOTReg, TGA);
     SDValue TPOffset = DAG.getNode(PPCISD::LD_GOT_TPREL_L, dl,
                                    PtrVT, TGA, TPOffsetHi);
-    return DAG.getNode(PPCISD::ADD_TLS, dl, PtrVT, TPOffset, TGA);
+    return DAG.getNode(PPCISD::ADD_TLS, dl, PtrVT, TPOffset, TGATLS);
   }
 
   if (Model == TLSModel::GeneralDynamic) {
@@ -4688,6 +4720,15 @@ SDValue PPCTargetLowering::LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
                                            SDLoc dl) const {
   assert(Op.getOperand(0).getValueType().isFloatingPoint());
   SDValue Src = Op.getOperand(0);
+
+  // If we have a long double here, it must be that we have an undef of
+  // that type.  In this case return an undef of the target type.
+  if (Src.getValueType() == MVT::ppcf128) {
+    assert(Src.getOpcode() == ISD::UNDEF && "Unhandled ppcf128!");
+    return DAG.getNode(ISD::UNDEF, dl,
+                       Op.getValueType().getSimpleVT().SimpleTy);
+  }
+
   if (Src.getValueType() == MVT::f32)
     Src = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Src);
 
@@ -5539,7 +5580,7 @@ SDValue PPCTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
   // Now that we have the comparison, emit a copy from the CR to a GPR.
   // This is flagged to the above dot comparison.
-  SDValue Flags = DAG.getNode(PPCISD::MFCR, dl, MVT::i32,
+  SDValue Flags = DAG.getNode(PPCISD::MFOCRF, dl, MVT::i32,
                                 DAG.getRegister(PPC::CR6, MVT::i32),
                                 CompNode.getValue(1));
 
@@ -7293,16 +7334,16 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
         }
       }
 
-      // If the user is a MFCR instruction, we know this is safe.  Otherwise we
-      // give up for right now.
-      if (FlagUser->getOpcode() == PPCISD::MFCR)
+      // If the user is a MFOCRF instruction, we know this is safe.
+      // Otherwise we give up for right now.
+      if (FlagUser->getOpcode() == PPCISD::MFOCRF)
         return SDValue(VCMPoNode, 0);
     }
     break;
   }
   case ISD::BR_CC: {
     // If this is a branch on an altivec predicate comparison, lower this so
-    // that we don't have to do a MFCR: instead, branch directly on CR6.  This
+    // that we don't have to do a MFOCRF: instead, branch directly on CR6.  This
     // lowering is done pre-legalize, because the legalizer lowers the predicate
     // compare down to code that is difficult to reassemble.
     ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(1))->get();
