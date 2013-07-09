@@ -17,6 +17,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 namespace llvm {
@@ -33,12 +34,14 @@ struct ArchiveMemberHeader {
   /// Get the name without looking up long names.
   llvm::StringRef getName() const;
 
-  uint64_t getSize() const;
-};
+  /// Members are not larger than 4GB.
+  uint32_t getSize() const;
 
-static const ArchiveMemberHeader *ToHeader(const char *base) {
-  return reinterpret_cast<const ArchiveMemberHeader *>(base);
-}
+  sys::fs::perms getAccessMode() const;
+  sys::TimeValue getLastModified() const;
+  unsigned getUID() const;
+  unsigned getGID() const;
+};
 
 class Archive : public Binary {
   virtual void anchor();
@@ -50,11 +53,16 @@ public:
     /// \brief Offset from Data to the start of the file.
     uint16_t StartOfFile;
 
+    const ArchiveMemberHeader *getHeader() const {
+      return reinterpret_cast<const ArchiveMemberHeader *>(Data.data());
+    }
+
   public:
     Child(const Archive *Parent, const char *Start);
 
     bool operator ==(const Child &other) const {
-      return (Parent == other.Parent) && (Data.begin() == other.Data.begin());
+      assert(Parent == other.Parent);
+      return Data.begin() == other.Data.begin();
     }
 
     bool operator <(const Child &other) const {
@@ -64,7 +72,15 @@ public:
     Child getNext() const;
 
     error_code getName(StringRef &Result) const;
-    StringRef getRawName() const { return ToHeader(Data.data())->getName(); }
+    StringRef getRawName() const { return getHeader()->getName(); }
+    sys::TimeValue getLastModified() const {
+      return getHeader()->getLastModified();
+    }
+    unsigned getUID() const { return getHeader()->getUID(); }
+    unsigned getGID() const { return getHeader()->getGID(); }
+    sys::fs::perms getAccessMode() const {
+      return getHeader()->getAccessMode();
+    }
     /// \return the size of the archive member without the header or padding.
     uint64_t getSize() const { return Data.size() - StartOfFile; }
 

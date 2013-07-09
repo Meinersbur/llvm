@@ -54,11 +54,47 @@ StringRef ArchiveMemberHeader::getName() const {
   return llvm::StringRef(Name, end);
 }
 
-uint64_t ArchiveMemberHeader::getSize() const {
-  uint64_t ret;
-  if (llvm::StringRef(Size, sizeof(Size)).rtrim(" ").getAsInteger(10, ret))
-    llvm_unreachable("Size is not an integer.");
-  return ret;
+uint32_t ArchiveMemberHeader::getSize() const {
+  uint32_t Ret;
+  if (llvm::StringRef(Size, sizeof(Size)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("Size is not a decimal number.");
+  return Ret;
+}
+
+sys::fs::perms ArchiveMemberHeader::getAccessMode() const {
+  unsigned Ret;
+  if (StringRef(AccessMode, sizeof(AccessMode)).rtrim(" ").getAsInteger(8, Ret))
+    llvm_unreachable("Access mode is not an octal number.");
+  return static_cast<sys::fs::perms>(Ret);
+}
+
+sys::TimeValue ArchiveMemberHeader::getLastModified() const {
+  unsigned Seconds;
+  if (StringRef(LastModified, sizeof(LastModified)).rtrim(" ")
+          .getAsInteger(10, Seconds))
+    llvm_unreachable("Last modified time not a decimal number.");
+
+  sys::TimeValue Ret;
+  Ret.fromEpochTime(Seconds);
+  return Ret;
+}
+
+unsigned ArchiveMemberHeader::getUID() const {
+  unsigned Ret;
+  if (StringRef(UID, sizeof(UID)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("UID time not a decimal number.");
+  return Ret;
+}
+
+unsigned ArchiveMemberHeader::getGID() const {
+  unsigned Ret;
+  if (StringRef(GID, sizeof(GID)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("GID time not a decimal number.");
+  return Ret;
+}
+
+static const ArchiveMemberHeader *toHeader(const char *base) {
+  return reinterpret_cast<const ArchiveMemberHeader *>(base);
 }
 
 Archive::Child::Child(const Archive *Parent, const char *Start)
@@ -66,7 +102,7 @@ Archive::Child::Child(const Archive *Parent, const char *Start)
   if (!Start)
     return;
 
-  const ArchiveMemberHeader *Header = ToHeader(Start);
+  const ArchiveMemberHeader *Header = toHeader(Start);
   Data = StringRef(Start, sizeof(ArchiveMemberHeader) + Header->getSize());
 
   // Setup StartOfFile and PaddingBytes.
@@ -270,7 +306,7 @@ Archive::child_iterator Archive::begin_children(bool skip_internal) const {
   const char *Loc = Data->getBufferStart() + strlen(Magic);
   Child c(this, Loc);
   // Skip internals at the beginning of an archive.
-  if (skip_internal && isInternalMember(*ToHeader(Loc)))
+  if (skip_internal && isInternalMember(*toHeader(Loc)))
     return c.getNext();
   return c;
 }
