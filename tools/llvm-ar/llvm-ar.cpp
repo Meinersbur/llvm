@@ -64,20 +64,15 @@ static cl::extrahelp MoreHelp(
   "\nMODIFIERS (operation specific):\n"
   "  [a] - put file(s) after [relpos]\n"
   "  [b] - put file(s) before [relpos] (same as [i])\n"
-  "  [f] - truncate inserted file names\n"
   "  [i] - put file(s) before [relpos] (same as [b])\n"
-  "  [k] - always print bitcode files (default is to skip them)\n"
   "  [N] - use instance [count] of name\n"
   "  [o] - preserve original dates\n"
-  "  [P] - use full path names when matching\n"
-  "  [R] - recurse through directories when inserting\n"
   "  [s] - create an archive index (cf. ranlib)\n"
   "  [S] - do not build a symbol table\n"
   "  [u] - update only files newer than archive contents\n"
   "\nMODIFIERS (generic):\n"
   "  [c] - do not warn if the library had to be created\n"
   "  [v] - be verbose about actions taken\n"
-  "  [V] - be *really* verbose about actions taken\n"
 );
 
 // This enumeration delineates the kinds of operations on an archive
@@ -96,11 +91,7 @@ enum ArchiveOperation {
 bool AddAfter = false;           ///< 'a' modifier
 bool AddBefore = false;          ///< 'b' modifier
 bool Create = false;             ///< 'c' modifier
-bool TruncateNames = false;      ///< 'f' modifier
-bool InsertBefore = false;       ///< 'i' modifier
-bool UseCount = false;           ///< 'N' modifier
 bool OriginalDates = false;      ///< 'o' modifier
-bool FullPath = false;           ///< 'P' modifier
 bool SymTable = true;            ///< 's' & 'S' modifiers
 bool OnlyUpdate = false;         ///< 'u' modifier
 bool Verbose = false;            ///< 'v' modifier
@@ -110,10 +101,6 @@ bool Verbose = false;            ///< 'v' modifier
 // refers. Only one of 'a', 'b' or 'i' can be specified so we only need
 // one variable.
 std::string RelPos;
-
-// Select which of multiple entries in the archive with the same name should be
-// used (specified with -N) for the delete and extract operations.
-int Count = 1;
 
 // This variable holds the name of the archive file as given on the
 // command line.
@@ -161,20 +148,6 @@ void getRelPos() {
   RestOfArgs.erase(RestOfArgs.begin());
 }
 
-// getCount - Extract the [count] argument associated with the N modifier
-// from the command line and check its value.
-void getCount() {
-  if(RestOfArgs.size() == 0)
-    show_help("Expected [count] value with N modifier");
-
-  Count = atoi(RestOfArgs[0].c_str());
-  RestOfArgs.erase(RestOfArgs.begin());
-
-  // Non-positive counts are not allowed
-  if (Count < 1)
-    show_help("Invalid [count] value (not a positive integer)");
-}
-
 // getArchive - Get the archive file name from the command line
 void getArchive() {
   if(RestOfArgs.size() == 0)
@@ -216,12 +189,10 @@ ArchiveOperation parseCommandLine() {
     case 't': ++NumOperations; Operation = DisplayTable; break;
     case 'x': ++NumOperations; Operation = Extract; break;
     case 'c': Create = true; break;
-    case 'f': TruncateNames = true; break;
     case 'l': /* accepted but unused */ break;
     case 'o': OriginalDates = true; break;
     case 's': break; // Ignore for now.
     case 'S': break; // Ignore for now.
-    case 'P': FullPath = true; break;
     case 'u': OnlyUpdate = true; break;
     case 'v': Verbose = true; break;
     case 'a':
@@ -236,12 +207,8 @@ ArchiveOperation parseCommandLine() {
       break;
     case 'i':
       getRelPos();
-      InsertBefore = true;
+      AddBefore = true;
       NumPositional++;
-      break;
-    case 'N':
-      getCount();
-      UseCount = true;
       break;
     default:
       cl::PrintHelpMessage();
@@ -263,20 +230,15 @@ ArchiveOperation parseCommandLine() {
     show_help("Only one operation may be specified");
   if (NumPositional > 1)
     show_help("You may only specify one of a, b, and i modifiers");
-  if (AddAfter || AddBefore || InsertBefore) {
+  if (AddAfter || AddBefore) {
     if (Operation != Move && Operation != ReplaceOrInsert)
       show_help("The 'a', 'b' and 'i' modifiers can only be specified with "
             "the 'm' or 'r' operations");
   }
   if (OriginalDates && Operation != Extract)
     show_help("The 'o' modifier is only applicable to the 'x' operation");
-  if (TruncateNames && Operation!=QuickAppend && Operation!=ReplaceOrInsert)
-    show_help("The 'f' modifier is only applicable to the 'q' and 'r' "
-              "operations");
   if (OnlyUpdate && Operation != ReplaceOrInsert)
     show_help("The 'u' modifier is only applicable to the 'r' operation");
-  if (Count > 1 && Members.size() > 1)
-    show_help("Only one member name may be specified with the 'N' modifier");
 
   // Return the parsed operation to the caller
   return Operation;
@@ -311,26 +273,21 @@ bool buildPaths(bool checkExistence, std::string* ErrMsg) {
 bool doPrint(std::string* ErrMsg) {
   if (buildPaths(false, ErrMsg))
     return true;
-  unsigned countDown = Count;
   for (Archive::iterator I = TheArchive->begin(), E = TheArchive->end();
        I != E; ++I ) {
     if (Paths.empty() ||
         (std::find(Paths.begin(), Paths.end(), I->getPath()) != Paths.end())) {
-      if (countDown == 1) {
-        const char* data = reinterpret_cast<const char*>(I->getData());
+      const char *data = reinterpret_cast<const char *>(I->getData());
 
-        // Skip things that don't make sense to print
-        if (I->isSVR4SymbolTable() || I->isBSD4SymbolTable())
-          continue;
+      // Skip things that don't make sense to print
+      if (I->isSVR4SymbolTable() || I->isBSD4SymbolTable())
+        continue;
 
-        if (Verbose)
-          outs() << "Printing " << I->getPath().str() << "\n";
+      if (Verbose)
+        outs() << "Printing " << I->getPath().str() << "\n";
 
-        unsigned len = I->getSize();
-        outs().write(data, len);
-      } else {
-        countDown--;
-      }
+      unsigned len = I->getSize();
+      outs().write(data, len);
     }
   }
   return false;
@@ -367,17 +324,15 @@ doDisplayTable(std::string* ErrMsg) {
     if (Paths.empty() ||
         (std::find(Paths.begin(), Paths.end(), I->getPath()) != Paths.end())) {
       if (Verbose) {
-        // FIXME: Output should be this format:
-        // Zrw-r--r--  500/ 500    525 Nov  8 17:42 2004 Makefile
-        outs() << " ";
         unsigned mode = I->getMode();
         printMode((mode >> 6) & 007);
         printMode((mode >> 3) & 007);
         printMode(mode & 007);
-        outs() << " " << format("%4u", I->getUser());
-        outs() << "/" << format("%4u", I->getGroup());
-        outs() << " " << format("%8u", I->getSize());
-        outs() << " " << format("%20s", I->getModTime().str().substr(4).c_str());
+        outs() << ' ' << I->getUser();
+        outs() << "/" << I->getGroup();
+        outs() << ' ' << format("%6llu", I->getSize());
+        sys::TimeValue ModTime = I->getModTime();
+        outs() << " " << ModTime.str();
         outs() << " " << I->getPath().str() << "\n";
       } else {
         outs() << I->getPath().str() << "\n";
@@ -447,23 +402,19 @@ doDelete(std::string* ErrMsg) {
     return true;
   if (Paths.empty())
     return false;
-  unsigned countDown = Count;
   for (Archive::iterator I = TheArchive->begin(), E = TheArchive->end();
        I != E; ) {
     if (std::find(Paths.begin(), Paths.end(), I->getPath()) != Paths.end()) {
-      if (countDown == 1) {
-        Archive::iterator J = I;
-        ++I;
-        TheArchive->erase(J);
-      } else
-        countDown--;
+      Archive::iterator J = I;
+      ++I;
+      TheArchive->erase(J);
     } else {
       ++I;
     }
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(ErrMsg))
     return true;
   return false;
 }
@@ -484,7 +435,7 @@ doMove(std::string* ErrMsg) {
   // However, if the relative positioning modifiers were used, we need to scan
   // the archive to find the member in question. If we don't find it, its no
   // crime, we just move to the end.
-  if (AddBefore || InsertBefore || AddAfter) {
+  if (AddBefore || AddAfter) {
     for (Archive::iterator I = TheArchive->begin(), E= TheArchive->end();
          I != E; ++I ) {
       if (RelPos == I->getPath().str()) {
@@ -516,7 +467,7 @@ doMove(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(ErrMsg))
     return true;
   return false;
 }
@@ -539,7 +490,7 @@ doQuickAppend(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(ErrMsg))
     return true;
   return false;
 }
@@ -572,18 +523,6 @@ doReplaceOrInsert(std::string* ErrMsg) {
     for (std::set<std::string>::iterator RI = remaining.begin(),
          RE = remaining.end(); RI != RE; ++RI ) {
       std::string compare(sys::path::filename(*RI));
-      if (TruncateNames && compare.length() > 15) {
-        const char* nm = compare.c_str();
-        unsigned len = compare.length();
-        size_t slashpos = compare.rfind('/');
-        if (slashpos != std::string::npos) {
-          nm += slashpos + 1;
-          len -= slashpos +1;
-        }
-        if (len > 15)
-          len = 15;
-        compare.assign(nm,len);
-      }
       if (compare == I->getPath().str()) {
         found = RI;
         break;
@@ -615,7 +554,7 @@ doReplaceOrInsert(std::string* ErrMsg) {
     }
 
     // Determine if this is the place where we should insert
-    if ((AddBefore || InsertBefore) && RelPos == I->getPath().str())
+    if (AddBefore && RelPos == I->getPath().str())
       insert_spot = I;
     else if (AddAfter && RelPos == I->getPath().str()) {
       insert_spot = I;
@@ -634,7 +573,7 @@ doReplaceOrInsert(std::string* ErrMsg) {
   }
 
   // We're done editting, reconstruct the archive.
-  if (TheArchive->writeToDisk(TruncateNames,ErrMsg))
+  if (TheArchive->writeToDisk(ErrMsg))
     return true;
   return false;
 }
