@@ -45,8 +45,8 @@ define float @test_fnmsub(float %a, float %b, float %c) {
 }
 
 define double @testd_fmadd(double %a, double %b, double %c) {
-; CHECK: testd_fmadd:
-; CHECK-NOFAST: testd_fmadd:
+; CHECK-LABEL: testd_fmadd:
+; CHECK-NOFAST-LABEL: testd_fmadd:
   %val = call double @llvm.fma.f64(double %a, double %b, double %c)
 ; CHECK: fmadd {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}
 ; CHECK-NOFAST: fmadd {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}
@@ -54,8 +54,8 @@ define double @testd_fmadd(double %a, double %b, double %c) {
 }
 
 define double @testd_fmsub(double %a, double %b, double %c) {
-; CHECK: testd_fmsub:
-; CHECK-NOFAST: testd_fmsub:
+; CHECK-LABEL: testd_fmsub:
+; CHECK-NOFAST-LABEL: testd_fmsub:
   %nega = fsub double -0.0, %a
   %val = call double @llvm.fma.f64(double %nega, double %b, double %c)
 ; CHECK: fmsub {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}
@@ -64,8 +64,8 @@ define double @testd_fmsub(double %a, double %b, double %c) {
 }
 
 define double @testd_fnmadd(double %a, double %b, double %c) {
-; CHECK: testd_fnmadd:
-; CHECK-NOFAST: testd_fnmadd:
+; CHECK-LABEL: testd_fnmadd:
+; CHECK-NOFAST-LABEL: testd_fnmadd:
   %negc = fsub double -0.0, %c
   %val = call double @llvm.fma.f64(double %a, double %b, double %negc)
 ; CHECK: fnmadd {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}, {{d[0-9]+}}
@@ -74,8 +74,8 @@ define double @testd_fnmadd(double %a, double %b, double %c) {
 }
 
 define double @testd_fnmsub(double %a, double %b, double %c) {
-; CHECK: testd_fnmsub:
-; CHECK-NOFAST: testd_fnmsub:
+; CHECK-LABEL: testd_fnmsub:
+; CHECK-NOFAST-LABEL: testd_fnmsub:
   %nega = fsub double -0.0, %a
   %negc = fsub double -0.0, %c
   %val = call double @llvm.fma.f64(double %nega, double %b, double %negc)

@@ -78,11 +78,11 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
   setOperationAction(ISD::UREM, MVT::i32, Expand);
 
-  int types[] = {
+  static const int types[] = {
     (int)MVT::v2i32,
     (int)MVT::v4i32
   };
-  size_t NumTypes = sizeof(types) / sizeof(*types);
+  const size_t NumTypes = array_lengthof(types);
 
   for (unsigned int x  = 0; x < NumTypes; ++x) {
     MVT::SimpleValueType VT = (MVT::SimpleValueType)types[x];
