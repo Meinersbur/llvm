@@ -387,7 +387,7 @@ public:
   NewArchiveIterator(std::vector<std::string>::const_iterator I, Twine Name);
   bool isNewMember() const;
   object::Archive::child_iterator getOld() const;
-  StringRef getNew() const;
+  const char *getNew() const;
   StringRef getMemberName() const { return MemberName; }
 };
 }
@@ -411,9 +411,9 @@ object::Archive::child_iterator NewArchiveIterator::getOld() const {
   return OldI;
 }
 
-StringRef NewArchiveIterator::getNew() const {
+const char *NewArchiveIterator::getNew() const {
   assert(IsNewMember);
-  return *NewI;
+  return NewI->c_str();
 }
 
 template <typename T>
@@ -555,13 +555,23 @@ static void performWriteOperation(ArchiveOperation Operation,
     printWithSpacePadding(Out, Name, 16);
 
     if (I->isNewMember()) {
-      // FIXME: we do a stat + open. We should do a open + fstat.
-      StringRef FileName = I->getNew();
+      const char *FileName = I->getNew();
+
+      int OpenFlags = O_RDONLY;
+#ifdef O_BINARY
+      OpenFlags |= O_BINARY;
+#endif
+      int FD = ::open(FileName, OpenFlags);
+      if (FD == -1)
+        return failIfError(error_code(errno, posix_category()), FileName);
+
       sys::fs::file_status Status;
-      failIfError(sys::fs::status(FileName, Status), FileName);
+      failIfError(sys::fs::status(FD, Status), FileName);
 
       OwningPtr<MemoryBuffer> File;
-      failIfError(MemoryBuffer::getFile(FileName, File), FileName);
+      failIfError(
+          MemoryBuffer::getOpenFile(FD, FileName, File, Status.getSize()),
+          FileName);
 
       uint64_t secondsSinceEpoch =
           Status.getLastModificationTime().toEpochTime();
