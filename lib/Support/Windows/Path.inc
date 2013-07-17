@@ -1050,11 +1050,11 @@ error_code openFileForRead(const Twine &Name, int &ResultFD) {
     return EC;
 
   HANDLE H = ::CreateFileW(PathUTF16.begin(), GENERIC_READ,
-                           FILE_SHARE_READ, NULL,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   if (H == INVALID_HANDLE_VALUE) {
     error_code EC = windows_error(::GetLastError());
-    // Provide a better error massage when trying to open directories.
+    // Provide a better error message when trying to open directories.
     // This only runs if we failed to open the file, so there is probably
     // no performances issues.
     if (EC != windows_error::access_denied)
