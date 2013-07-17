@@ -464,6 +464,13 @@ bool is_directory(file_status status);
 ///          platform specific error_code.
 error_code is_directory(const Twine &path, bool &result);
 
+/// @brief Simpler version of is_directory for clients that don't need to
+///        differentiate between an error and false.
+inline bool is_directory(const Twine &Path) {
+  bool Result;
+  return !is_directory(Path, Result) && Result;
+}
+
 /// @brief Does status represent a regular file?
 ///
 /// @param status A file_status previously returned from status.
@@ -610,6 +617,37 @@ error_code createTemporaryFile(const Twine &Prefix, StringRef Suffix,
 
 error_code createUniqueDirectory(const Twine &Prefix,
                                  SmallVectorImpl<char> &ResultPath);
+
+enum OpenFlags {
+  F_None = 0,
+
+  /// F_Excl - When opening a file, this flag makes raw_fd_ostream
+  /// report an error if the file already exists.
+  F_Excl = 1,
+
+  /// F_Append - When opening a file, if it already exists append to the
+  /// existing file instead of returning an error.  This may not be specified
+  /// with F_Excl.
+  F_Append = 2,
+
+  /// F_Binary - The file should be opened in binary mode on platforms that
+  /// make this distinction.
+  F_Binary = 4
+};
+
+inline OpenFlags operator|(OpenFlags A, OpenFlags B) {
+  return OpenFlags(unsigned(A) | unsigned(B));
+}
+
+inline OpenFlags &operator|=(OpenFlags &A, OpenFlags B) {
+  A = A | B;
+  return A;
+}
+
+error_code openFileForWrite(const Twine &Name, int &ResultFD, OpenFlags Flags,
+                            unsigned Mode = 0666);
+
+error_code openFileForRead(const Twine &Name, int &ResultFD);
 
 /// @brief Canonicalize path.
 ///

@@ -1092,6 +1092,19 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case ARMISD::VST2LN_UPD:    return "ARMISD::VST2LN_UPD";
   case ARMISD::VST3LN_UPD:    return "ARMISD::VST3LN_UPD";
   case ARMISD::VST4LN_UPD:    return "ARMISD::VST4LN_UPD";
+
+  case ARMISD::ATOMADD64_DAG:     return "ATOMADD64_DAG";
+  case ARMISD::ATOMSUB64_DAG:     return "ATOMSUB64_DAG";
+  case ARMISD::ATOMOR64_DAG:      return "ATOMOR64_DAG";
+  case ARMISD::ATOMXOR64_DAG:     return "ATOMXOR64_DAG";
+  case ARMISD::ATOMAND64_DAG:     return "ATOMAND64_DAG";
+  case ARMISD::ATOMNAND64_DAG:    return "ATOMNAND64_DAG";
+  case ARMISD::ATOMSWAP64_DAG:    return "ATOMSWAP64_DAG";
+  case ARMISD::ATOMCMPXCHG64_DAG: return "ATOMCMPXCHG64_DAG";
+  case ARMISD::ATOMMIN64_DAG:     return "ATOMMIN64_DAG";
+  case ARMISD::ATOMUMIN64_DAG:    return "ATOMUMIN64_DAG";
+  case ARMISD::ATOMMAX64_DAG:     return "ATOMMAX64_DAG";
+  case ARMISD::ATOMUMAX64_DAG:    return "ATOMUMAX64_DAG";
   }
 }
 
@@ -10834,6 +10847,30 @@ bool ARMTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Value *AlignArg = I.getArgOperand(I.getNumArgOperands() - 1);
     Info.align = cast<ConstantInt>(AlignArg)->getZExtValue();
     Info.vol = false; // volatile stores with NEON intrinsics not supported
+    Info.readMem = false;
+    Info.writeMem = true;
+    return true;
+  }
+  case Intrinsic::arm_ldrex: {
+    PointerType *PtrTy = cast<PointerType>(I.getArgOperand(0)->getType());
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = MVT::getVT(PtrTy->getElementType());
+    Info.ptrVal = I.getArgOperand(0);
+    Info.offset = 0;
+    Info.align = getDataLayout()->getABITypeAlignment(PtrTy->getElementType());
+    Info.vol = true;
+    Info.readMem = true;
+    Info.writeMem = false;
+    return true;
+  }
+  case Intrinsic::arm_strex: {
+    PointerType *PtrTy = cast<PointerType>(I.getArgOperand(1)->getType());
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = MVT::getVT(PtrTy->getElementType());
+    Info.ptrVal = I.getArgOperand(1);
+    Info.offset = 0;
+    Info.align = getDataLayout()->getABITypeAlignment(PtrTy->getElementType());
+    Info.vol = true;
     Info.readMem = false;
     Info.writeMem = true;
     return true;
