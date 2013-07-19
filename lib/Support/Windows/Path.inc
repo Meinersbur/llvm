@@ -579,6 +579,26 @@ static error_code getStatus(HANDLE FileHandle, file_status &Result) {
   if (FileHandle == INVALID_HANDLE_VALUE)
     goto handle_status_error;
 
+  switch (::GetFileType(FileHandle)) {
+  default:
+    llvm_unreachable("Don't know anything about this file type");
+  case FILE_TYPE_UNKNOWN: {
+    DWORD Err = ::GetLastError();
+    if (Err != NO_ERROR)
+      return windows_error(Err);
+    Result = file_status(file_type::type_unknown);
+    return error_code::success();
+  }
+  case FILE_TYPE_DISK:
+    break;
+  case FILE_TYPE_CHAR:
+    Result = file_status(file_type::character_file);
+    return error_code::success();
+  case FILE_TYPE_PIPE:
+    Result = file_status(file_type::fifo_file);
+    return error_code::success();
+  }
+
   BY_HANDLE_FILE_INFORMATION Info;
   if (!::GetFileInformationByHandle(FileHandle, &Info))
     goto handle_status_error;
