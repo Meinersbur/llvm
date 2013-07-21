@@ -115,7 +115,7 @@ private:
   /// Maps instructions to numbers and back.
   SmallDenseMap<Instruction *, int> InstrIdx;
   /// Maps integers to Instructions.
-  std::vector<Instruction *> InstrVec;
+  SmallVector<Instruction *, 32> InstrVec;
 };
 
 /// \returns the parent basic block if all of the instructions in \p VL
@@ -391,7 +391,7 @@ private:
   SetVector<Instruction *> GatherSeq;
 
   /// Numbers instructions in different blocks.
-  std::map<BasicBlock *, BlockNumbering> BlocksNumbers;
+  DenseMap<BasicBlock *, BlockNumbering> BlocksNumbers;
 
   // Analysis and block reference.
   Function *F;
@@ -994,19 +994,27 @@ bool BoUpSLP::isConsecutiveAccess(Value *A, Value *B) {
   Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
   int64_t Sz = DL->getTypeStoreSize(Ty);
 
+  // Check if PtrA is the base and PtrB is a constant offset.
+  if (GepB && GepB->getPointerOperand() == PtrA) {
+    APInt Offset(BW, 0);
+    if (GepB->accumulateConstantOffset(*DL, Offset))
+      return Offset.getSExtValue() == Sz;
+    return false;
+  }
+
+  // Check if PtrB is the base and PtrA is a constant offset.
+  if (GepA && GepA->getPointerOperand() == PtrB) {
+    APInt Offset(BW, 0);
+    if (GepA->accumulateConstantOffset(*DL, Offset))
+      return Offset.getSExtValue() == -Sz;
+    return false;
+  }
+
   // If both pointers are GEPs:
   if (GepA && GepB) {
-    // Check that they have the same base pointer.
-    if (GepA->getPointerOperand() != GepB->getPointerOperand())
-      return false;
-
-    // Check if the geps use a constant offset.
-    APInt OffsetA(BW, 0) ,OffsetB(BW, 0);
-    if (GepA->accumulateConstantOffset(*DL, OffsetA) &&
-        GepB->accumulateConstantOffset(*DL, OffsetB))
-      return ((OffsetB.getSExtValue() - OffsetA.getSExtValue()) == Sz);
-
-    if (GepA->getNumIndices() != GepB->getNumIndices())
+    // Check that they have the same base pointer and number of indices.
+    if (GepA->getPointerOperand() != GepB->getPointerOperand() ||
+        GepA->getNumIndices() != GepB->getNumIndices())
       return false;
 
     // Try to strip the geps. This makes SCEV faster.
@@ -1021,17 +1029,6 @@ bool BoUpSLP::isConsecutiveAccess(Value *A, Value *B) {
     PtrB = GepB->getOperand(LastIdx);
     Sz = 1;
   }
-
-  // Check if PtrA is the base and PtrB is a constant offset.
-  if (GepB && GepB->getPointerOperand() == PtrA) {
-    APInt Offset(BW, 0);
-    if (GepB->accumulateConstantOffset(*DL, Offset))
-      return Offset.getZExtValue() == DL->getTypeStoreSize(Ty);
-  }
-
-  // GepA can't use PtrB as a base pointer.
-  if (GepA && GepA->getPointerOperand() == PtrB)
-    return false;
 
   ConstantInt *CA = dyn_cast<ConstantInt>(PtrA);
   ConstantInt *CB = dyn_cast<ConstantInt>(PtrB);
@@ -1426,8 +1423,8 @@ void BoUpSLP::vectorizeTree() {
 
       Type *Ty = Scalar->getType();
       if (!Ty->isVoidTy()) {
-        for (Value::use_iterator User = Scalar->use_begin(), UE = Scalar->use_end();
-             User != UE; ++User) {
+        for (Value::use_iterator User = Scalar->use_begin(),
+             UE = Scalar->use_end(); User != UE; ++User) {
           DEBUG(dbgs() << "SLP: \tvalidating user:" << **User << ".\n");
           assert(!MustGather.count(*User) &&
                  "Replacing gathered value with undef");
