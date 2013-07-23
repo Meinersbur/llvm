@@ -480,7 +480,7 @@ private:
       if (!II.isVolatile())
         return markAsDead(II);
 
-      return insertUse(II, Offset, Size, /*IsSplittable=*/false);;
+      return insertUse(II, Offset, Size, /*IsSplittable=*/false);
     }
 
     // If we have seen both source and destination for a mem transfer, then
@@ -2540,7 +2540,7 @@ private:
     // as local as possible to the PHI. To do that, we re-use the location of
     // the old pointer, which necessarily must be in the right position to
     // dominate the PHI.
-    IRBuilderTy PtrBuilder(cast<Instruction>(OldPtr));
+    IRBuilderTy PtrBuilder(OldPtr);
     PtrBuilder.SetNamePrefix(Twine(NewAI.getName()) + "." + Twine(BeginOffset) +
                              ".");
 

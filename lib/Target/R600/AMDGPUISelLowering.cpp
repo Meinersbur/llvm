@@ -18,6 +18,7 @@
 #include "AMDGPURegisterInfo.h"
 #include "AMDGPUSubtarget.h"
 #include "AMDILIntrinsicInfo.h"
+#include "R600MachineFunctionInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -77,6 +78,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
 
   setOperationAction(ISD::LOAD, MVT::f64, Promote);
   AddPromotedToType(ISD::LOAD, MVT::f64, MVT::i64);
+
+  setOperationAction(ISD::FNEG, MVT::v2f32, Expand);
+  setOperationAction(ISD::FNEG, MVT::v4f32, Expand);
 
   setOperationAction(ISD::MUL, MVT::i64, Expand);
 
