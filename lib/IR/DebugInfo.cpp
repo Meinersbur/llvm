@@ -661,20 +661,11 @@ MDNode *DISubprogram::getVariablesNodes() const {
 }
 
 DIArray DISubprogram::getVariables() const {
-  if (MDNode *T = getNodeField(DbgNode, 18))
-    return DIArray(T);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 18));
 }
 
 Value *DITemplateValueParameter::getValue() const {
   return getField(DbgNode, 4);
-}
-
-void DIScope::setFilename(StringRef Name, LLVMContext &Context) {
-  if (!DbgNode)
-    return;
-  MDString *MDName(MDString::get(Context, Name));
-  getNodeField(DbgNode, 1)->replaceOperandWith(0, MDName);
 }
 
 StringRef DIScope::getFilename() const {
@@ -693,27 +684,21 @@ DIArray DICompileUnit::getEnumTypes() const {
   if (!DbgNode || DbgNode->getNumOperands() < 13)
     return DIArray();
 
-  if (MDNode *N = getNodeField(DbgNode, 7))
-    return DIArray(N);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 7));
 }
 
 DIArray DICompileUnit::getRetainedTypes() const {
   if (!DbgNode || DbgNode->getNumOperands() < 13)
     return DIArray();
 
-  if (MDNode *N = getNodeField(DbgNode, 8))
-    return DIArray(N);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 8));
 }
 
 DIArray DICompileUnit::getSubprograms() const {
   if (!DbgNode || DbgNode->getNumOperands() < 13)
     return DIArray();
 
-  if (MDNode *N = getNodeField(DbgNode, 9))
-    return DIArray(N);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 9));
 }
 
 
@@ -721,18 +706,14 @@ DIArray DICompileUnit::getGlobalVariables() const {
   if (!DbgNode || DbgNode->getNumOperands() < 13)
     return DIArray();
 
-  if (MDNode *N = getNodeField(DbgNode, 10))
-    return DIArray(N);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 10));
 }
 
 DIArray DICompileUnit::getImportedEntities() const {
   if (!DbgNode || DbgNode->getNumOperands() < 13)
     return DIArray();
 
-  if (MDNode *N = getNodeField(DbgNode, 11))
-    return DIArray(N);
-  return DIArray();
+  return DIArray(getNodeField(DbgNode, 11));
 }
 
 /// fixupSubprogramName - Replace contains special characters used
@@ -927,6 +908,14 @@ void DebugInfoFinder::processScope(DIScope Scope) {
     processType(Ty);
     return;
   }
+  if (Scope.isCompileUnit()) {
+    addCompileUnit(DICompileUnit(Scope));
+    return;
+  }
+  if (Scope.isSubprogram()) {
+    processSubprogram(DISubprogram(Scope));
+    return;
+  }
   if (!addScope(Scope))
     return;
   if (Scope.isLexicalBlock()) {
@@ -973,6 +962,7 @@ void DebugInfoFinder::processDeclare(const DbgDeclareInst *DDI) {
 
   if (!NodesSeen.insert(DV))
     return;
+  processScope(DIVariable(N).getContext());
   processType(DIVariable(N).getType());
 }
 
