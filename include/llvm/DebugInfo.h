@@ -89,14 +89,7 @@ namespace llvm {
     void replaceFunctionField(unsigned Elt, Function *F);
 
   public:
-    explicit DIDescriptor() : DbgNode(0) {}
-    explicit DIDescriptor(const MDNode *N) : DbgNode(N) {}
-    explicit DIDescriptor(const DIFile F);
-    explicit DIDescriptor(const DISubprogram F);
-    explicit DIDescriptor(const DILexicalBlockFile F);
-    explicit DIDescriptor(const DILexicalBlock F);
-    explicit DIDescriptor(const DIVariable F);
-    explicit DIDescriptor(const DIType F);
+    explicit DIDescriptor(const MDNode *N = 0) : DbgNode(N) {}
 
     bool Verify() const;
 
@@ -136,7 +129,6 @@ namespace llvm {
     bool isSubrange() const;
     bool isEnumerator() const;
     bool isType() const;
-    bool isGlobal() const;
     bool isUnspecifiedParameter() const;
     bool isTemplateTypeParameter() const;
     bool isTemplateValueParameter() const;
@@ -165,8 +157,7 @@ namespace llvm {
   /// DIArray - This descriptor holds an array of descriptors.
   class DIArray : public DIDescriptor {
   public:
-    explicit DIArray(const MDNode *N = 0)
-      : DIDescriptor(N) {}
+    explicit DIArray(const MDNode *N = 0) : DIDescriptor(N) {}
 
     unsigned getNumElements() const;
     DIDescriptor getElement(unsigned Idx) const {
@@ -207,14 +198,12 @@ namespace llvm {
   protected:
     friend class DIDescriptor;
     void printInternal(raw_ostream &OS) const;
-    // This ctor is used when the Tag has already been validated by a derived
-    // ctor.
-    DIType(const MDNode *N, bool, bool) : DIScope(N) {}
+
   public:
+    DIType(const MDNode *N = 0) : DIScope(N) {}
+
     /// Verify - Verify that a type descriptor is well formed.
     bool Verify() const;
-    explicit DIType(const MDNode *N);
-    explicit DIType() {}
 
     DIScope getContext() const          { return getFieldAs<DIScope>(2); }
     StringRef getName() const           { return getStringField(3);     }
@@ -289,12 +278,9 @@ namespace llvm {
   class DIDerivedType : public DIType {
     friend class DIDescriptor;
     void printInternal(raw_ostream &OS) const;
-  protected:
-    explicit DIDerivedType(const MDNode *N, bool, bool)
-      : DIType(N, true, true) {}
+
   public:
-    explicit DIDerivedType(const MDNode *N = 0)
-      : DIType(N, true, true) {}
+    explicit DIDerivedType(const MDNode *N = 0) : DIType(N) {}
 
     DIType getTypeDerivedFrom() const { return getFieldAs<DIType>(9); }
 
@@ -330,11 +316,7 @@ namespace llvm {
     friend class DIDescriptor;
     void printInternal(raw_ostream &OS) const;
   public:
-    explicit DICompositeType(const MDNode *N = 0)
-      : DIDerivedType(N, true, true) {
-      if (N && !isCompositeType())
-        DbgNode = 0;
-    }
+    explicit DICompositeType(const MDNode *N = 0) : DIDerivedType(N) {}
 
     DIArray getTypeArray() const { return getFieldAs<DIArray>(10); }
     void setTypeArray(DIArray Elements, DIArray TParams = DIArray());
@@ -353,10 +335,7 @@ namespace llvm {
   class DIFile : public DIScope {
     friend class DIDescriptor;
   public:
-    explicit DIFile(const MDNode *N = 0) : DIScope(N) {
-      if (DbgNode && !isFile())
-        DbgNode = 0;
-    }
+    explicit DIFile(const MDNode *N = 0) : DIScope(N) {}
     MDNode *getFileNode() const;
     bool Verify() const;
   };
@@ -580,8 +559,7 @@ namespace llvm {
     friend class DIDescriptor;
     void printInternal(raw_ostream &OS) const;
   public:
-    explicit DIVariable(const MDNode *N = 0)
-      : DIDescriptor(N) {}
+    explicit DIVariable(const MDNode *N = 0) : DIDescriptor(N) {}
 
     DIScope getContext() const          { return getFieldAs<DIScope>(1); }
     StringRef getName() const           { return getStringField(2);     }

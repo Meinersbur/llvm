@@ -34,24 +34,6 @@ using namespace llvm::dwarf;
 // DIDescriptor
 //===----------------------------------------------------------------------===//
 
-DIDescriptor::DIDescriptor(const DIFile F) : DbgNode(F.DbgNode) {
-}
-
-DIDescriptor::DIDescriptor(const DISubprogram F) : DbgNode(F.DbgNode) {
-}
-
-DIDescriptor::DIDescriptor(const DILexicalBlockFile F) : DbgNode(F.DbgNode) {
-}
-
-DIDescriptor::DIDescriptor(const DILexicalBlock F) : DbgNode(F.DbgNode) {
-}
-
-DIDescriptor::DIDescriptor(const DIVariable F) : DbgNode(F.DbgNode) {
-}
-
-DIDescriptor::DIDescriptor(const DIType F) : DbgNode(F.DbgNode) {
-}
-
 bool DIDescriptor::Verify() const {
   return DbgNode &&
          (DIDerivedType(DbgNode).Verify() ||
@@ -249,11 +231,6 @@ bool DIDescriptor::isGlobalVariable() const {
                      getTag() == dwarf::DW_TAG_constant);
 }
 
-/// isGlobal - Return true if the specified tag is legal for DIGlobal.
-bool DIDescriptor::isGlobal() const {
-  return isGlobalVariable();
-}
-
 /// isUnspecifiedParmeter - Return true if the specified tag is
 /// DW_TAG_unspecified_parameters.
 bool DIDescriptor::isUnspecifiedParameter() const {
@@ -344,23 +321,17 @@ bool DIDescriptor::isImportedEntity() const {
 // Simple Descriptor Constructors and other Methods
 //===----------------------------------------------------------------------===//
 
-DIType::DIType(const MDNode *N) : DIScope(N) {
-  if (!N) return;
-  if (!isType())
-    DbgNode = 0;
-}
-
 unsigned DIArray::getNumElements() const {
   if (!DbgNode)
     return 0;
   return DbgNode->getNumOperands();
 }
 
-/// replaceAllUsesWith - Replace all uses of debug info referenced by
-/// this descriptor.
+/// replaceAllUsesWith - Replace all uses of the MDNode used by this
+/// type with the one in the passed descriptor.
 void DIType::replaceAllUsesWith(DIDescriptor &D) {
-  if (!DbgNode)
-    return;
+
+  assert(DbgNode && "Trying to replace an unverified type!");
 
   // Since we use a TrackingVH for the node, its easy for clients to manufacture
   // legitimate situations where they want to replaceAllUsesWith() on something
@@ -376,11 +347,11 @@ void DIType::replaceAllUsesWith(DIDescriptor &D) {
   }
 }
 
-/// replaceAllUsesWith - Replace all uses of debug info referenced by
-/// this descriptor.
+/// replaceAllUsesWith - Replace all uses of the MDNode used by this
+/// type with the one in D.
 void DIType::replaceAllUsesWith(MDNode *D) {
-  if (!DbgNode)
-    return;
+
+  assert(DbgNode && "Trying to replace an unverified type!");
 
   // Since we use a TrackingVH for the node, its easy for clients to manufacture
   // legitimate situations where they want to replaceAllUsesWith() on something
@@ -417,10 +388,12 @@ bool DIType::isUnsignedDIType() {
 bool DICompileUnit::Verify() const {
   if (!isCompileUnit())
     return false;
-  StringRef N = getFilename();
-  if (N.empty())
+
+  // Don't bother verifying the compilation directory or producer string
+  // as those could be empty.
+  if (getFilename().empty())
     return false;
-  // It is possible that directory and produce string is empty.
+
   return DbgNode->getNumOperands() == 13;
 }
 
@@ -437,18 +410,17 @@ bool DIObjCProperty::Verify() const {
 bool DIType::Verify() const {
   if (!isType())
     return false;
+  // FIXME: Sink this into the various subclass verifies.
   unsigned Tag = getTag();
   if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
       Tag != dwarf::DW_TAG_volatile_type && Tag != dwarf::DW_TAG_pointer_type &&
       Tag != dwarf::DW_TAG_ptr_to_member_type &&
       Tag != dwarf::DW_TAG_reference_type &&
       Tag != dwarf::DW_TAG_rvalue_reference_type &&
-      Tag != dwarf::DW_TAG_restrict_type &&
-      Tag != dwarf::DW_TAG_array_type &&
+      Tag != dwarf::DW_TAG_restrict_type && Tag != dwarf::DW_TAG_array_type &&
       Tag != dwarf::DW_TAG_enumeration_type &&
       Tag != dwarf::DW_TAG_subroutine_type &&
-      Tag != dwarf::DW_TAG_inheritance &&
-      Tag != dwarf::DW_TAG_friend &&
+      Tag != dwarf::DW_TAG_inheritance && Tag != dwarf::DW_TAG_friend &&
       getFilename().empty())
     return false;
   // DIType is abstract, it should be a BasicType, a DerivedType or
