@@ -406,9 +406,12 @@ bool DIObjCProperty::Verify() const {
   return DbgNode->getNumOperands() == 8;
 }
 
-/// We allow an empty string to represent null. But we don't allow
-/// a non-empty string in a MDNode field.
+/// Check if a field at position Elt of a MDNode is a MDNode.
+/// We currently allow an empty string and an integer.
+/// But we don't allow a non-empty string in a MDNode field.
 static bool fieldIsMDNode(const MDNode *DbgNode, unsigned Elt) {
+  // FIXME: This function should return true, if the field is null or the field
+  // is indeed a MDNode: return !Fld || isa<MDNode>(Fld).
   Value *Fld = getField(DbgNode, Elt);
   if (Fld && isa<MDString>(Fld) &&
       !cast<MDString>(Fld)->getString().empty())
@@ -420,6 +423,10 @@ static bool fieldIsMDNode(const MDNode *DbgNode, unsigned Elt) {
 bool DIType::Verify() const {
   if (!isType())
     return false;
+  // Make sure Context @ field 2 is MDNode.
+  if (!fieldIsMDNode(DbgNode, 2))
+    return false;
+
   // FIXME: Sink this into the various subclass verifies.
   unsigned Tag = getTag();
   if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
@@ -685,6 +692,29 @@ Value *DITemplateValueParameter::getValue() const {
   return getField(DbgNode, 4);
 }
 
+// If the current node has a parent scope then return that,
+// else return an empty scope.
+DIScope DIScope::getContext() const {
+
+  if (isType())
+    return DIType(DbgNode).getContext();
+
+  if (isSubprogram())
+    return DISubprogram(DbgNode).getContext();
+
+  if (isLexicalBlock())
+    return DILexicalBlock(DbgNode).getContext();
+
+  if (isLexicalBlockFile())
+    return DILexicalBlockFile(DbgNode).getContext();
+
+  if (isNameSpace())
+    return DINameSpace(DbgNode).getContext();
+
+  assert((isFile() || isCompileUnit()) && "Unhandled type of scope.");
+  return DIScope();
+}
+
 StringRef DIScope::getFilename() const {
   if (!DbgNode)
     return StringRef();
@@ -878,6 +908,10 @@ void DebugInfoFinder::processModule(const Module &M) {
       return;
     }
   }
+  if (NamedMDNode *SP_Nodes = M.getNamedMetadata("llvm.dbg.sp")) {
+    for (unsigned i = 0, e = SP_Nodes->getNumOperands(); i != e; ++i)
+      processSubprogram(DISubprogram(SP_Nodes->getOperand(i)));
+  }
 }
 
 /// processLocation - Process DILocation.
@@ -999,7 +1033,7 @@ void DebugInfoFinder::processValue(const DbgValueInst *DVI) {
 
 /// addType - Add type into Tys.
 bool DebugInfoFinder::addType(DIType DT) {
-  if (!DT.isValid())
+  if (!DT)
     return false;
 
   if (!NodesSeen.insert(DT))
@@ -1011,9 +1045,8 @@ bool DebugInfoFinder::addType(DIType DT) {
 
 /// addCompileUnit - Add compile unit into CUs.
 bool DebugInfoFinder::addCompileUnit(DICompileUnit CU) {
-  if (!CU.Verify())
+  if (!CU)
     return false;
-
   if (!NodesSeen.insert(CU))
     return false;
 
@@ -1023,7 +1056,7 @@ bool DebugInfoFinder::addCompileUnit(DICompileUnit CU) {
 
 /// addGlobalVariable - Add global variable into GVs.
 bool DebugInfoFinder::addGlobalVariable(DIGlobalVariable DIG) {
-  if (!DIDescriptor(DIG).isGlobalVariable())
+  if (!DIG)
     return false;
 
   if (!NodesSeen.insert(DIG))
@@ -1035,7 +1068,7 @@ bool DebugInfoFinder::addGlobalVariable(DIGlobalVariable DIG) {
 
 // addSubprogram - Add subprgoram into SPs.
 bool DebugInfoFinder::addSubprogram(DISubprogram SP) {
-  if (!DIDescriptor(SP).isSubprogram())
+  if (!SP)
     return false;
 
   if (!NodesSeen.insert(SP))
