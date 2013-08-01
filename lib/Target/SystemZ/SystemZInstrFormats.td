@@ -684,7 +684,7 @@ class UnaryRRF<string mnemonic, bits<16> opcode, RegisterOperand cls1,
 // is added as an implicit use.
 class CondUnaryRRF<string mnemonic, bits<16> opcode, RegisterOperand cls1,
                    RegisterOperand cls2>
-  : InstRRF<opcode, (outs cls1:$R1), (ins cls2:$R2, cond4:$R3),
+  : InstRRF<opcode, (outs cls1:$R1), (ins cls2:$R2, cond4:$valid, cond4:$R3),
             mnemonic#"r$R3\t$R1, $R2", []>,
     Requires<[FeatureLoadStoreOnCond]>;
 
@@ -735,10 +735,14 @@ class UnaryRILPC<string mnemonic, bits<12> opcode, SDPatternOperator operator,
 }
 
 class CondUnaryRSY<string mnemonic, bits<16> opcode,
-                   RegisterOperand cls, bits<5> bytes,
-                   AddressingMode mode = bdaddr20only>
-  : InstRSY<opcode, (outs cls:$R1), (ins cls:$R1src, mode:$BD2, cond4:$R3),
-            mnemonic#"$R3\t$R1, $BD2", []>,
+                   SDPatternOperator operator, RegisterOperand cls,
+                   bits<5> bytes, AddressingMode mode = bdaddr20only>
+  : InstRSY<opcode, (outs cls:$R1),
+            (ins cls:$R1src, mode:$BD2, cond4:$valid, cond4:$R3),
+            mnemonic#"$R3\t$R1, $BD2",
+            [(set cls:$R1,
+                  (z_select_ccmask (load bdaddr20only:$BD2), cls:$R1src,
+                                   cond4:$valid, cond4:$R3))]>,
     Requires<[FeatureLoadStoreOnCond]> {
   let Constraints = "$R1 = $R1src";
   let DisableEncoding = "$R1src";
@@ -1256,8 +1260,10 @@ class Pseudo<dag outs, dag ins, list<dag> pattern>
 // Implements "$dst = $cc & (8 >> CC) ? $src1 : $src2", where CC is
 // the value of the PSW's 2-bit condition code field.
 class SelectWrapper<RegisterOperand cls>
-  : Pseudo<(outs cls:$dst), (ins cls:$src1, cls:$src2, i8imm:$cc),
-           [(set cls:$dst, (z_select_ccmask cls:$src1, cls:$src2, imm:$cc))]> {
+  : Pseudo<(outs cls:$dst),
+           (ins cls:$src1, cls:$src2, uimm8zx4:$valid, uimm8zx4:$cc),
+           [(set cls:$dst, (z_select_ccmask cls:$src1, cls:$src2,
+                                            uimm8zx4:$valid, uimm8zx4:$cc))]> {
   let usesCustomInserter = 1;
   // Although the instructions used by these nodes do not in themselves
   // change CC, the insertion requires new blocks, and CC cannot be live
@@ -1270,12 +1276,16 @@ class SelectWrapper<RegisterOperand cls>
 multiclass CondStores<RegisterOperand cls, SDPatternOperator store,
                       SDPatternOperator load, AddressingMode mode> {
   let Defs = [CC], Uses = [CC], usesCustomInserter = 1 in {
-    def "" : Pseudo<(outs), (ins cls:$new, mode:$addr, uimm8zx4:$cc),
+    def "" : Pseudo<(outs),
+                    (ins cls:$new, mode:$addr, uimm8zx4:$valid, uimm8zx4:$cc),
                     [(store (z_select_ccmask cls:$new, (load mode:$addr),
-                                             uimm8zx4:$cc), mode:$addr)]>;
-    def Inv : Pseudo<(outs), (ins cls:$new, mode:$addr, uimm8zx4:$cc),
+                                             uimm8zx4:$valid, uimm8zx4:$cc),
+                            mode:$addr)]>;
+    def Inv : Pseudo<(outs),
+                     (ins cls:$new, mode:$addr, uimm8zx4:$valid, uimm8zx4:$cc),
                      [(store (z_select_ccmask (load mode:$addr), cls:$new,
-                                              uimm8zx4:$cc), mode:$addr)]>;
+                                              uimm8zx4:$valid, uimm8zx4:$cc),
+                              mode:$addr)]>;
   }
 }
 
