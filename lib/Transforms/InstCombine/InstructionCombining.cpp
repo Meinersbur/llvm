@@ -2313,6 +2313,7 @@ bool InstCombiner::DoOneIteration(Function &F, unsigned Iteration) {
       // Delete the instructions backwards, as it has a reduced likelihood of
       // having to update as many def-use and use-def chains.
       Instruction *EndInst = BB->getTerminator(); // Last not to be deleted.
+      assert(EndInst);
       while (EndInst != BB->begin()) {
         // Delete the next to last instruction.
         BasicBlock::iterator I = EndInst;

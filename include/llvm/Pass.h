@@ -80,6 +80,9 @@ enum PassKind {
 /// constrained passes described below.
 ///
 class Pass {
+#ifdef MOLLY
+protected: // MollyPassManager needs access to Resolver
+#endif
   AnalysisResolver *Resolver;  // Used to resolve analysis
   const void *PassID;
   PassKind Kind;
