@@ -36,6 +36,8 @@ add_llvm_target(PowerPCCodeGen
   PPCSelectionDAGInfo.cpp
   )
 
+add_dependencies(LLVMPowerPCCodeGen PowerPCCommonTableGen intrinsics_gen)
+
 add_subdirectory(AsmParser)
 add_subdirectory(InstPrinter)
 add_subdirectory(TargetInfo)

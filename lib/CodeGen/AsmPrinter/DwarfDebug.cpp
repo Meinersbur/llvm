@@ -962,25 +962,17 @@ void DwarfDebug::collectDeadVariables() {
   DeleteContainerSeconds(DeadFnScopeMap);
 }
 
-// Type Signature computation code.
+// Type Signature [7.27] computation code.
 typedef ArrayRef<uint8_t> HashValue;
 
 /// \brief Grabs the string in whichever attribute is passed in and returns
-/// a reference to it.
+/// a reference to it. Returns "" if the attribute doesn't exist.
 static StringRef getDIEStringAttr(DIE *Die, unsigned Attr) {
-  const SmallVectorImpl<DIEValue *> &Values = Die->getValues();
-  const DIEAbbrev &Abbrevs = Die->getAbbrev();
+  DIEValue *V = Die->findAttribute(Attr);
 
-  // Iterate through all the attributes until we find the one we're
-  // looking for, if we can't find it return an empty string.
-  for (size_t i = 0; i < Values.size(); ++i) {
-    if (Abbrevs.getData()[i].getAttribute() == Attr) {
-      DIEValue *V = Values[i];
-      assert(isa<DIEString>(V) && "String requested. Not a string.");
-      DIEString *S = cast<DIEString>(V);
-      return S->getString();
-    }
-  }
+  if (DIEString *S = dyn_cast_or_null<DIEString>(V))
+    return S->getString();
+
   return StringRef("");
 }
 
@@ -988,11 +980,8 @@ static StringRef getDIEStringAttr(DIE *Die, unsigned Attr) {
 /// a trailing NULL with the string.
 static void addStringToHash(MD5 &Hash, StringRef Str) {
   DEBUG(dbgs() << "Adding string " << Str << " to hash.\n");
-  HashValue SVal((const uint8_t *)Str.data(), Str.size());
-  const uint8_t NB = '\0';
-  HashValue NBVal((const uint8_t *)&NB, 1);
-  Hash.update(SVal);
-  Hash.update(NBVal);
+  Hash.update(Str);
+  Hash.update(makeArrayRef((uint8_t)'\0'));
 }
 
 // FIXME: These are copied and only slightly modified out of LEB128.h.
@@ -1012,36 +1001,48 @@ static void addULEB128ToHash(MD5 &Hash, uint64_t Value) {
 
 /// \brief Including \p Parent adds the context of Parent to \p Hash.
 static void addParentContextToHash(MD5 &Hash, DIE *Parent) {
-  unsigned Tag = Parent->getTag();
 
   DEBUG(dbgs() << "Adding parent context to hash...\n");
-  
-  // For each surrounding type or namespace...
-  if (Tag != dwarf::DW_TAG_namespace && Tag != dwarf::DW_TAG_class_type &&
-      Tag != dwarf::DW_TAG_structure_type)
-    return;
 
-  // ... beginning with the outermost such construct...
-  if (Parent->getParent() != NULL)
-    addParentContextToHash(Hash, Parent->getParent());
+  // [7.27.2] For each surrounding type or namespace beginning with the
+  // outermost such construct...
+  SmallVector<DIE *, 1> Parents;
+  while (Parent->getTag() != dwarf::DW_TAG_compile_unit) {
+    Parents.push_back(Parent);
+    Parent = Parent->getParent();
+  }
 
-  // Append the letter "C" to the sequence.
-  addULEB128ToHash(Hash, 'C');
+  // Reverse iterate over our list to go from the outermost construct to the
+  // innermost.
+  for (SmallVectorImpl<DIE *>::reverse_iterator I = Parents.rbegin(),
+                                                E = Parents.rend();
+       I != E; ++I) {
+    DIE *Die = *I;
 
-  // Followed by the DWARF tag of the construct.
-  addULEB128ToHash(Hash, Parent->getTag());
+    // ... Append the letter "C" to the sequence...
+    addULEB128ToHash(Hash, 'C');
 
-  // Then the name, taken from the DW_AT_name attribute.
-  StringRef Name = getDIEStringAttr(Parent, dwarf::DW_AT_name);
-  if (!Name.empty())
-    addStringToHash(Hash, Name);
+    // ... Followed by the DWARF tag of the construct...
+    addULEB128ToHash(Hash, Die->getTag());
+
+    // ... Then the name, taken from the DW_AT_name attribute.
+    StringRef Name = getDIEStringAttr(Die, dwarf::DW_AT_name);
+    DEBUG(dbgs() << "... adding context: " << Name << "\n");
+    if (!Name.empty())
+      addStringToHash(Hash, Name);
+  }
 }
 
 /// This is based on the type signature computation given in section 7.27 of the
-/// DWARF4 standard. It is the md5 hash of a flattened description of the DIE.
+/// DWARF4 standard. It is the md5 hash of a flattened description of the DIE with
+/// the exception that we are hashing only the context and the name of the type.
 static void addDIEODRSignature(MD5 &Hash, CompileUnit *CU, DIE *Die) {
 
-  // Add the contexts to the hash.
+  // Add the contexts to the hash. We won't be computing the ODR hash for
+  // function local types so it's safe to use the generic context hashing
+  // algorithm here.
+  // FIXME: If we figure out how to account for linkage in some way we could
+  // actually do this with a slight modification to the parent hash algorithm.
   DIE *Parent = Die->getParent();
   if (Parent)
     addParentContextToHash(Hash, Parent);
@@ -1083,6 +1084,14 @@ static bool isContainedInAnonNamespace(DIE *Die) {
   return false;
 }
 
+/// Test if the current CU language is C++ and that we have
+/// a named type that is not contained in an anonymous namespace.
+static bool shouldAddODRHash(CompileUnit *CU, DIE *Die) {
+  return CU->getLanguage() == dwarf::DW_LANG_C_plus_plus &&
+         getDIEStringAttr(Die, dwarf::DW_AT_name) != "" &&
+         !isContainedInAnonNamespace(Die);
+ }
+
 void DwarfDebug::finalizeModuleInfo() {
   // Collect info for variables that were optimized out.
   collectDeadVariables();
@@ -1104,13 +1113,9 @@ void DwarfDebug::finalizeModuleInfo() {
   for (unsigned i = 0, e = TypeUnits.size(); i != e; ++i) {
     MD5 Hash;
     DIE *Die = TypeUnits[i];
-    // If we've requested ODR hashes, the current language is C++, the type is
-    // named, and the type isn't located inside a C++ anonymous namespace then
-    // add the ODR signature attribute now.
-    if (GenerateODRHash &&
-        CUMap.begin()->second->getLanguage() == dwarf::DW_LANG_C_plus_plus &&
-        (getDIEStringAttr(Die, dwarf::DW_AT_name) != "") &&
-        !isContainedInAnonNamespace(Die))
+    // If we've requested ODR hashes and it's applicable for an ODR hash then
+    // add the ODR signature now.
+    if (GenerateODRHash && shouldAddODRHash(CUMap.begin()->second, Die))
       addDIEODRSignature(Hash, CUMap.begin()->second, Die);
   }
 

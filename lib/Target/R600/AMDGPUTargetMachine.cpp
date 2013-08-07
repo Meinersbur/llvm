@@ -91,7 +91,6 @@ public:
   AMDGPUTargetMachine &getAMDGPUTargetMachine() const {
     return getTM<AMDGPUTargetMachine>();
   }
-
   virtual bool addPreISel();
   virtual bool addInstSelector();
   virtual bool addPreRegAlloc();
@@ -120,6 +119,7 @@ void AMDGPUTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
 bool
 AMDGPUPassConfig::addPreISel() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
+  addPass(createFlattenCFGPass());
   if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
     addPass(createStructurizeCFGPass());
     addPass(createSIAnnotateControlFlowPass());
@@ -146,6 +146,8 @@ bool AMDGPUPassConfig::addPreRegAlloc() {
 
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS) {
     addPass(createR600VectorRegMerger(*TM));
+  } else {
+    addPass(createSIFixSGPRCopiesPass(*TM));
   }
   return false;
 }

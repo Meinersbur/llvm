@@ -51,9 +51,7 @@ if( CMAKE_CL_64 )
    set(sources ${sources} ${CMAKE_CURRENT_BINARY_DIR}/X86CompilationCallback_Win64.obj)
 endif()
 
-set(LLVM_NEXT_DEPENDS intrinsics_gen)
-
-add_llvm_target(X86CodeGen ${sources})
+add_dependencies(LLVMX86CodeGen X86CommonTableGen intrinsics_gen)
 
 add_subdirectory(AsmParser)
 add_subdirectory(Disassembler)

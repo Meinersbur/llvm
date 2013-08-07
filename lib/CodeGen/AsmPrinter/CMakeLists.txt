@@ -15,3 +15,5 @@ add_llvm_library(LLVMAsmPrinter
 TARGET_DEPENDS
   intrinsics_gen
   )
+
+add_dependencies(LLVMAsmPrinter intrinsics_gen)
