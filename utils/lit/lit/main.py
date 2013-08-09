@@ -12,7 +12,7 @@ import math, os, platform, random, re, sys, time, threading, traceback
 import lit.ProgressBar
 import lit.LitConfig
 import lit.Test
-import lit.Util
+import lit.util
 
 import lit.discovery
 
@@ -161,7 +161,6 @@ def main(builtinParameters = {}):
     # blocking operation (hopefully exec) than to try and unblock other threads.
     #
     # FIXME: This is a hack.
-    import sys
     sys.setcheckinterval(1000)
 
     global options
@@ -212,6 +211,9 @@ def main(builtinParameters = {}):
     group.add_option("", "--time-tests", dest="timeTests",
                      help="Track elapsed wall time for each test",
                      action="store_true", default=False)
+    group.add_option("", "--no-execute", dest="noExecute",
+                     help="Don't execute any tests (assume PASS)",
+                     action="store_true", default=False)
     parser.add_option_group(group)
 
     group = OptionGroup(parser, "Test Selection")
@@ -240,9 +242,6 @@ def main(builtinParameters = {}):
     group.add_option("", "--show-tests", dest="showTests",
                       help="Show all discovered tests",
                       action="store_true", default=False)
-    group.add_option("", "--repeat", dest="repeatTests", metavar="N",
-                      help="Repeat tests N times (for timing)",
-                      action="store", default=None, type=int)
     parser.add_option_group(group)
 
     (opts, args) = parser.parse_args()
@@ -256,7 +255,7 @@ def main(builtinParameters = {}):
 # I haven't seen this bug occur with 2.5.2 and later, so only enable multiple
 # threads by default there.
        if sys.hexversion >= 0x2050200:
-               opts.numThreads = lit.Util.detectCPUs()
+               opts.numThreads = lit.util.detectCPUs()
        else:
                opts.numThreads = 1
 
@@ -279,6 +278,7 @@ def main(builtinParameters = {}):
         useValgrind = opts.useValgrind,
         valgrindLeakCheck = opts.valgrindLeakCheck,
         valgrindArgs = opts.valgrindArgs,
+        noExecute = opts.noExecute,
         debug = opts.debug,
         isWindows = (platform.system()=='Windows'),
         params = userParams,
@@ -293,7 +293,7 @@ def main(builtinParameters = {}):
             if t.suite not in suitesAndTests:
                 suitesAndTests[t.suite] = []
             suitesAndTests[t.suite].append(t)
-        suitesAndTests = suitesAndTests.items()
+        suitesAndTests = list(suitesAndTests.items())
         suitesAndTests.sort(key = lambda item: item[0].name)
 
         # Show the suites, if requested.
@@ -311,7 +311,10 @@ def main(builtinParameters = {}):
                 ts_tests.sort(key = lambda test: test.path_in_suite)
                 for test in ts_tests:
                     print('  %s' % (test.getFullName(),))
-        
+
+        # Exit.
+        sys.exit(0)
+
     # Select and order the tests.
     numTotalTests = len(tests)
 
@@ -343,11 +346,6 @@ def main(builtinParameters = {}):
         extra = ' of %d' % numTotalTests
     header = '-- Testing: %d%s tests, %d threads --'%(len(tests),extra,
                                                       opts.numThreads)
-
-    if opts.repeatTests:
-        tests = [t.copyWithIndex(i)
-                 for t in tests
-                 for i in range(opts.repeatTests)]
 
     progressBar = None
     if not opts.quiet:
@@ -396,9 +394,10 @@ def main(builtinParameters = {}):
         if t.result.isFailure:
             hasFailures = True
 
-    # FIXME: Show unresolved and (optionally) unsupported tests.
+    # Print each test in any of the failing groups.
     for title,code in (('Unexpected Passing Tests', lit.Test.XPASS),
-                       ('Failing Tests', lit.Test.FAIL)):
+                       ('Failing Tests', lit.Test.FAIL),
+                       ('Unresolved Tests', lit.Test.UNRESOLVED)):
         elts = byCode.get(code)
         if not elts:
             continue
@@ -418,7 +417,7 @@ def main(builtinParameters = {}):
         byTime = list(times.items())
         byTime.sort(key = lambda item: item[1])
         if byTime:
-            lit.Util.printHistogram(byTime, title='Tests')
+            lit.util.printHistogram(byTime, title='Tests')
 
     for name,code in (('Expected Passes    ', lit.Test.PASS),
                       ('Expected Failures  ', lit.Test.XFAIL),

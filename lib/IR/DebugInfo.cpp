@@ -428,7 +428,7 @@ bool DIType::Verify() const {
     return false;
 
   // FIXME: Sink this into the various subclass verifies.
-  unsigned Tag = getTag();
+  uint16_t Tag = getTag();
   if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
       Tag != dwarf::DW_TAG_volatile_type && Tag != dwarf::DW_TAG_pointer_type &&
       Tag != dwarf::DW_TAG_ptr_to_member_type &&
@@ -482,6 +482,12 @@ bool DICompositeType::Verify() const {
     return false;
   if (!fieldIsMDNode(DbgNode, 12))
     return false;
+
+  // If this is an array type verify that we have a DIType in the derived type
+  // field as that's the type of our element.
+  if (getTag() == dwarf::DW_TAG_array_type)
+    if (!DIType(getTypeDerivedFrom()))
+      return false;
 
   return DbgNode->getNumOperands() >= 10 && DbgNode->getNumOperands() <= 14;
 }
@@ -598,7 +604,7 @@ bool DIImportedEntity::Verify() const {
 /// getOriginalTypeSize - If this type is derived from a base type then
 /// return base type size.
 uint64_t DIDerivedType::getOriginalTypeSize() const {
-  unsigned Tag = getTag();
+  uint16_t Tag = getTag();
 
   if (Tag != dwarf::DW_TAG_member && Tag != dwarf::DW_TAG_typedef &&
       Tag != dwarf::DW_TAG_const_type && Tag != dwarf::DW_TAG_volatile_type &&
@@ -639,6 +645,19 @@ void DICompositeType::setTypeArray(DIArray Elements, DIArray TParams) {
   if (TParams)
     N->replaceOperandWith(13, TParams);
   DbgNode = N;
+}
+
+void DICompositeType::addMember(DISubprogram S) {
+  SmallVector<llvm::Value *, 16> M;
+  DIArray OrigM = getTypeArray();
+  unsigned Elements = OrigM.getNumElements();
+  if (Elements == 1 && !OrigM.getElement(0))
+    Elements = 0;
+  M.reserve(Elements + 1);
+  for (unsigned i = 0; i != Elements; ++i)
+    M.push_back(OrigM.getElement(i));
+  M.push_back(S);
+  setTypeArray(DIArray(MDNode::get(DbgNode->getContext(), M)));
 }
 
 /// \brief Set the containing type.

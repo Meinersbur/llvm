@@ -10,7 +10,7 @@ except ImportError:
 
 import lit.ShUtil as ShUtil
 import lit.Test as Test
-import lit.Util as Util
+import lit.util
 
 class InternalShellError(Exception):
     def __init__(self, command, message):
@@ -154,7 +154,7 @@ def executeShCmd(cmd, cfg, cwd, results):
 
         # Resolve the executable path ourselves.
         args = list(j.args)
-        args[0] = Util.which(args[0], cfg.environment['PATH'])
+        args[0] = lit.util.which(args[0], cfg.environment['PATH'])
         if not args[0]:
             raise InternalShellError(j, '%r: command not found' % j.args[0])
 
@@ -224,7 +224,9 @@ def executeShCmd(cmd, cfg, cwd, results):
         results.append((cmd.commands[i], out, err, res))
         if cmd.pipe_err:
             # Python treats the exit code as a signed char.
-            if res < 0:
+            if exitCode is None:
+                exitCode = res
+            elif res < 0:
                 exitCode = min(exitCode, res)
             else:
                 exitCode = max(exitCode, res)
@@ -342,8 +344,6 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
     execdir,execbase = os.path.split(execpath)
     tmpDir = os.path.join(execdir, 'Output')
     tmpBase = os.path.join(tmpDir, execbase)
-    if test.index is not None:
-        tmpBase += '_%d' % test.index
 
     # Normalize slashes, if requested.
     if normalize_slashes:
@@ -416,7 +416,8 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
 
         # Strip the trailing newline and any extra whitespace.
         return ln.strip()
-    script = map(processLine, script)
+    script = [processLine(ln)
+              for ln in script]
 
     # Verify the script contains a run line.
     if not script:
@@ -467,8 +468,11 @@ def executeShTest(test, litConfig, useExternalSh,
 
     script, isXFail, tmpBase, execdir = res
 
+    if litConfig.noExecute:
+        return (Test.PASS, '')
+
     # Create the output directory if it does not already exist.
-    Util.mkdir_p(os.path.dirname(tmpBase))
+    lit.util.mkdir_p(os.path.dirname(tmpBase))
 
     if useExternalSh:
         res = executeScript(test, litConfig, tmpBase, script, execdir)

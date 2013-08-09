@@ -4,7 +4,7 @@ import sys
 
 import lit.Test
 import lit.TestRunner
-import lit.Util
+import lit.util
 
 kIsWindows = sys.platform in ['win32', 'cygwin']
 
@@ -28,8 +28,9 @@ class GoogleTest(object):
           localConfig: TestingConfig instance"""
 
         try:
-            lines = lit.Util.capture([path, '--gtest_list_tests'],
+            lines = lit.util.capture([path, '--gtest_list_tests'],
                                      env=localConfig.environment)
+            lines = lines.decode('ascii')
             if kIsWindows:
               lines = lines.replace('\r', '')
             lines = lines.split('\n')
@@ -99,6 +100,9 @@ class GoogleTest(object):
         cmd = [testPath, '--gtest_filter=' + testName]
         if litConfig.useValgrind:
             cmd = litConfig.valgrindArgs + cmd
+
+        if litConfig.noExecute:
+            return lit.Test.PASS, ''
 
         out, err, exitCode = lit.TestRunner.executeCommand(
             cmd, env=test.config.environment)

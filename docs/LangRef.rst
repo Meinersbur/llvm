@@ -833,6 +833,11 @@ example:
     inlining this function is desirable (such as the "inline" keyword in
     C/C++). It is just a hint; it imposes no requirements on the
     inliner.
+``minsize``
+    This attribute suggests that optimization passes and code generator
+    passes make choices that keep the code size of this function as small
+    as possible and perform optimizations that may sacrifice runtime 
+    performance in order to minimize the size of the generated code.
 ``naked``
     This attribute disables prologue / epilogue emission for the
     function. This can have very system-specific consequences.
@@ -877,7 +882,8 @@ example:
 ``optsize``
     This attribute suggests that optimization passes and code generator
     passes make choices that keep the code size of this function low,
-    and otherwise do optimizations specifically to reduce code size.
+    and otherwise do optimizations specifically to reduce code size as
+    long as they do not significantly impact runtime performance.
 ``readnone``
     On a function, this attribute indicates that the function computes its
     result (or decides to unwind an exception) based strictly on its arguments,
@@ -7524,6 +7530,42 @@ Semantics:
 """"""""""
 
 This function returns the same values as the libm ``nearbyint``
+functions would, and handles error conditions in the same way.
+
+'``llvm.round.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+This is an overloaded intrinsic. You can use ``llvm.round`` on any
+floating point or vector of floating point type. Not all targets support
+all types however.
+
+::
+
+      declare float     @llvm.round.f32(float  %Val)
+      declare double    @llvm.round.f64(double %Val)
+      declare x86_fp80  @llvm.round.f80(x86_fp80  %Val)
+      declare fp128     @llvm.round.f128(fp128 %Val)
+      declare ppc_fp128 @llvm.round.ppcf128(ppc_fp128  %Val)
+
+Overview:
+"""""""""
+
+The '``llvm.round.*``' intrinsics returns the operand rounded to the
+nearest integer.
+
+Arguments:
+""""""""""
+
+The argument and return value are floating point numbers of the same
+type.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``round``
 functions would, and handles error conditions in the same way.
 
 Bit Manipulation Intrinsics

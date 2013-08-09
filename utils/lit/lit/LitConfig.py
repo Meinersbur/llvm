@@ -1,10 +1,12 @@
 from __future__ import absolute_import
+import inspect
 import os
+import sys
 
 import lit.Test
-import lit.TestFormats
+import lit.formats
 import lit.TestingConfig
-import lit.Util
+import lit.util
 
 class LitConfig:
     """LitConfig - Configuration data for a 'lit' test runner instance, shared
@@ -20,22 +22,24 @@ class LitConfig:
     Test = lit.Test
 
     # Provide access to built-in formats.
-    formats = lit.TestFormats
+    formats = lit.formats
 
     # Provide access to built-in utility functions.
-    util = lit.Util
+    util = lit.util
 
     def __init__(self, progname, path, quiet,
                  useValgrind, valgrindLeakCheck, valgrindArgs,
-                 debug, isWindows, params, config_prefix = None):
+                 noExecute, debug, isWindows,
+                 params, config_prefix = None):
         # The name of the test runner.
         self.progname = progname
         # The items to add to the PATH environment variable.
-        self.path = list(map(str, path))
+        self.path = [str(p) for p in path]
         self.quiet = bool(quiet)
         self.useValgrind = bool(useValgrind)
         self.valgrindLeakCheck = bool(valgrindLeakCheck)
         self.valgrindUserArgs = list(valgrindArgs)
+        self.noExecute = noExecute
         self.debug = debug
         self.isWindows = bool(isWindows)
         self.params = dict(params)
@@ -68,17 +72,15 @@ class LitConfig:
         path."""
         if self.debug:
             self.note('load_config from %r' % path)
-        return lit.TestingConfig.TestingConfig.frompath(
-            path, config.parent, self, mustExist = True, config = config)
+        config.load_from_path(path, self)
+        return config
 
     def getBashPath(self):
         """getBashPath - Get the path to 'bash'"""
-        import os
-
         if self.bashPath is not None:
             return self.bashPath
 
-        self.bashPath = lit.Util.which('bash', os.pathsep.join(self.path))
+        self.bashPath = lit.util.which('bash', os.pathsep.join(self.path))
         if self.bashPath is None:
             # Check some known paths.
             for path in ('/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'):
@@ -94,13 +96,13 @@ class LitConfig:
 
     def getToolsPath(self, dir, paths, tools):
         if dir is not None and os.path.isabs(dir) and os.path.isdir(dir):
-            if not lit.Util.checkToolsPath(dir, tools):
+            if not lit.util.checkToolsPath(dir, tools):
                 return None
         else:
-            dir = lit.Util.whichTools(tools, paths)
+            dir = lit.util.whichTools(tools, paths)
 
         # bash
-        self.bashPath = Util.which('bash', dir)
+        self.bashPath = lit.util.which('bash', dir)
         if self.bashPath is None:
             self.note("Unable to find 'bash.exe'.")
             self.bashPath = ''
@@ -108,8 +110,6 @@ class LitConfig:
         return dir
 
     def _write_message(self, kind, message):
-        import inspect, os, sys
-
         # Get the file/line where this message was generated.
         f = inspect.currentframe()
         # Step out of _write_message, and then out of wrapper.
@@ -132,6 +132,5 @@ class LitConfig:
         self.numErrors += 1
 
     def fatal(self, message):
-        import sys
         self._write_message('fatal', message)
         sys.exit(2)
