@@ -15,9 +15,10 @@
 #define CTARGETMACHINE_H
 
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/IR/DataLayout.h"
 
 namespace llvm {
+  typedef DataLayout TargetData;
 
 struct CTargetMachine : public TargetMachine {
   CTargetMachine(const Target &T, StringRef TT,

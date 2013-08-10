@@ -13,16 +13,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "CTargetMachine.h"
-#include "llvm/CallingConv.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Module.h"
-#include "llvm/Instructions.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManager.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
@@ -41,23 +41,42 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/TargetData.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/InstVisitor.h"
+#include "llvm/InstVisitor.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Config/config.h"
 #include <algorithm>
+#include "llvm/IR/TypeFinder.h"
+
 // Some ms header decided to define setjmp as _setjmp, undo this for this file.
 #ifdef _MSC_VER
 #undef setjmp
 #endif
 using namespace llvm;
+
+namespace llvm {
+  typedef AttributeSet AttrListPtr;
+} // namespace llvm
+
+// From cppbackend.cpp
+static inline std::string ftostr(const APFloat& V) {
+  std::string Buf;
+  if (&V.getSemantics() == &APFloat::IEEEdouble) {
+    raw_string_ostream(Buf) << V.convertToDouble();
+    return Buf;
+  } else if (&V.getSemantics() == &APFloat::IEEEsingle) {
+    raw_string_ostream(Buf) << (double)V.convertToFloat();
+    return Buf;
+  }
+  return "<unknown format in ftostr>"; // error
+}
 
 extern "C" void LLVMInitializeCBackendTarget() {
   // Register the target.
@@ -388,12 +407,12 @@ void CWriter::printStructReturnPointerFunctionType(raw_ostream &Out,
     if (PrintedType)
       FunctionInnards << ", ";
     Type *ArgTy = *I;
-    if (PAL.paramHasAttr(Idx, Attribute::ByVal)) {
+    if (PAL.hasAttribute(Idx, Attribute::ByVal)) {
       assert(ArgTy->isPointerTy());
       ArgTy = cast<PointerType>(ArgTy)->getElementType();
     }
     printType(FunctionInnards, ArgTy,
-        /*isSigned=*/PAL.paramHasAttr(Idx, Attribute::SExt), "");
+        /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt), "");
     PrintedType = true;
   }
   if (FTy->isVarArg()) {
@@ -405,7 +424,7 @@ void CWriter::printStructReturnPointerFunctionType(raw_ostream &Out,
   }
   FunctionInnards << ')';
   printType(Out, RetTy,
-      /*isSigned=*/PAL.paramHasAttr(0, Attribute::SExt), FunctionInnards.str());
+      /*isSigned=*/PAL.hasAttribute(0, Attribute::SExt), FunctionInnards.str());
 }
 
 raw_ostream &
@@ -480,14 +499,14 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
     for (FunctionType::param_iterator I = FTy->param_begin(),
            E = FTy->param_end(); I != E; ++I) {
       Type *ArgTy = *I;
-      if (PAL.paramHasAttr(Idx, Attribute::ByVal)) {
+      if (PAL.hasAttribute(Idx, Attribute::ByVal)) {
         assert(ArgTy->isPointerTy());
         ArgTy = cast<PointerType>(ArgTy)->getElementType();
       }
       if (I != FTy->param_begin())
         FunctionInnards << ", ";
       printType(FunctionInnards, ArgTy,
-        /*isSigned=*/PAL.paramHasAttr(Idx, Attribute::SExt), "");
+        /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt), "");
       ++Idx;
     }
     if (FTy->isVarArg()) {
@@ -499,7 +518,7 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
     }
     FunctionInnards << ')';
     printType(Out, FTy->getReturnType(),
-      /*isSigned=*/PAL.paramHasAttr(0, Attribute::SExt), FunctionInnards.str());
+      /*isSigned=*/PAL.hasAttribute(0, Attribute::SExt), FunctionInnards.str());
     return Out;
   }
   case Type::StructTyID: {
@@ -1668,8 +1687,8 @@ bool CWriter::doInitialization(Module &M) {
 #endif
   TAsm = new CBEMCAsmInfo();
   MRI  = new MCRegisterInfo();
-  TCtx = new MCContext(*TAsm, *MRI, NULL);
-  Mang = new Mangler(*TCtx, *TD);
+  TCtx = new MCContext(TAsm, MRI, NULL);
+  Mang = new Mangler(*TCtx, NULL);
 
   // Keep track of which functions are static ctors/dtors so they can have
   // an attribute added to their prototypes.
@@ -2038,8 +2057,10 @@ void CWriter::printModuleTypes() {
   Out << "} llvmBitCastUnion;\n";
 
   // Get all of the struct types used in the module.
-  std::vector<StructType*> StructTypes;
-  TheModule->findUsedStructTypes(StructTypes);
+  //std::vector<StructType*> StructTypes
+  //TheModule->findUsedStructTypes(StructTypes);
+  TypeFinder StructTypes;
+  StructTypes.run(*TheModule, false);
 
   if (StructTypes.empty()) return;
 
@@ -2154,12 +2175,12 @@ void CWriter::printFunctionSignature(const Function *F, bool Prototype) {
         else
           ArgName = "";
         Type *ArgTy = I->getType();
-        if (PAL.paramHasAttr(Idx, Attribute::ByVal)) {
+        if (PAL.hasAttribute(Idx, Attribute::ByVal)) {
           ArgTy = cast<PointerType>(ArgTy)->getElementType();
           ByValParams.insert(I);
         }
         printType(FunctionInnards, ArgTy,
-            /*isSigned=*/PAL.paramHasAttr(Idx, Attribute::SExt),
+            /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt),
             ArgName);
         PrintedArg = true;
         ++Idx;
@@ -2181,12 +2202,12 @@ void CWriter::printFunctionSignature(const Function *F, bool Prototype) {
     for (; I != E; ++I) {
       if (PrintedArg) FunctionInnards << ", ";
       Type *ArgTy = *I;
-      if (PAL.paramHasAttr(Idx, Attribute::ByVal)) {
+      if (PAL.hasAttribute(Idx, Attribute::ByVal)) {
         assert(ArgTy->isPointerTy());
         ArgTy = cast<PointerType>(ArgTy)->getElementType();
       }
       printType(FunctionInnards, ArgTy,
-             /*isSigned=*/PAL.paramHasAttr(Idx, Attribute::SExt));
+             /*isSigned=*/PAL.hasAttribute(Idx, Attribute::SExt));
       PrintedArg = true;
       ++Idx;
     }
@@ -2218,7 +2239,7 @@ void CWriter::printFunctionSignature(const Function *F, bool Prototype) {
 
   // Print out the return type and the signature built above.
   printType(Out, RetTy,
-            /*isSigned=*/PAL.paramHasAttr(0, Attribute::SExt),
+            /*isSigned=*/PAL.hasAttribute(0, Attribute::SExt),
             FunctionInnards.str());
 }
 
@@ -2862,7 +2883,7 @@ void CWriter::lowerIntrinsics(Function &F) {
             // builtin, we handle it.
             const char *BuiltinName = "";
 #define GET_GCC_BUILTIN_NAME
-#include "llvm/Intrinsics.gen"
+#include "llvm/IR/Intrinsics.gen"
 #undef GET_GCC_BUILTIN_NAME
             // If we handle it, don't lower it.
             if (BuiltinName[0]) break;
@@ -2996,7 +3017,7 @@ void CWriter::visitCallInst(CallInst &I) {
         (*AI)->getType() != FTy->getParamType(ArgNo)) {
       Out << '(';
       printType(Out, FTy->getParamType(ArgNo),
-            /*isSigned=*/PAL.paramHasAttr(ArgNo+1, Attribute::SExt));
+            /*isSigned=*/PAL.hasAttribute(ArgNo+1, Attribute::SExt));
       Out << ')';
     }
     // Check if the argument is expected to be passed by value.
@@ -3021,7 +3042,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID,
     const char *BuiltinName = "";
     Function *F = I.getCalledFunction();
 #define GET_GCC_BUILTIN_NAME
-#include "llvm/Intrinsics.gen"
+#include "llvm/IR/Intrinsics.gen"
 #undef GET_GCC_BUILTIN_NAME
     assert(BuiltinName[0] && "Unknown LLVM intrinsic!");
 
@@ -3169,6 +3190,7 @@ std::string CWriter::InterpretASMConstraint(InlineAsm::ConstraintInfo& c) {
   if (Triple.empty())
     Triple = llvm::sys::getDefaultTargetTriple();
 
+#if 0
   std::string E;
   if (const Target *Match = TargetRegistry::lookupTarget(Triple, E))
     TargetAsm = Match->createMCAsmInfo(Triple);
@@ -3186,6 +3208,7 @@ std::string CWriter::InterpretASMConstraint(InlineAsm::ConstraintInfo& c) {
 
   // Default is identity.
   delete TargetAsm;
+#endif
   return c.Codes[0];
 }
 
@@ -3611,6 +3634,6 @@ bool CTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
   PM.add(createLowerInvokePass());
   PM.add(createCFGSimplificationPass());   // clean up after lower invoke.
   PM.add(new CWriter(o));
-  PM.add(createGCInfoDeleter());
+  //PM.add(createGCInfoDeleter());
   return false;
 }
