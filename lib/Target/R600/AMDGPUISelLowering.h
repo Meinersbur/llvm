@@ -51,6 +51,10 @@ protected:
   void AnalyzeFormalArguments(CCState &State,
                               const SmallVectorImpl<ISD::InputArg> &Ins) const;
 
+  /// \brief Lower vector stores by merging the vector elements into an integer
+  /// of the same bitwidth.
+  SDValue LowerVectorStore(const SDValue &Op, SelectionDAG &DAG) const;
+
 public:
   AMDGPUTargetLowering(TargetMachine &TM);
 
@@ -150,6 +154,7 @@ enum {
   SAMPLED,
   SAMPLEL,
   FIRST_MEM_OPCODE_NUMBER = ISD::FIRST_TARGET_MEMORY_OPCODE,
+  STORE_MSKOR,
   LOAD_CONSTANT,
   LAST_AMDGPU_ISD_NUMBER
 };

@@ -19,7 +19,6 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/MC/MCInstrDesc.h"
-#include <stdio.h>
 
 using namespace llvm;
 
@@ -227,6 +226,10 @@ SIInstrInfo::isSafeToMoveRegClassDefs(const TargetRegisterClass *RC) const {
 
 int SIInstrInfo::isMIMG(uint16_t Opcode) const {
   return get(Opcode).TSFlags & SIInstrFlags::MIMG;
+}
+
+int SIInstrInfo::isSMRD(uint16_t Opcode) const {
+  return get(Opcode).TSFlags & SIInstrFlags::SMRD;
 }
 
 //===----------------------------------------------------------------------===//

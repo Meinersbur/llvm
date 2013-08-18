@@ -67,6 +67,13 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::STORE, MVT::f64, Promote);
   AddPromotedToType(ISD::STORE, MVT::f64, MVT::i64);
 
+  setTruncStoreAction(MVT::v2i32, MVT::v2i16, Custom);
+  setTruncStoreAction(MVT::v2i32, MVT::v2i8, Custom);
+  setTruncStoreAction(MVT::v4i32, MVT::v4i8, Custom);
+  // XXX: This can be change to Custom, once ExpandVectorStores can
+  // handle 64-bit stores.
+  setTruncStoreAction(MVT::v4i32, MVT::v4i16, Expand);
+
   setOperationAction(ISD::LOAD, MVT::f32, Promote);
   AddPromotedToType(ISD::LOAD, MVT::f32, MVT::i32);
 
@@ -84,6 +91,19 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::EXTRACT_SUBVECTOR, MVT::v2i32, Custom);
   setOperationAction(ISD::EXTRACT_SUBVECTOR, MVT::v2f32, Custom);
 
+  setLoadExtAction(ISD::EXTLOAD, MVT::v2i8, Expand);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::v2i8, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::v2i8, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::v4i8, Expand);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::v4i8, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::v4i8, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::v2i16, Expand);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::v2i16, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::v2i16, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::v4i16, Expand);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::v4i16, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::v4i16, Expand);
+
   setOperationAction(ISD::FNEG, MVT::v2f32, Expand);
   setOperationAction(ISD::FNEG, MVT::v4f32, Expand);
 
@@ -95,14 +115,14 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::VSELECT, MVT::v2f32, Expand);
   setOperationAction(ISD::VSELECT, MVT::v4f32, Expand);
 
-  static const int types[] = {
+  static const int IntTypes[] = {
     (int)MVT::v2i32,
     (int)MVT::v4i32
   };
-  const size_t NumTypes = array_lengthof(types);
+  const size_t NumIntTypes = array_lengthof(IntTypes);
 
-  for (unsigned int x  = 0; x < NumTypes; ++x) {
-    MVT::SimpleValueType VT = (MVT::SimpleValueType)types[x];
+  for (unsigned int x  = 0; x < NumIntTypes; ++x) {
+    MVT::SimpleValueType VT = (MVT::SimpleValueType)IntTypes[x];
     //Expand the following operations for the current type by default
     setOperationAction(ISD::ADD,  VT, Expand);
     setOperationAction(ISD::AND,  VT, Expand);
@@ -120,6 +140,22 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::UREM, VT, Expand);
     setOperationAction(ISD::VSELECT, VT, Expand);
     setOperationAction(ISD::XOR,  VT, Expand);
+  }
+
+  static const int FloatTypes[] = {
+    (int)MVT::v2f32,
+    (int)MVT::v4f32
+  };
+  const size_t NumFloatTypes = array_lengthof(FloatTypes);
+
+  for (unsigned int x = 0; x < NumFloatTypes; ++x) {
+    MVT::SimpleValueType VT = (MVT::SimpleValueType)FloatTypes[x];
+    setOperationAction(ISD::FADD, VT, Expand);
+    setOperationAction(ISD::FDIV, VT, Expand);
+    setOperationAction(ISD::FFLOOR, VT, Expand);
+    setOperationAction(ISD::FMUL, VT, Expand);
+    setOperationAction(ISD::FRINT, VT, Expand);
+    setOperationAction(ISD::FSUB, VT, Expand);
   }
 }
 
@@ -187,6 +223,7 @@ SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG)
   case ISD::CONCAT_VECTORS: return LowerCONCAT_VECTORS(Op, DAG);
   case ISD::EXTRACT_SUBVECTOR: return LowerEXTRACT_SUBVECTOR(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
+  case ISD::STORE: return LowerVectorStore(Op, DAG);
   case ISD::UDIVREM: return LowerUDIVREM(Op, DAG);
   }
   return Op;
@@ -487,6 +524,59 @@ SDValue AMDGPUTargetLowering::LowerUDIVREM(SDValue Op,
   return DAG.getMergeValues(Ops, 2, DL);
 }
 
+SDValue AMDGPUTargetLowering::LowerVectorStore(const SDValue &Op,
+                                               SelectionDAG &DAG) const {
+  StoreSDNode *Store = dyn_cast<StoreSDNode>(Op);
+  EVT MemVT = Store->getMemoryVT();
+  unsigned MemBits = MemVT.getSizeInBits();
+
+  // Byte stores are really expensive, so if possible, try to pack
+  // 32-bit vector truncatating store into an i32 store.
+  // XXX: We could also handle optimize other vector bitwidths
+  if (!MemVT.isVector() || MemBits > 32) {
+    return SDValue();
+  }
+
+  SDLoc DL(Op);
+  const SDValue &Value = Store->getValue();
+  EVT VT = Value.getValueType();
+  const SDValue &Ptr = Store->getBasePtr();
+  EVT MemEltVT = MemVT.getVectorElementType();
+  unsigned MemEltBits = MemEltVT.getSizeInBits();
+  unsigned MemNumElements = MemVT.getVectorNumElements();
+  EVT PackedVT = EVT::getIntegerVT(*DAG.getContext(), MemVT.getSizeInBits());
+  SDValue Mask;
+  switch(MemEltBits) {
+  case 8:
+    Mask = DAG.getConstant(0xFF, PackedVT);
+    break;
+  case 16:
+    Mask = DAG.getConstant(0xFFFF, PackedVT);
+    break;
+  default:
+    llvm_unreachable("Cannot lower this vector store");
+  }
+  SDValue PackedValue;
+  for (unsigned i = 0; i < MemNumElements; ++i) {
+    EVT ElemVT = VT.getVectorElementType();
+    SDValue Elt = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, ElemVT, Value,
+                              DAG.getConstant(i, MVT::i32));
+    Elt = DAG.getZExtOrTrunc(Elt, DL, PackedVT);
+    Elt = DAG.getNode(ISD::AND, DL, PackedVT, Elt, Mask);
+    SDValue Shift = DAG.getConstant(MemEltBits * i, PackedVT);
+    Elt = DAG.getNode(ISD::SHL, DL, PackedVT, Elt, Shift);
+    if (i == 0) {
+      PackedValue = Elt;
+    } else {
+      PackedValue = DAG.getNode(ISD::OR, DL, PackedVT, PackedValue, Elt);
+    }
+  }
+  return DAG.getStore(Store->getChain(), DL, PackedValue, Ptr,
+                      MachinePointerInfo(Store->getMemOperand()->getValue()),
+                      Store->isVolatile(),  Store->isNonTemporal(),
+                      Store->getAlignment());
+}
+
 //===----------------------------------------------------------------------===//
 // Helper functions
 //===----------------------------------------------------------------------===//
@@ -558,5 +648,6 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(SAMPLEB)
   NODE_NAME_CASE(SAMPLED)
   NODE_NAME_CASE(SAMPLEL)
+  NODE_NAME_CASE(STORE_MSKOR)
   }
 }

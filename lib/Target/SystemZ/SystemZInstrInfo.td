@@ -336,6 +336,10 @@ def MVGHI : StoreSIL<"mvghi", 0xE548, store,         imm64sx16>;
 let mayLoad = 1, mayStore = 1 in
   defm MVC : MemorySS<"mvc", 0xD2, z_mvc>;
 
+// String moves.
+let mayLoad = 1, mayStore = 1, Defs = [CC], Uses = [R0W] in
+  defm MVST : StringRRE<"mvst", 0xB255, z_stpcpy>;
+
 defm LoadStore8_32  : MVCLoadStore<anyextloadi8, truncstorei8, i32,
                                    MVCWrapper, 1>;
 defm LoadStore16_32 : MVCLoadStore<anyextloadi16, truncstorei16, i32,
@@ -996,6 +1000,10 @@ defm : ZXB<z_ucmp, GR64, CLGFR>;
 let mayLoad = 1, Defs = [CC] in
   defm CLC : MemorySS<"clc", 0xD5, z_clc>;
 
+// String comparison.
+let mayLoad = 1, Defs = [CC], Uses = [R0W] in
+  defm CLST : StringRRE<"clst", 0xB25D, z_strcmp>;
+
 //===----------------------------------------------------------------------===//
 // Atomic operations
 //===----------------------------------------------------------------------===//
@@ -1154,6 +1162,10 @@ let usesCustomInserter = 1 in {
   def ZEXT128_32 : Pseudo<(outs GR128:$dst), (ins GR32:$src), []>;
   def ZEXT128_64 : Pseudo<(outs GR128:$dst), (ins GR64:$src), []>;
 }
+
+// Search a block of memory for a character.
+let mayLoad = 1, Defs = [CC], Uses = [R0W] in
+  defm SRST : StringRRE<"srst", 0xb25e, z_search_string>;
 
 //===----------------------------------------------------------------------===//
 // Peepholes.

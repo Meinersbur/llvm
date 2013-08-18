@@ -152,12 +152,15 @@ _func:
         ands r3, r12, #0xf
         and r1, #0xff
         and r1, r1, #0xff
+        and r5, r4, #0xffffffff
+        ands r1, r9, #0xffffffff
 
 @ CHECK: and	r2, r5, #1044480        @ encoding: [0x05,0xf4,0x7f,0x22]
 @ CHECK: ands	r3, r12, #15            @ encoding: [0x1c,0xf0,0x0f,0x03]
 @ CHECK: and	r1, r1, #255            @ encoding: [0x01,0xf0,0xff,0x01]
 @ CHECK: and	r1, r1, #255            @ encoding: [0x01,0xf0,0xff,0x01]
-
+@ CHECK: and	r5, r4, #4294967295     @ encoding: [0x04,0xf0,0xff,0x35]
+@ CHECK: ands	r1, r9, #4294967295     @ encoding: [0x19,0xf0,0xff,0x31]
 
 @------------------------------------------------------------------------------
 @ AND (register)
@@ -259,6 +262,8 @@ _func:
 @ BIC
 @------------------------------------------------------------------------------
         bic r10, r1, #0xf
+        bic r5, r2, #0xffffffff
+        bics r11, r10, #0xffffffff
         bic r12, r3, r6
         bic r11, r2, r6, lsl #12
         bic r8, r4, r1, lsr #11
@@ -276,6 +281,8 @@ _func:
         bic r12, r6, ror #29
 
 @ CHECK: bic	r10, r1, #15            @ encoding: [0x21,0xf0,0x0f,0x0a]
+@ CHECK: bic	r5, r2, #4294967295     @ encoding: [0x22,0xf0,0xff,0x35]
+@ CHECK: bics	r11, r10, #4294967295   @ encoding: [0x3a,0xf0,0xff,0x3b]
 @ CHECK: bic.w	r12, r3, r6             @ encoding: [0x23,0xea,0x06,0x0c]
 @ CHECK: bic.w	r11, r2, r6, lsl #12    @ encoding: [0x22,0xea,0x06,0x3b]
 @ CHECK: bic.w	r8, r4, r1, lsr #11     @ encoding: [0x24,0xea,0xd1,0x28]
@@ -822,6 +829,18 @@ _func:
 @ CHECK: ldr.w	r8, [pc, #132]        @ encoding: [0xdf,0xf8,0x84,0x80]
 @ CHECK: ldr.w	pc, [pc, #256]          @ encoding: [0xdf,0xf8,0x00,0xf1]
 @ CHECK: ldr.w	pc, [pc, #-400]         @ encoding: [0x5f,0xf8,0x90,0xf1]
+
+        ldrb  r9, [pc, #-0]
+        ldrsb r11, [pc, #-0]
+        ldrh  r10, [pc, #-0]
+        ldrsh r1, [pc, #-0]
+        ldr   r5, [pc, #-0]
+
+@ CHECK: ldrb.w	r9, [pc, #-0]           @ encoding: [0x1f,0xf8,0x00,0x90]
+@ CHECK: ldrsb.w	r11, [pc, #-0]        @ encoding: [0x1f,0xf9,0x00,0xb0]
+@ CHECK: ldrh.w	r10, [pc, #-0]          @ encoding: [0x3f,0xf8,0x00,0xa0]
+@ CHECK: ldrsh.w	r1, [pc, #-0]         @ encoding: [0x3f,0xf9,0x00,0x10]
+@ CHECK: ldr.w	r5, [pc, #-0]           @ encoding: [0x5f,0xf8,0x00,0x50]
 
 @------------------------------------------------------------------------------
 @ LDR(register)
