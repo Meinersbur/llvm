@@ -35,10 +35,6 @@ performance measurements.
 
 --
 
-We don't support tail calls at present.
-
---
-
 We don't support prefetching yet.
 
 --
@@ -105,12 +101,6 @@ We don't use the halfword forms of LOAD REVERSED and STORE REVERSED
 
 We could take advantage of the various ... UNDER MASK instructions,
 such as ICM and STCM.
-
---
-
-DAGCombiner can detect integer absolute, but there's not yet an associated
-ISD opcode.  We could add one and implement it using LOAD POSITIVE.
-Negated absolutes could use LOAD NEGATIVE.
 
 --
 
