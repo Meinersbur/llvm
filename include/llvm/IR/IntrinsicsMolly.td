@@ -18,7 +18,7 @@ def int_molly_1d_rankof : Intrinsic<[llvm_i32_ty], [llvm_ptr_ty/*ptr to field*/,
 
 def int_molly_get_local : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*target buffer*/, llvm_vararg_ty/*coordinates*/], [IntrReadWriteArgMem]>;
 def int_molly_set_local : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*source buffer*/, llvm_vararg_ty/*coordinates*/], []>;
-
+def int_molly_ptr_local : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to field*/, llvm_vararg_ty/*coordinates*/], [IntrNoMem/*access itself done by following load/store*/]>;
 
 def int_molly_combuf_send : Intrinsic<[], [llvm_ptr_ty/*ptr to combuf*/]>;
 def int_molly_combuf_send_wait : Intrinsic<[], [llvm_ptr_ty/*ptr to combuf*/]>;

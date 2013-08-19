@@ -6,11 +6,6 @@ option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables M
 
 if (LLVM_EXTERNAL_MOLLY_BUILD)
   add_definitions("-DMOLLY")
-    if (MSVC)
-      set_target_properties(${name}
-        PROPERTIES
-        IMPORT_SUFFIX ".imp")
-    endif ()
 endif ()
 
 macro(new_llvm_target name)
@@ -135,6 +130,10 @@ macro(new_llvm_target name)
 
   if (PARM_TARGET_DEPENDS)
     add_dependencies(${name} ${PARM_TARGET_DEPENDS})
+  endif ()
+
+  if (MSVC)
+    set_target_properties(${name} PROPERTIES IMPORT_SUFFIX ".imp")
   endif ()
 
   if (_isobjlib)
