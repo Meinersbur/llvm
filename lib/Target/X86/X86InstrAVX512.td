@@ -1305,28 +1305,51 @@ let isCodeGenOnly = 1 in {
 }
 
 let Predicates = [HasAVX512] in {
+  let AddedComplexity = 15 in {
+  // Move scalar to XMM zero-extended, zeroing a VR128X then do a
+  // MOVS{S,D} to the lower bits.
+  def : Pat<(v4f32 (X86vzmovl (v4f32 (scalar_to_vector FR32X:$src)))),
+            (VMOVSSZrr (v4f32 (V_SET0)), FR32X:$src)>;
+  def : Pat<(v4f32 (X86vzmovl (v4f32 VR128X:$src))),
+            (VMOVSSZrr (v4f32 (V_SET0)), (COPY_TO_REGCLASS VR128X:$src, FR32X))>;
+  def : Pat<(v4i32 (X86vzmovl (v4i32 VR128X:$src))),
+            (VMOVSSZrr (v4i32 (V_SET0)), (COPY_TO_REGCLASS VR128X:$src, FR32X))>;
+  def : Pat<(v2f64 (X86vzmovl (v2f64 (scalar_to_vector FR64X:$src)))),
+            (VMOVSDZrr (v2f64 (V_SET0)), FR64X:$src)>;
+
+  // Move low f32 and clear high bits.
+  def : Pat<(v8f32 (X86vzmovl (v8f32 VR256X:$src))),
+            (SUBREG_TO_REG (i32 0),
+             (VMOVSSZrr (v4f32 (V_SET0)), 
+              (EXTRACT_SUBREG (v8f32 VR256X:$src), sub_xmm)), sub_xmm)>;
+  def : Pat<(v8i32 (X86vzmovl (v8i32 VR256X:$src))),
+            (SUBREG_TO_REG (i32 0),
+             (VMOVSSZrr (v4i32 (V_SET0)),
+                       (EXTRACT_SUBREG (v8i32 VR256X:$src), sub_xmm)), sub_xmm)>;
+  }
+
   let AddedComplexity = 20 in {
   // MOVSSrm zeros the high parts of the register; represent this
   // with SUBREG_TO_REG. The AVX versions also write: DST[255:128] <- 0
   def : Pat<(v4f32 (X86vzmovl (v4f32 (scalar_to_vector (loadf32 addr:$src))))),
-            (COPY_TO_REGCLASS (VMOVSSrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSSZrm addr:$src), VR128X)>;
   def : Pat<(v4f32 (scalar_to_vector (loadf32 addr:$src))),
-            (COPY_TO_REGCLASS (VMOVSSrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSSZrm addr:$src), VR128X)>;
   def : Pat<(v4f32 (X86vzmovl (loadv4f32 addr:$src))),
-            (COPY_TO_REGCLASS (VMOVSSrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSSZrm addr:$src), VR128X)>;
 
   // MOVSDrm zeros the high parts of the register; represent this
   // with SUBREG_TO_REG. The AVX versions also write: DST[255:128] <- 0
   def : Pat<(v2f64 (X86vzmovl (v2f64 (scalar_to_vector (loadf64 addr:$src))))),
-            (COPY_TO_REGCLASS (VMOVSDrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSDZrm addr:$src), VR128X)>;
   def : Pat<(v2f64 (scalar_to_vector (loadf64 addr:$src))),
-            (COPY_TO_REGCLASS (VMOVSDrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSDZrm addr:$src), VR128X)>;
   def : Pat<(v2f64 (X86vzmovl (loadv2f64 addr:$src))),
-            (COPY_TO_REGCLASS (VMOVSDrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSDZrm addr:$src), VR128X)>;
   def : Pat<(v2f64 (X86vzmovl (bc_v2f64 (loadv4f32 addr:$src)))),
-            (COPY_TO_REGCLASS (VMOVSDrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSDZrm addr:$src), VR128X)>;
   def : Pat<(v2f64 (X86vzload addr:$src)),
-            (COPY_TO_REGCLASS (VMOVSDrm addr:$src), VR128X)>;
+            (COPY_TO_REGCLASS (VMOVSDZrm addr:$src), VR128X)>;
 
   // Represent the same patterns above but in the form they appear for
   // 256-bit types
@@ -1340,9 +1363,27 @@ let Predicates = [HasAVX512] in {
                    (v2f64 (scalar_to_vector (loadf64 addr:$src))), (iPTR 0)))),
             (SUBREG_TO_REG (i32 0), (VMOVSDZrm addr:$src), sub_xmm)>;
   }
+  def : Pat<(v8f32 (X86vzmovl (insert_subvector undef,
+                   (v4f32 (scalar_to_vector FR32X:$src)), (iPTR 0)))),
+            (SUBREG_TO_REG (i32 0), (v4f32 (VMOVSSZrr (v4f32 (V_SET0)),
+                                            FR32X:$src)), sub_xmm)>;
+  def : Pat<(v4f64 (X86vzmovl (insert_subvector undef,
+                   (v2f64 (scalar_to_vector FR64X:$src)), (iPTR 0)))),
+            (SUBREG_TO_REG (i64 0), (v2f64 (VMOVSDZrr (v2f64 (V_SET0)),
+                                     FR64X:$src)), sub_xmm)>;
   def : Pat<(v4i64 (X86vzmovl (insert_subvector undef,
                    (v2i64 (scalar_to_vector (loadi64 addr:$src))), (iPTR 0)))),
             (SUBREG_TO_REG (i64 0), (VMOVSDZrm addr:$src), sub_xmm)>;
+
+  // Move low f64 and clear high bits.
+  def : Pat<(v4f64 (X86vzmovl (v4f64 VR256X:$src))),
+            (SUBREG_TO_REG (i32 0),
+             (VMOVSDZrr (v2f64 (V_SET0)),
+                       (EXTRACT_SUBREG (v4f64 VR256X:$src), sub_xmm)), sub_xmm)>;
+
+  def : Pat<(v4i64 (X86vzmovl (v4i64 VR256X:$src))),
+            (SUBREG_TO_REG (i32 0), (VMOVSDZrr (v2i64 (V_SET0)),
+                       (EXTRACT_SUBREG (v4i64 VR256X:$src), sub_xmm)), sub_xmm)>;
 
   // Extract and store.
   def : Pat<(store (f32 (vector_extract (v4f32 VR128X:$src), (iPTR 0))),
@@ -1420,11 +1461,29 @@ def VMOVZPQILo2PQIZrm : AVX512XSI<0x7E, MRMSrcMem, (outs VR128X:$dst),
                                                      (loadv2i64 addr:$src))))],
                                  IIC_SSE_MOVDQ>, EVEX, VEX_W,
                                  EVEX_CD8<8, CD8VT8>;
-let AddedComplexity = 20 in {
-  def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
+
+let Predicates = [HasAVX512] in {
+  // AVX 128-bit movd/movq instruction write zeros in the high 128-bit part.
+  let AddedComplexity = 20 in {
+    def : Pat<(v4i32 (X86vzmovl (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
+              (VMOVDI2PDIZrm addr:$src)>;
+              
+    def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv4f32 addr:$src)))),
+              (VMOVDI2PDIZrm addr:$src)>;
+    def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv2i64 addr:$src)))),
+              (VMOVDI2PDIZrm addr:$src)>;
+    def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
             (VMOVZPQILo2PQIZrm addr:$src)>;
-  def : Pat<(v2f64 (X86vzmovl (v2f64 VR128X:$src))),
+    def : Pat<(v2f64 (X86vzmovl (v2f64 VR128X:$src))),
             (VMOVZPQILo2PQIZrr VR128X:$src)>;
+  }
+  // Use regular 128-bit instructions to match 256-bit scalar_to_vec+zext.
+  def : Pat<(v8i32 (X86vzmovl (insert_subvector undef,
+                               (v4i32 (scalar_to_vector GR32:$src)),(iPTR 0)))),
+            (SUBREG_TO_REG (i32 0), (VMOVDI2PDIZrr GR32:$src), sub_xmm)>;
+  def : Pat<(v4i64 (X86vzmovl (insert_subvector undef,
+                               (v2i64 (scalar_to_vector GR64:$src)),(iPTR 0)))),
+            (SUBREG_TO_REG (i64 0), (VMOV64toPQIZrr GR64:$src), sub_xmm)>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1632,3 +1691,144 @@ defm VDIVPDZ : avx512_fp_packed<0x5E, "divpd", fdiv, VR512, v8f64, f512mem,
                    SSE_ALU_ITINS_P.d, 0>, 
                    EVEX_V512, OpSize, VEX_W, EVEX_CD8<64, CD8VF>;
 
+//===----------------------------------------------------------------------===//
+// AVX-512  VPTESTM instructions
+//===----------------------------------------------------------------------===//
+
+multiclass avx512_vptest<bits<8> opc, string OpcodeStr, RegisterClass KRC, 
+              RegisterClass RC, X86MemOperand x86memop, PatFrag memop_frag, 
+              SDNode OpNode, ValueType vt> {
+  def rr : AVX5128I<opc, MRMSrcReg,
+             (outs KRC:$dst), (ins RC:$src1, RC:$src2), 
+             !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+             [(set KRC:$dst, (OpNode (vt RC:$src1), (vt RC:$src2)))]>, EVEX_4V;
+  def rm : AVX5128I<opc, MRMSrcMem,
+             (outs KRC:$dst), (ins RC:$src1, x86memop:$src2), 
+             !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+             [(set KRC:$dst, (OpNode (vt RC:$src1), 
+              (bitconvert (memop_frag addr:$src2))))]>, EVEX_4V;
+}
+
+defm VPTESTMDZ  : avx512_vptest<0x27, "vptestmd", VK16, VR512,  f512mem,
+                              memopv16i32, X86testm, v16i32>, EVEX_V512,
+                              EVEX_CD8<32, CD8VF>;
+defm VPTESTMQZ  : avx512_vptest<0x27, "vptestmq", VK8, VR512,  f512mem, memopv8i64,
+                              X86testm, v8i64>, EVEX_V512, VEX_W,
+                              EVEX_CD8<64, CD8VF>;
+
+//===----------------------------------------------------------------------===//
+// AVX-512  Shift instructions
+//===----------------------------------------------------------------------===//
+multiclass avx512_shift_rmi<bits<8> opc, Format ImmFormR, Format ImmFormM,
+                         string OpcodeStr,
+                         SDNode OpNode, RegisterClass RC, ValueType vt,
+                         X86MemOperand x86memop, PatFrag mem_frag> {
+  def ri : AVX512BIi8<opc, ImmFormR, (outs RC:$dst),
+       (ins RC:$src1, i32i8imm:$src2),
+           !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+       [(set RC:$dst, (vt (OpNode RC:$src1, (i32 imm:$src2))))],
+        SSE_INTSHIFT_ITINS_P.rr>, EVEX_4V;
+  def mi: AVX512BIi8<opc, ImmFormM, (outs RC:$dst),
+       (ins x86memop:$src1, i32i8imm:$src2),
+           !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+       [(set RC:$dst, (OpNode (mem_frag addr:$src1),
+                     (i32 imm:$src2)))], SSE_INTSHIFT_ITINS_P.rm>, EVEX_4V;
+}
+
+multiclass avx512_shift_rrm<bits<8> opc, string OpcodeStr, SDNode OpNode,
+                          RegisterClass RC, ValueType vt, ValueType SrcVT,
+                          PatFrag bc_frag> {
+  // src2 is always 128-bit
+  def rr : AVX512BI<opc, MRMSrcReg, (outs RC:$dst),
+       (ins RC:$src1, VR128X:$src2),
+           !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+       [(set RC:$dst, (vt (OpNode RC:$src1, (SrcVT VR128X:$src2))))],
+        SSE_INTSHIFT_ITINS_P.rr>, EVEX_4V;
+  def rm : AVX512BI<opc, MRMSrcMem, (outs RC:$dst),
+       (ins RC:$src1, i128mem:$src2),
+           !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+       [(set RC:$dst, (vt (OpNode RC:$src1,
+                       (bc_frag (memopv2i64 addr:$src2)))))],
+                        SSE_INTSHIFT_ITINS_P.rm>, EVEX_4V;
+}
+
+defm VPSRLDZ : avx512_shift_rmi<0x72, MRM2r, MRM2m, "vpsrld", X86vsrli,
+                           VR512, v16i32, i512mem, memopv16i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VF>;
+defm VPSRLDZ : avx512_shift_rrm<0xD2, "vpsrld", X86vsrl,
+                           VR512, v16i32, v4i32, bc_v4i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VQ>;
+                           
+defm VPSRLQZ : avx512_shift_rmi<0x73, MRM2r, MRM2m, "vpsrlq", X86vsrli,
+                           VR512, v8i64, i512mem, memopv8i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VF>, VEX_W;
+defm VPSRLQZ : avx512_shift_rrm<0xD3, "vpsrlq", X86vsrl,
+                           VR512, v8i64, v2i64, bc_v2i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VQ>, VEX_W;
+
+defm VPSLLDZ : avx512_shift_rmi<0x72, MRM6r, MRM6m, "vpslld", X86vshli,
+                           VR512, v16i32, i512mem, memopv16i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VF>;
+defm VPSLLDZ : avx512_shift_rrm<0xF2, "vpslld", X86vshl,
+                           VR512, v16i32, v4i32, bc_v4i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VQ>;
+                           
+defm VPSLLQZ : avx512_shift_rmi<0x73, MRM6r, MRM6m, "vpsllq", X86vshli,
+                           VR512, v8i64, i512mem, memopv8i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VF>, VEX_W;
+defm VPSLLQZ : avx512_shift_rrm<0xF3, "vpsllq", X86vshl,
+                           VR512, v8i64, v2i64, bc_v2i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VQ>, VEX_W;
+
+defm VPSRADZ : avx512_shift_rmi<0x72, MRM4r, MRM4m, "vpsrad", X86vsrai,
+                           VR512, v16i32, i512mem, memopv16i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VF>;
+defm VPSRADZ : avx512_shift_rrm<0xE2, "vpsrad", X86vsra,
+                           VR512, v16i32, v4i32, bc_v4i32>, EVEX_V512,
+                           EVEX_CD8<32, CD8VQ>;
+                           
+defm VPSRAQZ : avx512_shift_rmi<0x72, MRM4r, MRM4m, "vpsraq", X86vsrai,
+                           VR512, v8i64, i512mem, memopv8i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VF>, VEX_W;
+defm VPSRAQZ : avx512_shift_rrm<0xE2, "vpsraq", X86vsra,
+                           VR512, v8i64, v2i64, bc_v2i64>, EVEX_V512,
+                           EVEX_CD8<64, CD8VQ>, VEX_W;
+
+//===-------------------------------------------------------------------===//
+// Variable Bit Shifts
+//===-------------------------------------------------------------------===//
+multiclass avx512_var_shift<bits<8> opc, string OpcodeStr, SDNode OpNode,
+                           RegisterClass RC, ValueType vt,
+                           X86MemOperand x86memop, PatFrag mem_frag> {
+  def rr  : AVX5128I<opc, MRMSrcReg, (outs RC:$dst),
+             (ins RC:$src1, RC:$src2),
+             !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+             [(set RC:$dst,
+               (vt (OpNode RC:$src1, (vt RC:$src2))))]>,
+             EVEX_4V;
+  def rm  : AVX5128I<opc, MRMSrcMem, (outs RC:$dst),
+             (ins RC:$src1, x86memop:$src2),
+             !strconcat(OpcodeStr, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
+             [(set RC:$dst,
+               (vt (OpNode RC:$src1, (mem_frag addr:$src2))))]>,
+             EVEX_4V;
+}
+
+defm VPSLLVDZ : avx512_var_shift<0x47, "vpsllvd", shl, VR512, v16i32, 
+                               i512mem, memopv16i32>, EVEX_V512,
+                               EVEX_CD8<32, CD8VF>;
+defm VPSLLVQZ : avx512_var_shift<0x47, "vpsllvq", shl, VR512, v8i64, 
+                               i512mem, memopv8i64>, EVEX_V512, VEX_W,
+                               EVEX_CD8<64, CD8VF>;
+defm VPSRLVDZ : avx512_var_shift<0x45, "vpsrlvd", srl, VR512, v16i32, 
+                               i512mem, memopv16i32>, EVEX_V512,
+                               EVEX_CD8<32, CD8VF>;
+defm VPSRLVQZ : avx512_var_shift<0x45, "vpsrlvq", srl, VR512, v8i64, 
+                               i512mem, memopv8i64>, EVEX_V512, VEX_W,
+                               EVEX_CD8<64, CD8VF>;
+defm VPSRAVDZ : avx512_var_shift<0x46, "vpsravd", sra, VR512, v16i32, 
+                               i512mem, memopv16i32>, EVEX_V512,
+                               EVEX_CD8<32, CD8VF>;
+defm VPSRAVQZ : avx512_var_shift<0x46, "vpsravq", sra, VR512, v8i64, 
+                               i512mem, memopv8i64>, EVEX_V512, VEX_W,
+                               EVEX_CD8<64, CD8VF>;
