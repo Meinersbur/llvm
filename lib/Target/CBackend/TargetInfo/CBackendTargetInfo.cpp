@@ -14,7 +14,7 @@ using namespace llvm;
 
 Target llvm::TheCBackendTarget;
 
-extern "C" void LLVMInitializeCBackendTargetInfo() { 
+extern "C" void LLVMInitializeCBackendTargetInfo() {
   RegisterTarget<> X(TheCBackendTarget, "c", "C backend");
 }
 

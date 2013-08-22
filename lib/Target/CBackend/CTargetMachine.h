@@ -18,7 +18,6 @@
 #include "llvm/IR/DataLayout.h"
 
 namespace llvm {
-  typedef DataLayout TargetData;
 
 struct CTargetMachine : public TargetMachine {
   CTargetMachine(const Target &T, StringRef TT,
@@ -30,9 +29,12 @@ struct CTargetMachine : public TargetMachine {
   virtual bool addPassesToEmitFile(PassManagerBase &PM,
                                    formatted_raw_ostream &Out,
                                    CodeGenFileType FileType,
-                                   bool DisableVerify);
-  
-  virtual const TargetData *getTargetData() const { return 0; }
+                                   bool DisableVerify,
+								   AnalysisID StartAfter,
+								   AnalysisID StartBefore
+								   );
+
+  virtual const DataLayout *getDataLayout() const { return 0; }
 };
 
 extern Target TheCBackendTarget;
