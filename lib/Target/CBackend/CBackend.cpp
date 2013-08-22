@@ -1706,8 +1706,8 @@ bool CWriter::doInitialization(Module &M) {
 #endif
   TAsm = new CBEMCAsmInfo();
   MRI  = new MCRegisterInfo();
-  TCtx = new MCContext(*TAsm, *MRI, NULL);
-  Mang = new Mangler(*TCtx, *TD);
+  TCtx = new MCContext(TAsm, MRI, NULL);
+  Mang = new Mangler(*TCtx, NULL);
 
   // Keep track of which functions are static ctors/dtors so they can have
   // an attribute added to their prototypes.
@@ -2941,7 +2941,7 @@ void CWriter::lowerIntrinsics(Function &F) {
             // builtin, we handle it.
             const char *BuiltinName = "";
 #define GET_GCC_BUILTIN_NAME
-#include "llvm/Intrinsics.gen"
+#include "llvm/IR/Intrinsics.gen"
 #undef GET_GCC_BUILTIN_NAME
             // If we handle it, don't lower it.
             if (BuiltinName[0]) break;
@@ -3102,7 +3102,7 @@ bool CWriter::visitBuiltinCall(CallInst &I, Intrinsic::ID ID,
     const char *BuiltinName = "";
     //unused, stop warning: Function *F = I.getCalledFunction();
 #define GET_GCC_BUILTIN_NAME
-#include "llvm/Intrinsics.gen"
+#include "llvm/IR/Intrinsics.gen"
 #undef GET_GCC_BUILTIN_NAME
     assert(BuiltinName[0] && "Unknown LLVM intrinsic!");
 
