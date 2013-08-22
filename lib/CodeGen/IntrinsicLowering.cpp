@@ -446,6 +446,7 @@ void IntrinsicLowering::LowerIntrinsicCall(CallInst *CI) {
   }
 
   case Intrinsic::dbg_declare:
+  case Intrinsic::dbg_value:
     break;    // Simply strip out debugging intrinsics
 
   case Intrinsic::eh_typeid_for:
