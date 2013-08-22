@@ -68,6 +68,8 @@ else()
 endif()
 
 add_llvm_external_project(clang)
+add_llvm_external_project(polly)
+add_llvm_external_project(molly)
 
 if( NOT LLVM_INCLUDE_TOOLS STREQUAL "bootstrap-only" )
   # Automatically add remaining sub-directories containing a 'CMakeLists.txt'

@@ -990,7 +990,7 @@ GlobalValue *LLParser::GetGlobalVal(const std::string &Name, Type *Ty,
   if (Val) {
     if (Val->getType() == Ty) return Val;
     Error(Loc, "'@" + Name + "' defined with type '" +
-          getTypeString(Val->getType()) + "'");
+          getTypeString(Val->getType()) + "' but expected '" + getTypeString(Ty) + "'");
     return 0;
   }
 
@@ -1030,7 +1030,7 @@ GlobalValue *LLParser::GetGlobalVal(unsigned ID, Type *Ty, LocTy Loc) {
   if (Val) {
     if (Val->getType() == Ty) return Val;
     Error(Loc, "'@" + Twine(ID) + "' defined with type '" +
-          getTypeString(Val->getType()) + "'");
+          getTypeString(Val->getType()) + "' but expected '" + getTypeString(Ty) + "'");
     return 0;
   }
 
@@ -2047,7 +2047,7 @@ Value *LLParser::PerFunctionState::GetVal(const std::string &Name,
       P.Error(Loc, "'%" + Name + "' is not a basic block");
     else
       P.Error(Loc, "'%" + Name + "' defined with type '" +
-              getTypeString(Val->getType()) + "'");
+              getTypeString(Val->getType()) + "' but expected '" + getTypeString(Ty) + "'");
     return 0;
   }
 
@@ -2089,7 +2089,7 @@ Value *LLParser::PerFunctionState::GetVal(unsigned ID, Type *Ty,
       P.Error(Loc, "'%" + Twine(ID) + "' is not a basic block");
     else
       P.Error(Loc, "'%" + Twine(ID) + "' defined with type '" +
-              getTypeString(Val->getType()) + "'");
+              getTypeString(Val->getType()) + "' but expected '" + getTypeString(Ty) + "'");
     return 0;
   }
 
