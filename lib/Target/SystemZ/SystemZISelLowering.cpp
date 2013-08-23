@@ -194,6 +194,9 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   setOperationAction(ISD::STACKSAVE,    MVT::Other, Custom);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Custom);
 
+  // Handle prefetches with PFD or PFDRL.
+  setOperationAction(ISD::PREFETCH, MVT::Other, Custom);
+
   // Handle floating-point types.
   for (unsigned I = MVT::FIRST_FP_VALUETYPE;
        I <= MVT::LAST_FP_VALUETYPE;
@@ -1110,6 +1113,69 @@ static bool preferUnsignedComparison(SelectionDAG &DAG, SDValue CmpOp0,
   return false;
 }
 
+// Return true if Op is either an unextended load, or a load with the
+// extension type given by IsUnsigned.
+static bool isNaturalMemoryOperand(SDValue Op, bool IsUnsigned) {
+  LoadSDNode *Load = dyn_cast<LoadSDNode>(Op.getNode());
+  if (Load)
+    switch (Load->getExtensionType()) {
+    case ISD::NON_EXTLOAD:
+    case ISD::EXTLOAD:
+      return true;
+    case ISD::SEXTLOAD:
+      return !IsUnsigned;
+    case ISD::ZEXTLOAD:
+      return IsUnsigned;
+    default:
+      break;
+    }
+  return false;
+}
+
+// Return true if it is better to swap comparison operands Op0 and Op1.
+// IsUnsigned says whether an integer comparison is signed or unsigned.
+static bool shouldSwapCmpOperands(SDValue Op0, SDValue Op1,
+                                  bool IsUnsigned) {
+  // Leave f128 comparisons alone, since they have no memory forms.
+  if (Op0.getValueType() == MVT::f128)
+    return false;
+
+  // Always keep a floating-point constant second, since comparisons with
+  // zero can use LOAD TEST and comparisons with other constants make a
+  // natural memory operand.
+  if (isa<ConstantFPSDNode>(Op1))
+    return false;
+
+  // Never swap comparisons with zero since there are many ways to optimize
+  // those later.
+  ConstantSDNode *COp1 = dyn_cast<ConstantSDNode>(Op1);
+  if (COp1 && COp1->getZExtValue() == 0)
+    return false;
+
+  // Look for cases where Cmp0 is a single-use load and Cmp1 isn't.
+  // In that case we generally prefer the memory to be second.
+  if ((isNaturalMemoryOperand(Op0, IsUnsigned) && Op0.hasOneUse()) &&
+      !(isNaturalMemoryOperand(Op1, IsUnsigned) && Op1.hasOneUse())) {
+    // The only exceptions are when the second operand is a constant and
+    // we can use things like CHHSI.
+    if (!COp1)
+      return true;
+    if (IsUnsigned) {
+      // The memory-immediate instructions require 16-bit unsigned integers.
+      if (isUInt<16>(COp1->getZExtValue()))
+        return false;
+    } else {
+      // There are no comparisons between integers and signed memory bytes.
+      // The others require 16-bit signed integers.
+      if (cast<LoadSDNode>(Op0.getNode())->getMemoryVT() == MVT::i8 ||
+          isInt<16>(COp1->getSExtValue()))
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 // Return a target node that compares CmpOp0 with CmpOp1 and stores a
 // 2-bit result in CC.  Set CCValid to the CCMASK_* of all possible
 // 2-bit results and CCMask to the subset of those results that are
@@ -1129,6 +1195,14 @@ static SDValue emitCmp(SelectionDAG &DAG, SDValue CmpOp0, SDValue CmpOp1,
     adjustSubwordCmp(DAG, IsUnsigned, CmpOp0, CmpOp1, CCMask);
     if (preferUnsignedComparison(DAG, CmpOp0, CmpOp1, CCMask))
       IsUnsigned = true;
+  }
+
+  if (shouldSwapCmpOperands(CmpOp0, CmpOp1, IsUnsigned)) {
+    std::swap(CmpOp0, CmpOp1);
+    CCMask = ((CCMask & SystemZ::CCMASK_CMP_EQ) |
+              (CCMask & SystemZ::CCMASK_CMP_GT ? SystemZ::CCMASK_CMP_LT : 0) |
+              (CCMask & SystemZ::CCMASK_CMP_LT ? SystemZ::CCMASK_CMP_GT : 0) |
+              (CCMask & SystemZ::CCMASK_CMP_UO));
   }
 
   SDLoc DL(CmpOp0);
@@ -1735,6 +1809,26 @@ SDValue SystemZTargetLowering::lowerSTACKRESTORE(SDValue Op,
                           SystemZ::R15D, Op.getOperand(1));
 }
 
+SDValue SystemZTargetLowering::lowerPREFETCH(SDValue Op,
+                                             SelectionDAG &DAG) const {
+  bool IsData = cast<ConstantSDNode>(Op.getOperand(4))->getZExtValue();
+  if (!IsData)
+    // Just preserve the chain.
+    return Op.getOperand(0);
+
+  bool IsWrite = cast<ConstantSDNode>(Op.getOperand(2))->getZExtValue();
+  unsigned Code = IsWrite ? SystemZ::PFD_WRITE : SystemZ::PFD_READ;
+  MemIntrinsicSDNode *Node = cast<MemIntrinsicSDNode>(Op.getNode());
+  SDValue Ops[] = {
+    Op.getOperand(0),
+    DAG.getConstant(Code, MVT::i32),
+    Op.getOperand(1)
+  };
+  return DAG.getMemIntrinsicNode(SystemZISD::PREFETCH, SDLoc(Op),
+                                 Node->getVTList(), Ops, array_lengthof(Ops),
+                                 Node->getMemoryVT(), Node->getMemOperand());
+}
+
 SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
                                               SelectionDAG &DAG) const {
   switch (Op.getOpcode()) {
@@ -1798,6 +1892,8 @@ SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
     return lowerSTACKSAVE(Op, DAG);
   case ISD::STACKRESTORE:
     return lowerSTACKRESTORE(Op, DAG);
+  case ISD::PREFETCH:
+    return lowerPREFETCH(Op, DAG);
   default:
     llvm_unreachable("Unexpected node to lower");
   }
@@ -1838,6 +1934,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(ATOMIC_LOADW_UMIN);
     OPCODE(ATOMIC_LOADW_UMAX);
     OPCODE(ATOMIC_CMP_SWAPW);
+    OPCODE(PREFETCH);
   }
   return NULL;
 #undef OPCODE
