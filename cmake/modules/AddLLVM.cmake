@@ -119,11 +119,13 @@ macro(new_llvm_target name)
     if (PARM_EXCLUDE_FROM_ALL)
       set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
     else () 
-      if (NOT _isobjlib)
-        install(TARGETS ${name}
-          LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-          ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-          RUNTIME DESTINATION bin)
+      if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
+        if (NOT _isobjlib)
+          install(TARGETS ${name}
+            LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+            ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+            RUNTIME DESTINATION bin)
+        endif()
       endif ()
     endif ()
   endif ()
@@ -187,9 +189,11 @@ ${name} ignored.")
     if( EXCLUDE_FROM_ALL )
       set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
     else()
-      install(TARGETS ${name}
-        LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-        ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+      if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+        install(TARGETS ${name}
+          LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+          ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+      endif()
     endif()
   endif()
 
@@ -197,14 +201,23 @@ ${name} ignored.")
 endmacro(add_llvm_loadable_module name)
 
 
+set (LLVM_TOOLCHAIN_TOOLS
+  llvm-ar
+  llvm-objdump
+  )
+
 macro(add_llvm_tool name)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_TOOLS_BINARY_DIR})
   if( NOT LLVM_BUILD_TOOLS )
     set(EXCLUDE_FROM_ALL ON)
   endif()
   add_llvm_executable(${name} ${ARGN})
-  if( LLVM_BUILD_TOOLS )
-    install(TARGETS ${name} RUNTIME DESTINATION bin)
+
+  list(FIND LLVM_TOOLCHAIN_TOOLS ${name} LLVM_IS_${name}_TOOLCHAIN_TOOL)
+  if (LLVM_IS_${name}_TOOLCHAIN_TOOL GREATER -1 OR NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+    if( LLVM_BUILD_TOOLS )
+      install(TARGETS ${name} RUNTIME DESTINATION bin)
+    endif()
   endif()
   set_target_properties(${name} PROPERTIES FOLDER "Tools")
 endmacro(add_llvm_tool name)
