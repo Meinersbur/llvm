@@ -465,6 +465,21 @@ set(LLVM_PREFIX ${CMAKE_INSTALL_PREFIX})
 if (LLVM_ENABLE_DOXYGEN)
   message(STATUS "Doxygen enabled.")
   find_package(Doxygen)
+
+  if (DOXYGEN_FOUND)
+    # If we find doxygen and we want to enable doxygen by default create a
+    # global aggregate doxygen target for generating llvm and any/all
+    # subprojects doxygen documentation.
+    if (LLVM_BUILD_DOCS)
+      add_custom_target(doxygen ALL)
+    endif()
+
+    option(LLVM_DOXYGEN_EXTERNAL_SEARCH "Enable doxygen external search." OFF)
+    if (LLVM_DOXYGEN_EXTERNAL_SEARCH)
+      set(LLVM_DOXYGEN_SEARCHENGINE_URL "" CACHE STRING "URL to use for external searhc.")
+      set(LLVM_DOXYGEN_SEARCH_MAPPINGS "" CACHE STRING "Doxygen Search Mappings")
+    endif()
+  endif()
 else()
   message(STATUS "Doxygen disabled.")
 endif()

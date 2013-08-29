@@ -649,13 +649,35 @@ MDString *DICompositeType::getIdentifier() const {
   return cast_or_null<MDString>(getField(DbgNode, 14));
 }
 
+#ifndef NDEBUG
+static void VerifySubsetOf(const MDNode *LHS, const MDNode *RHS) {
+  for (unsigned i = 0; i != LHS->getNumOperands(); ++i) {
+    // Skip the 'empty' list (that's a single i32 0, rather than truly empty).
+    if (i == 0 && isa<ConstantInt>(LHS->getOperand(i)))
+      continue;
+    const MDNode *E = cast<MDNode>(LHS->getOperand(i));
+    bool found = false;
+    for (unsigned j = 0; !found && j != RHS->getNumOperands(); ++j)
+      found = E == RHS->getOperand(j);
+    assert(found && "Losing a member during member list replacement");
+  }
+}
+#endif
+
 /// \brief Set the array of member DITypes.
 void DICompositeType::setTypeArray(DIArray Elements, DIArray TParams) {
   assert((!TParams || DbgNode->getNumOperands() == 15) &&
          "If you're setting the template parameters this should include a slot "
          "for that!");
   TrackingVH<MDNode> N(*this);
-  N->replaceOperandWith(10, Elements);
+  if (Elements) {
+#ifndef NDEBUG
+    // Check that the new list of members contains all the old members as well.
+    if (const MDNode *El = cast_or_null<MDNode>(N->getOperand(10)))
+      VerifySubsetOf(El, Elements);
+#endif
+    N->replaceOperandWith(10, Elements);
+  }
   if (TParams)
     N->replaceOperandWith(13, TParams);
   DbgNode = N;
