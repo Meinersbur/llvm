@@ -221,14 +221,19 @@ protected:
 
   MachineBasicBlock::iterator LiveRegionEnd;
 
-  /// Register pressure in this region computed by buildSchedGraph.
+  // Map each SU to its summary of pressure changes. This array is updated for
+  // liveness during bottom-up scheduling. Top-down scheduling may proceed but
+  // has no affect on the pressure diffs.
+  PressureDiffs SUPressureDiffs;
+
+  /// Register pressure in this region computed by initRegPressure.
   IntervalPressure RegPressure;
   RegPressureTracker RPTracker;
 
   /// List of pressure sets that exceed the target's pressure limit before
   /// scheduling, listed in increasing set ID order. Each pressure set is paired
   /// with its max pressure in the currently scheduled regions.
-  std::vector<PressureElement> RegionCriticalPSets;
+  std::vector<PressureChange> RegionCriticalPSets;
 
   /// The top of the unscheduled zone.
   MachineBasicBlock::iterator CurrentTop;
@@ -314,8 +319,12 @@ public:
   /// Get register pressure for the entire scheduling region before scheduling.
   const IntervalPressure &getRegPressure() const { return RegPressure; }
 
-  const std::vector<PressureElement> &getRegionCriticalPSets() const {
+  const std::vector<PressureChange> &getRegionCriticalPSets() const {
     return RegionCriticalPSets;
+  }
+
+  PressureDiff &getPressureDiff(const SUnit *SU) {
+    return SUPressureDiffs[SU->NodeNum];
   }
 
   const SUnit *getNextClusterPred() const { return NextClusterPred; }
@@ -368,6 +377,8 @@ protected:
   // Lesser helpers...
 
   void initRegPressure();
+
+  void updatePressureDiffs(ArrayRef<unsigned> LiveUses);
 
   void updateScheduledPressure(const std::vector<unsigned> &NewMaxPressure);
 
