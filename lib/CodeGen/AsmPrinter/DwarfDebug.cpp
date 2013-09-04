@@ -85,14 +85,6 @@ DwarfAccelTables("dwarf-accel-tables", cl::Hidden,
                  cl::init(Default));
 
 static cl::opt<DefaultOnOff>
-DarwinGDBCompat("darwin-gdb-compat", cl::Hidden,
-                cl::desc("Compatibility with Darwin gdb."),
-                cl::values(clEnumVal(Default, "Default for platform"),
-                           clEnumVal(Enable, "Enabled"),
-                           clEnumVal(Disable, "Disabled"), clEnumValEnd),
-                cl::init(Default));
-
-static cl::opt<DefaultOnOff>
 SplitDwarf("split-dwarf", cl::Hidden,
            cl::desc("Output prototype dwarf split debug info."),
            cl::values(clEnumVal(Default, "Default for platform"),
@@ -151,17 +143,12 @@ DIType DbgVariable::getType() const {
     DIType subType = Ty;
     uint16_t tag = Ty.getTag();
 
-    if (tag == dwarf::DW_TAG_pointer_type) {
-      DIDerivedType DTy = DIDerivedType(Ty);
-      subType = DTy.getTypeDerivedFrom();
-    }
+    if (tag == dwarf::DW_TAG_pointer_type)
+      subType = DIDerivedType(Ty).getTypeDerivedFrom();
 
-    DICompositeType blockStruct = DICompositeType(subType);
-    DIArray Elements = blockStruct.getTypeArray();
-
+    DIArray Elements = DICompositeType(subType).getTypeArray();
     for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
-      DIDescriptor Element = Elements.getElement(i);
-      DIDerivedType DT = DIDerivedType(Element);
+      DIDerivedType DT = DIDerivedType(Elements.getElement(i));
       if (getName() == DT.getName())
         return (DT.getTypeDerivedFrom());
     }
@@ -174,8 +161,12 @@ DIType DbgVariable::getType() const {
 /// Return Dwarf Version by checking module flags.
 static unsigned getDwarfVersionFromModule(const Module *M) {
   Value *Val = M->getModuleFlag("Dwarf Version");
+  // If we don't have a value in the module go ahead and use the default in
+  // dwarf::DWARF_VERSION.
+  // FIXME: Apple ld has a problem parsing compilation units that specify a
+  // dwarf version of greater than 3.
   if (!Val)
-    return dwarf::DWARF_VERSION;
+    return Triple(M->getTargetTriple()).isOSDarwin() ? 3 : dwarf::DWARF_VERSION;
   return cast<ConstantInt>(Val)->getZExtValue();
 }
 
@@ -201,11 +192,6 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   // for Darwin by default, pubnames by default for non-Darwin,
   // and handle split dwarf.
   bool IsDarwin = Triple(A->getTargetTriple()).isOSDarwin();
-
-  if (DarwinGDBCompat == Default)
-    IsDarwinGDBCompat = IsDarwin;
-  else
-    IsDarwinGDBCompat = DarwinGDBCompat == Enable;
 
   if (DwarfAccelTables == Default)
     HasDwarfAccelTables = IsDarwin;
@@ -1894,10 +1880,10 @@ void DwarfDebug::emitSectionLabels() {
   DwarfLineSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfLineSection(), "section_line");
   emitSectionSym(Asm, TLOF.getDwarfLocSection());
-  if (HasDwarfPubSections)
+  if (HasDwarfPubSections) {
     emitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
-  if (useDarwinGDBCompat() || HasDwarfPubSections)
     emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
+  }
   DwarfStrSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfStrSection(), "info_string");
   if (useSplitDwarf()) {
