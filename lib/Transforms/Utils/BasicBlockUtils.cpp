@@ -29,6 +29,9 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
+#ifdef MOLLY
+#include "llvm/Analysis/RegionInfo.h"
+#endif /* MOLLY */
 using namespace llvm;
 
 /// DeleteDeadBlock - Delete the specified block, which must have no
@@ -280,6 +283,12 @@ BasicBlock *llvm::SplitBlock(BasicBlock *Old, Instruction *SplitPt, Pass *P) {
   if (LoopInfo *LI = P->getAnalysisIfAvailable<LoopInfo>())
     if (Loop *L = LI->getLoopFor(Old))
       L->addBasicBlockToLoop(New, LI->getBase());
+
+#ifdef MOLLY
+  if (auto RI = P->getAnalysisIfAvailable<RegionInfo>())
+    if (auto OldRegion = RI->getRegionFor(Old)) 
+      RI->setRegionFor(New, OldRegion);
+#endif /* MOLLY */
 
   if (DominatorTree *DT = P->getAnalysisIfAvailable<DominatorTree>()) {
     // Old dominates New. New node dominates all other nodes dominated by Old.
