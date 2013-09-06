@@ -796,8 +796,7 @@ DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
       IsImplementation = (CT.getRunTimeLang() == 0) ||
         CT.isObjcClassComplete();
     }
-    unsigned Flags = IsImplementation ?
-                     DwarfAccelTable::eTypeFlagClassIsImplementation : 0;
+    unsigned Flags = IsImplementation ? dwarf::DW_FLAG_type_implementation : 0;
     addAccelType(Ty.getName(), std::make_pair(TyDIE, Flags));
   }
 
@@ -906,7 +905,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DIDerivedType DTy) {
 
   if (Tag == dwarf::DW_TAG_ptr_to_member_type)
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
-                  getOrCreateTypeDIE(DTy.getClassType()));
+                  getOrCreateTypeDIE(DD->resolve(DTy.getClassType())));
   // Add source line info if available and TyDesc is not a forward declaration.
   if (!DTy.isForwardDecl())
     addSourceLine(&Buffer, DTy);
@@ -1084,7 +1083,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
     if (CTy.isAppleBlockExtension())
       addFlag(&Buffer, dwarf::DW_AT_APPLE_block);
 
-    DICompositeType ContainingType = CTy.getContainingType();
+    DICompositeType ContainingType(DD->resolve(CTy.getContainingType()));
     if (DIDescriptor(ContainingType).isCompositeType())
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
                   getOrCreateTypeDIE(DIType(ContainingType)));
