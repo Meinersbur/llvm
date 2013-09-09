@@ -46,7 +46,7 @@ namespace llvm {
   class DILexicalBlockFile;
   class DIVariable;
   class DIType;
-  class DITypeRef;
+  class DIScopeRef;
   class DIObjCProperty;
 
   /// Maps from type identifier to the actual MDNode.
@@ -56,9 +56,9 @@ namespace llvm {
   /// This should not be stored in a container, because the underlying MDNode
   /// may change in certain situations.
   class DIDescriptor {
-    // Befriends DITypeRef so DITypeRef can befriend the protected member
-    // function: getFieldAs<DITypeRef>.
-    friend class DITypeRef;
+    // Befriends DIScopeRef so DIScopeRef can befriend the protected member
+    // function: getFieldAs<DIScopeRef>.
+    friend class DIScopeRef;
   public:
     enum {
       FlagPrivate            = 1 << 0,
@@ -151,9 +151,9 @@ namespace llvm {
     void dump() const;
   };
 
-  /// Specialize getFieldAs to handle fields that are references to DITypes.
+  /// npecialize getFieldAs to handle fields that are references to DIScopes.
   template <>
-  DITypeRef DIDescriptor::getFieldAs<DITypeRef>(unsigned Elt) const;
+  DIScopeRef DIDescriptor::getFieldAs<DIScopeRef>(unsigned Elt) const;
 
   /// DISubrange - This is used to represent ranges, for array bounds.
   class DISubrange : public DIDescriptor {
@@ -200,11 +200,27 @@ namespace llvm {
   public:
     explicit DIScope(const MDNode *N = 0) : DIDescriptor (N) {}
 
-    /// Gets the parent scope for this scope node or returns a
-    /// default constructed scope.
-    DIScope getContext() const;
     StringRef getFilename() const;
     StringRef getDirectory() const;
+
+    /// Generate a reference to this DIScope. Uses the type identifier instead
+    /// of the actual MDNode if possible, to help type uniquing.
+    Value *generateRef();
+  };
+
+  /// Represents reference to a DIScope, abstracts over direct and
+  /// identifier-based metadata scope references.
+  class DIScopeRef {
+    template <typename DescTy>
+    friend DescTy DIDescriptor::getFieldAs(unsigned Elt) const;
+
+    /// Val can be either a MDNode or a MDString, in the latter,
+    /// MDString specifies the type identifier.
+    const Value *Val;
+    explicit DIScopeRef(const Value *V);
+  public:
+    DIScope resolve(const DITypeIdentifierMap &Map) const;
+    operator Value *() const { return const_cast<Value*>(Val); }
   };
 
   /// DIType - This is a wrapper for a type.
@@ -221,7 +237,7 @@ namespace llvm {
     /// Verify - Verify that a type descriptor is well formed.
     bool Verify() const;
 
-    DIScope getContext() const          { return getFieldAs<DIScope>(2); }
+    DIScopeRef getContext() const       { return getFieldAs<DIScopeRef>(2); }
     StringRef getName() const           { return getStringField(3);     }
     unsigned getLineNumber() const      { return getUnsignedField(4); }
     uint64_t getSizeInBits() const      { return getUInt64Field(5); }
@@ -271,30 +287,10 @@ namespace llvm {
     /// isUnsignedDIType - Return true if type encoding is unsigned.
     bool isUnsignedDIType();
 
-    /// Generate a reference to this DIType. Uses the type identifier instead
-    /// of the actual MDNode if possible, to help type uniquing.
-    DITypeRef generateRef();
-
     /// replaceAllUsesWith - Replace all uses of debug info referenced by
     /// this descriptor.
     void replaceAllUsesWith(DIDescriptor &D);
     void replaceAllUsesWith(MDNode *D);
-  };
-
-  /// Represents reference to a DIType, abstracts over direct and
-  /// identifier-based metadata type references.
-  class DITypeRef {
-    template <typename DescTy>
-    friend DescTy DIDescriptor::getFieldAs(unsigned Elt) const;
-    friend DITypeRef DIType::generateRef();
-
-    /// TypeVal can be either a MDNode or a MDString, in the latter,
-    /// MDString specifies the type identifier.
-    const Value *TypeVal;
-    explicit DITypeRef(const Value *V);
-  public:
-    DIType resolve(const DITypeIdentifierMap &Map) const;
-    operator Value *() const { return const_cast<Value*>(TypeVal); }
   };
 
   /// DIBasicType - A basic type, like 'int' or 'float'.
@@ -328,9 +324,9 @@ namespace llvm {
     /// associated with one.
     MDNode *getObjCProperty() const;
 
-    DITypeRef getClassType() const {
+    DIScopeRef getClassType() const {
       assert(getTag() == dwarf::DW_TAG_ptr_to_member_type);
-      return getFieldAs<DITypeRef>(10);
+      return getFieldAs<DIScopeRef>(10);
     }
 
     Constant *getConstant() const {
@@ -358,8 +354,8 @@ namespace llvm {
     void setTypeArray(DIArray Elements, DIArray TParams = DIArray());
     void addMember(DIDescriptor D);
     unsigned getRunTimeLang() const { return getUnsignedField(11); }
-    DITypeRef getContainingType() const {
-      return getFieldAs<DITypeRef>(12);
+    DIScopeRef getContainingType() const {
+      return getFieldAs<DIScopeRef>(12);
     }
     void setContainingType(DICompositeType ContainingType);
     DIArray getTemplateParams() const { return getFieldAs<DIArray>(13); }
@@ -426,8 +422,8 @@ namespace llvm {
     unsigned getVirtuality() const { return getUnsignedField(10); }
     unsigned getVirtualIndex() const { return getUnsignedField(11); }
 
-    DICompositeType getContainingType() const {
-      return getFieldAs<DICompositeType>(12);
+    DIScopeRef getContainingType() const {
+      return getFieldAs<DIScopeRef>(12);
     }
 
     unsigned getFlags() const {
@@ -730,10 +726,6 @@ namespace llvm {
   /// getDICompositeType - Find underlying composite type.
   DICompositeType getDICompositeType(DIType T);
 
-  /// isSubprogramContext - Return true if Context is either a subprogram
-  /// or another context nested inside a subprogram.
-  bool isSubprogramContext(const MDNode *Context);
-
   /// getOrInsertFnSpecificMDNode - Return a NameMDNode that is suitable
   /// to hold function specific information.
   NamedMDNode *getOrInsertFnSpecificMDNode(Module &M, DISubprogram SP);
@@ -828,6 +820,7 @@ namespace llvm {
     SmallVector<MDNode *, 8> TYs;  // Types
     SmallVector<MDNode *, 8> Scopes; // Scopes
     SmallPtrSet<MDNode *, 64> NodesSeen;
+    DITypeIdentifierMap TypeIdentifierMap;
   };
 } // end namespace llvm
 

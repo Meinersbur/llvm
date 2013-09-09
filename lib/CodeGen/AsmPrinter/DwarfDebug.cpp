@@ -332,6 +332,19 @@ static void addSubprogramNames(CompileUnit *TheCU, DISubprogram SP,
   }
 }
 
+/// isSubprogramContext - Return true if Context is either a subprogram
+/// or another context nested inside a subprogram.
+bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
+  if (!Context)
+    return false;
+  DIDescriptor D(Context);
+  if (D.isSubprogram())
+    return true;
+  if (D.isType())
+    return isSubprogramContext(resolve(DIType(Context).getContext()));
+  return false;
+}
+
 // Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
 // and DW_AT_high_pc attributes. If there are global variables in this
 // scope then create and insert DIEs for these variables.
@@ -756,9 +769,8 @@ void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU,
   // Add to context owner.
   TheCU->addToContextOwner(SubprogramDie, SP.getContext());
 
-  // Expose as global, if requested.
-  if (HasDwarfPubSections)
-    TheCU->addGlobalName(SP.getName(), SubprogramDie);
+  // Expose as a global name.
+  TheCU->addGlobalName(SP.getName(), SubprogramDie);
 }
 
 void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
@@ -1096,7 +1108,7 @@ void DwarfDebug::endModule() {
 
   // Emit the pubnames and pubtypes sections if requested.
   if (HasDwarfPubSections) {
-    emitDebugPubnames();
+    emitDebugPubNames();
     emitDebugPubTypes();
   }
 
@@ -2239,9 +2251,9 @@ void DwarfDebug::emitAccelTypes() {
   AT.Emit(Asm, SectionBegin, &InfoHolder);
 }
 
-/// emitDebugPubnames - Emit visible names into a debug pubnames section.
+/// emitDebugPubNames - Emit visible names into a debug pubnames section.
 ///
-void DwarfDebug::emitDebugPubnames() {
+void DwarfDebug::emitDebugPubNames() {
   const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
 
   typedef DenseMap<const MDNode*, CompileUnit*> CUMapType;
@@ -2633,7 +2645,30 @@ void DwarfDebug::emitDebugStrDWO() {
                          OffSec, StrSym);
 }
 
-/// Find the MDNode for the given type reference.
-MDNode *DwarfDebug::resolve(DITypeRef TRef) const {
-  return TRef.resolve(TypeIdentifierMap);
+/// Find the MDNode for the given scope reference.
+DIScope DwarfDebug::resolve(DIScopeRef SRef) const {
+  return SRef.resolve(TypeIdentifierMap);
+}
+
+// If the current node has a parent scope then return that,
+// else return an empty scope.
+DIScope DwarfDebug::getScopeContext(DIScope S) const {
+
+  if (S.isType())
+    return resolve(DIType(S).getContext());
+
+  if (S.isSubprogram())
+    return DISubprogram(S).getContext();
+
+  if (S.isLexicalBlock())
+    return DILexicalBlock(S).getContext();
+
+  if (S.isLexicalBlockFile())
+    return DILexicalBlockFile(S).getContext();
+
+  if (S.isNameSpace())
+    return DINameSpace(S).getContext();
+
+  assert((S.isFile() || S.isCompileUnit()) && "Unhandled type of scope.");
+  return DIScope();
 }

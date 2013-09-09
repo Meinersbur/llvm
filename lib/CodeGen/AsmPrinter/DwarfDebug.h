@@ -527,7 +527,7 @@ private:
   void emitAccelTypes();
 
   /// \brief Emit visible names into a debug pubnames section.
-  void emitDebugPubnames();
+  void emitDebugPubNames();
 
   /// \brief Emit visible types into a debug pubtypes section.
   void emitDebugPubTypes();
@@ -683,9 +683,16 @@ public:
   /// Returns the Dwarf Version.
   unsigned getDwarfVersion() const { return DwarfVersion; }
 
-  /// Find the MDNode for the given type reference.
-  MDNode *resolve(DITypeRef TRef) const;
+  /// Find the MDNode for the given scope reference.
+  DIScope resolve(DIScopeRef SRef) const;
 
+  /// isSubprogramContext - Return true if Context is either a subprogram
+  /// or another context nested inside a subprogram.
+  bool isSubprogramContext(const MDNode *Context);
+
+  /// Gets the parent scope for this scope node or returns a
+  /// default constructed scope.
+  DIScope getScopeContext(DIScope S) const;
 };
 } // End of namespace llvm
 
