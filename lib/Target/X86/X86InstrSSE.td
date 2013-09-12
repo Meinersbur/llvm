@@ -4444,6 +4444,18 @@ def MOVPDI2DImr  : S2I<0x7E, MRMDestMem, (outs), (ins i32mem:$dst, VR128:$src),
                                      (iPTR 0))), addr:$dst)],
                                      IIC_SSE_MOVDQ>, Sched<[WriteLoad]>;
 
+def : Pat<(v8i32 (X86Vinsert (v8i32 immAllZerosV), GR32:$src2, (iPTR 0))),
+        (SUBREG_TO_REG (i32 0), (VMOVDI2PDIrr GR32:$src2), sub_xmm)>;
+
+def : Pat<(v4i64 (X86Vinsert (bc_v4i64 (v8i32 immAllZerosV)), GR64:$src2, (iPTR 0))),
+        (SUBREG_TO_REG (i32 0), (VMOV64toPQIrr GR64:$src2), sub_xmm)>;
+
+def : Pat<(v8i32 (X86Vinsert undef, GR32:$src2, (iPTR 0))),
+        (SUBREG_TO_REG (i32 0), (VMOVDI2PDIrr GR32:$src2), sub_xmm)>;
+
+def : Pat<(v4i64 (X86Vinsert undef, GR64:$src2, (iPTR 0))),
+        (SUBREG_TO_REG (i32 0), (VMOV64toPQIrr GR64:$src2), sub_xmm)>;
+
 //===---------------------------------------------------------------------===//
 // Move Packed Doubleword Int first element to Doubleword Int
 //
@@ -7306,6 +7318,22 @@ let Constraints = "$src1 = $dst" in {
                        [(set GR64:$dst,
                          (int_x86_sse42_crc32_64_64 GR64:$src1, GR64:$src2))]>,
                          REX_W;
+}
+
+//===----------------------------------------------------------------------===//
+// SHA-NI Instructions
+//===----------------------------------------------------------------------===//
+
+let Constraints = "$src1 = $dst", hasSideEffects = 0, Predicates = [HasSHA] in {
+  def SHA1RNDS4rri : Ii8<0xCC, MRMSrcReg, (outs VR128:$dst),
+                         (ins VR128:$src1, VR128:$src2, i8imm:$src3),
+                         "sha1rnds4\t{$src3, $src2, $dst|$dst, $src2, $src3}",
+                         []>, TA;
+  let mayLoad = 1 in
+  def SHA1RNDS4rmi : Ii8<0xCC, MRMSrcMem, (outs VR128:$dst),
+                         (ins VR128:$src1, i128mem:$src2, i8imm:$src3),
+                         "sha1rnds4\t{$src3, $src2, $dst|$dst, $src2, $src3}",
+                         []>, TA;
 }
 
 //===----------------------------------------------------------------------===//
