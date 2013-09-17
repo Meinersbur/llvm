@@ -154,9 +154,6 @@ public:
   void MakeSymbolReal(COFFSymbol &S, size_t Index);
   void MakeSectionReal(COFFSection &S, size_t Number);
 
-  bool ExportSection(COFFSection const *S);
-  bool ExportSymbol(MCSymbolData const &SymbolData, MCAssembler &Asm);
-
   bool IsPhysicalSection(COFFSection *S);
 
   // Entity writing methods.
@@ -497,22 +494,6 @@ void WinCOFFObjectWriter::MakeSymbolReal(COFFSymbol &S, size_t Index) {
   S.Index = Index;
 }
 
-bool WinCOFFObjectWriter::ExportSection(COFFSection const *S) {
-  return !S->MCData->getFragmentList().empty();
-}
-
-bool WinCOFFObjectWriter::ExportSymbol(MCSymbolData const &SymbolData,
-                                       MCAssembler &Asm) {
-  // This doesn't seem to be right. Strings referred to from the .data section
-  // need symbols so they can be linked to code in the .text section right?
-
-  // return Asm.isSymbolLinkerVisible (&SymbolData);
-
-  // For now, all non-variable symbols are exported,
-  // the linker will sort the rest out for us.
-  return SymbolData.isExternal() || !SymbolData.getSymbol().isVariable();
-}
-
 bool WinCOFFObjectWriter::IsPhysicalSection(COFFSection *S) {
   return (S->Header.Characteristics
          & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0;
@@ -614,11 +595,9 @@ void WinCOFFObjectWriter::ExecutePostLayoutBinding(MCAssembler &Asm,
     DefineSection(*i);
 
   for (MCAssembler::const_symbol_iterator i = Asm.symbol_begin(),
-                                          e = Asm.symbol_end(); i != e; i++) {
-    if (ExportSymbol(*i, Asm)) {
-      DefineSymbol(*i, Asm);
-    }
-  }
+                                          e = Asm.symbol_end();
+       i != e; i++)
+    DefineSymbol(*i, Asm);
 }
 
 void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
