@@ -662,11 +662,13 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
     if (TableRef.front().Kind == IITDescriptor::Vararg) { 
       TableRef = TableRef.slice(1);
       ArgTys.append(Tys.begin() + varargStart, Tys.end());
+      varargStart = Tys.size();
       continue;
     } 
     ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context, varargStart));
   }
 
+  assert(varargStart == Tys.size() && "Unused type parameters");
   return FunctionType::get(ResultTy, ArgTys, false);
 }
 
