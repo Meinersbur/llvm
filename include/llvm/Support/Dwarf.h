@@ -58,7 +58,8 @@ enum LLVMConstants {
   DWARF_VERSION = 4,       // Default dwarf version we output.
   DW_CIE_VERSION = 1,      // Common frame information version.
   DW_PUBTYPES_VERSION = 2, // Section version number for .debug_pubtypes.
-  DW_PUBNAMES_VERSION = 2  // Section version number for .debug_pubnames.
+  DW_PUBNAMES_VERSION = 2, // Section version number for .debug_pubnames.
+  DW_ARANGES_VERSION = 2   // Section version number for .debug_aranges.
 };
 
 // Special ID values that distinguish a CIE from a FDE in DWARF CFI.
@@ -790,39 +791,56 @@ enum AcceleratorTable {
 const char *AtomTypeString(unsigned Atom);
 
 // Constants for the GNU pubnames/pubtypes extensions supporting gdb index.
-enum GDBIndex {
-  // The gnu_pub* index value looks like:
-  //
-  // 0-3  reserved
-  // 4-6  symbol kind
-  // 7    0 == global, 1 == static
-
-  // Attributes kinds for the index.
-  GDB_INDEX_SYMBOL_KIND_OFFSET = 4,
-  GDB_INDEX_SYMBOL_KIND_MASK = 7 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-
-  // Special value to indicate no attributes are present.
-  GDB_INDEX_SYMBOL_KIND_NONE = 0,
-  GDB_INDEX_SYMBOL_KIND_TYPE = 1 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  GDB_INDEX_SYMBOL_KIND_VARIABLE = 2 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  GDB_INDEX_SYMBOL_KIND_FUNCTION = 3 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  GDB_INDEX_SYMBOL_KIND_OTHER = 4 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  // 3 unused values.
-  GDB_INDEX_SYMBOL_KIND_UNUSED5 = 5 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  GDB_INDEX_SYMBOL_KIND_UNUSED6 = 6 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-  GDB_INDEX_SYMBOL_KIND_UNUSED7 = 7 << GDB_INDEX_SYMBOL_KIND_OFFSET,
-
-  // Index values are defined via the set of CUs that define the
-  // symbol. For the pubnames/pubtypes extensions we need the
-  // various shifts and masks.
-  GDB_INDEX_SYMBOL_STATIC_OFFSET = 7,
-  GDB_INDEX_SYMBOL_STATIC_MASK = 1 << GDB_INDEX_SYMBOL_STATIC_OFFSET,
-  GDB_INDEX_SYMBOL_STATIC = 1 << GDB_INDEX_SYMBOL_STATIC_OFFSET,
-  GDB_INDEX_SYMBOL_NON_STATIC = 0
+enum GDBIndexEntryKind {
+  GIEK_NONE,
+  GIEK_TYPE,
+  GIEK_VARIABLE,
+  GIEK_FUNCTION,
+  GIEK_OTHER,
+  GIEK_UNUSED5,
+  GIEK_UNUSED6,
+  GIEK_UNUSED7
 };
 
-/// GDBIndexTypeString - Return the string for the specified index type.
-const char *GDBIndexTypeString(unsigned Kind);
+const char *GDBIndexEntryKindString(GDBIndexEntryKind Kind);
+
+enum GDBIndexEntryLinkage {
+  GIEL_EXTERNAL,
+  GIEL_STATIC
+};
+
+const char *GDBIndexEntryLinkageString(GDBIndexEntryLinkage Linkage);
+
+/// The gnu_pub* kind looks like:
+///
+/// 0-3  reserved
+/// 4-6  symbol kind
+/// 7    0 == global, 1 == static
+///
+/// A gdb_index descriptor includes the above kind, shifted 24 bits up with the
+/// offset of the cu within the debug_info section stored in those 24 bits.
+struct PubIndexEntryDescriptor {
+  GDBIndexEntryKind Kind;
+  GDBIndexEntryLinkage Linkage;
+  PubIndexEntryDescriptor(GDBIndexEntryKind Kind, GDBIndexEntryLinkage Linkage)
+      : Kind(Kind), Linkage(Linkage) {}
+  /* implicit */ PubIndexEntryDescriptor(GDBIndexEntryKind Kind)
+      : Kind(Kind), Linkage(GIEL_EXTERNAL) {}
+  explicit PubIndexEntryDescriptor(uint8_t Value)
+      : Kind(static_cast<GDBIndexEntryKind>((Value & KIND_MASK) >>
+                                            KIND_OFFSET)),
+        Linkage(static_cast<GDBIndexEntryLinkage>((Value & LINKAGE_MASK) >>
+                                                  LINKAGE_OFFSET)) {}
+  uint8_t toBits() { return Kind << KIND_OFFSET | Linkage << LINKAGE_OFFSET; }
+
+private:
+  enum {
+    KIND_OFFSET = 4,
+    KIND_MASK = 7 << KIND_OFFSET,
+    LINKAGE_OFFSET = 7,
+    LINKAGE_MASK = 1 << LINKAGE_OFFSET
+  };
+};
 
 } // End of namespace dwarf
 
