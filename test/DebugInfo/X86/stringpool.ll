@@ -1,9 +1,6 @@
 ; RUN: llc -mtriple=x86_64-unknown-linux-gnu < %s | FileCheck %s --check-prefix=LINUX
 ; RUN: llc -mtriple=x86_64-darwin < %s | FileCheck %s --check-prefix=DARWIN
 
-; FIXME: Investigating.
-; XFAIL: win32
-
 @yyyy = common global i32 0, align 4
 
 !llvm.dbg.cu = !{!0}
@@ -15,6 +12,12 @@
 !6 = metadata !{i32 720937, metadata !8} ; [ DW_TAG_file_type ]
 !7 = metadata !{i32 720932, null, null, metadata !"int", i32 0, i64 32, i64 32, i64 0, i32 0, i32 5} ; [ DW_TAG_base_type ]
 !8 = metadata !{metadata !"z.c", metadata !"/home/nicholas"}
+
+; Verify that "yyyy" ended up in the stringpool.
+; LINUX: .section .debug_str,"MS",@progbits,1
+; LINUX: yyyy
+; DARWIN: .section __DWARF,__debug_str,regular,debug
+; DARWIN: yyyy
 
 ; Verify that we refer to 'yyyy' with a relocation.
 ; LINUX:      .long   .Linfo_string3          # DW_AT_name
@@ -36,11 +39,3 @@
 ; DARWIN-NEXT:        .byte   9                       ## DW_AT_location
 ; DARWIN-NEXT:        .byte   3
 ; DARWIN-NEXT:        .quad   _yyyy
-
-; Verify that "yyyy" ended up in the stringpool.
-; LINUX: .section .debug_str,"MS",@progbits,1
-; LINUX-NOT: .section
-; LINUX: yyyy
-; DARWIN: .section __DWARF,__debug_str,regular,debug
-; DARWIN-NOT: .section
-; DARWIN: yyyy
