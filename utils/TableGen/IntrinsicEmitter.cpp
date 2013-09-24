@@ -261,7 +261,8 @@ enum IIT_Info {
   IIT_EXTEND_VEC_ARG = 23,
   IIT_TRUNC_VEC_ARG = 24,
   IIT_ANYPTR = 25,
-  IIT_VARARG = 26
+  IIT_V1   = 26,
+  IIT_VARARG = 27
 };
 
 
@@ -278,7 +279,7 @@ static void EncodeFixedValueType(MVT::SimpleValueType VT,
     case 64: return Sig.push_back(IIT_I64);
     }
   }
-
+  
   switch (VT) {
   default: PrintFatalError("unhandled MVT in intrinsic!");
   case MVT::f16: return Sig.push_back(IIT_F16);
@@ -355,6 +356,7 @@ static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
     EVT VVT = VT;
     switch (VVT.getVectorNumElements()) {
     default: PrintFatalError("unhandled vector type width in intrinsic!");
+    case 1: Sig.push_back(IIT_V1); break;
     case 2: Sig.push_back(IIT_V2); break;
     case 4: Sig.push_back(IIT_V4); break;
     case 8: Sig.push_back(IIT_V8); break;
