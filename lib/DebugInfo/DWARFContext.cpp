@@ -29,7 +29,7 @@ DWARFContext::~DWARFContext() {
 }
 
 static void dumpPubSection(raw_ostream &OS, StringRef Name, StringRef Data,
-                           bool LittleEndian) {
+                           bool LittleEndian, bool GnuStyle) {
   OS << "\n." << Name << " contents:\n";
   DataExtractor pubNames(Data, LittleEndian, 0);
   uint32_t offset = 0;
@@ -37,16 +37,25 @@ static void dumpPubSection(raw_ostream &OS, StringRef Name, StringRef Data,
   OS << "Version:               " << pubNames.getU16(&offset) << "\n";
   OS << "Offset in .debug_info: " << pubNames.getU32(&offset) << "\n";
   OS << "Size:                  " << pubNames.getU32(&offset) << "\n";
-  OS << "Offset     Linkage  Kind     Name\n";
+  if (GnuStyle)
+    OS << "Offset     Linkage  Kind     Name\n";
+  else
+    OS << "Offset        Name\n";
+
   while (offset < Data.size()) {
     uint32_t dieRef = pubNames.getU32(&offset);
     if (dieRef == 0)
       break;
-    PubIndexEntryDescriptor desc(pubNames.getU8(&offset));
-    OS << format("0x%8.8x ", dieRef)
-       << format("%-8s", dwarf::GDBIndexEntryLinkageString(desc.Linkage)) << ' '
-       << format("%-8s", dwarf::GDBIndexEntryKindString(desc.Kind)) << ' '
-       << '\"' << pubNames.getCStr(&offset) << "\"\n";
+    if (GnuStyle) {
+      PubIndexEntryDescriptor desc(pubNames.getU8(&offset));
+      OS << format("0x%8.8x ", dieRef)
+         << format("%-8s", dwarf::GDBIndexEntryLinkageString(desc.Linkage))
+         << ' ' << format("%-8s", dwarf::GDBIndexEntryKindString(desc.Kind))
+         << ' ' << '\"' << pubNames.getCStr(&offset) << "\"\n";
+    } else {
+      OS << format("0x%8.8x    ", dieRef);
+      OS << '\"' << pubNames.getCStr(&offset) << "\"\n";
+    }
   }
 }
 
@@ -130,31 +139,21 @@ void DWARFContext::dump(raw_ostream &OS, DIDumpType DumpType) {
       rangeList.dump(OS);
   }
 
-  if (DumpType == DIDT_All || DumpType == DIDT_Pubnames) {
-    OS << "\n.debug_pubnames contents:\n";
-    DataExtractor pubNames(getPubNamesSection(), isLittleEndian(), 0);
-    offset = 0;
-    OS << "Length:                " << pubNames.getU32(&offset) << "\n";
-    OS << "Version:               " << pubNames.getU16(&offset) << "\n";
-    OS << "Offset in .debug_info: " << pubNames.getU32(&offset) << "\n";
-    OS << "Size:                  " << pubNames.getU32(&offset) << "\n";
-    OS << "\n  Offset    Name\n";
-    while (offset < getPubNamesSection().size()) {
-      uint32_t n = pubNames.getU32(&offset);
-      if (n == 0)
-        break;
-      OS << format("%8x    ", n);
-      OS << pubNames.getCStr(&offset) << "\n";
-    }
-  }
+  if (DumpType == DIDT_All || DumpType == DIDT_Pubnames)
+    dumpPubSection(OS, "debug_pubnames", getPubNamesSection(),
+                   isLittleEndian(), false);
+
+  if (DumpType == DIDT_All || DumpType == DIDT_Pubtypes)
+    dumpPubSection(OS, "debug_pubtypes", getPubTypesSection(),
+                   isLittleEndian(), false);
 
   if (DumpType == DIDT_All || DumpType == DIDT_GnuPubnames)
     dumpPubSection(OS, "debug_gnu_pubnames", getGnuPubNamesSection(),
-                   isLittleEndian());
+                   isLittleEndian(), true /* GnuStyle */);
 
   if (DumpType == DIDT_All || DumpType == DIDT_GnuPubtypes)
     dumpPubSection(OS, "debug_gnu_pubtypes", getGnuPubTypesSection(),
-                   isLittleEndian());
+                   isLittleEndian(), true /* GnuStyle */);
 
   if (DumpType == DIDT_All || DumpType == DIDT_AbbrevDwo) {
     const DWARFDebugAbbrev *D = getDebugAbbrevDWO();
@@ -610,25 +609,27 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
       UncompressedSections.push_back(UncompressedSection.take());
     }
 
-    StringRef *Section = StringSwitch<StringRef*>(name)
-        .Case("debug_info", &InfoSection.Data)
-        .Case("debug_abbrev", &AbbrevSection)
-        .Case("debug_loc", &LocSection.Data)
-        .Case("debug_line", &LineSection.Data)
-        .Case("debug_aranges", &ARangeSection)
-        .Case("debug_frame", &DebugFrameSection)
-        .Case("debug_str", &StringSection)
-        .Case("debug_ranges", &RangeSection)
-        .Case("debug_pubnames", &PubNamesSection)
-        .Case("debug_gnu_pubnames", &GnuPubNamesSection)
-        .Case("debug_gnu_pubtypes", &GnuPubTypesSection)
-        .Case("debug_info.dwo", &InfoDWOSection.Data)
-        .Case("debug_abbrev.dwo", &AbbrevDWOSection)
-        .Case("debug_str.dwo", &StringDWOSection)
-        .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
-        .Case("debug_addr", &AddrSection)
-        // Any more debug info sections go here.
-        .Default(0);
+    StringRef *Section =
+        StringSwitch<StringRef *>(name)
+            .Case("debug_info", &InfoSection.Data)
+            .Case("debug_abbrev", &AbbrevSection)
+            .Case("debug_loc", &LocSection.Data)
+            .Case("debug_line", &LineSection.Data)
+            .Case("debug_aranges", &ARangeSection)
+            .Case("debug_frame", &DebugFrameSection)
+            .Case("debug_str", &StringSection)
+            .Case("debug_ranges", &RangeSection)
+            .Case("debug_pubnames", &PubNamesSection)
+            .Case("debug_pubtypes", &PubTypesSection)
+            .Case("debug_gnu_pubnames", &GnuPubNamesSection)
+            .Case("debug_gnu_pubtypes", &GnuPubTypesSection)
+            .Case("debug_info.dwo", &InfoDWOSection.Data)
+            .Case("debug_abbrev.dwo", &AbbrevDWOSection)
+            .Case("debug_str.dwo", &StringDWOSection)
+            .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
+            .Case("debug_addr", &AddrSection)
+            // Any more debug info sections go here.
+            .Default(0);
     if (Section) {
       *Section = data;
       if (name == "debug_ranges") {
