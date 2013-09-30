@@ -294,6 +294,8 @@ let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
 // Register loads.
 let canFoldAsLoad = 1, SimpleBDXLoad = 1 in {
   defm L : UnaryRXPair<"l", 0x58, 0xE358, load, GR32, 4>;
+  def LFH : UnaryRXY<"lfh", 0xE3CA, load, GRH32, 4>,
+            Requires<[FeatureHighWord]>;
   def LG : UnaryRXY<"lg", 0xE304, load, GR64, 8>;
 
   // These instructions are split after register allocation, so we don't
@@ -326,6 +328,8 @@ let Uses = [CC] in {
 // Register stores.
 let SimpleBDXStore = 1 in {
   defm ST : StoreRXPair<"st", 0x50, 0xE350, store, GR32, 4>;
+  def STFH : StoreRXY<"stfh", 0xE3CB, store, GRH32, 4>,
+             Requires<[FeatureHighWord]>;
   def STG : StoreRXY<"stg", 0xE324, store, GR64, 8>;
 
   // These instructions are split after register allocation, so we don't
@@ -361,7 +365,7 @@ let mayLoad = 1, mayStore = 1 in
   defm MVC : MemorySS<"mvc", 0xD2, z_mvc, z_mvc_loop>;
 
 // String moves.
-let mayLoad = 1, mayStore = 1, Defs = [CC], Uses = [R0W] in
+let mayLoad = 1, mayStore = 1, Defs = [CC], Uses = [R0L] in
   defm MVST : StringRRE<"mvst", 0xB255, z_stpcpy>;
 
 //===----------------------------------------------------------------------===//
@@ -393,7 +397,7 @@ let Defs = [CC], CCValues = 0xE, CompareZeroCCMask = 0xE in
 // Match 32-to-64-bit sign extensions in which the source is already
 // in a 64-bit register.
 def : Pat<(sext_inreg GR64:$src, i32),
-          (LGFR (EXTRACT_SUBREG GR64:$src, subreg_32bit))>;
+          (LGFR (EXTRACT_SUBREG GR64:$src, subreg_l32))>;
 
 // 32-bit extensions from memory.
 def  LB   : UnaryRXY<"lb", 0xE376, asextloadi8, GR32, 1>;
@@ -429,7 +433,7 @@ let neverHasSideEffects = 1 in {
 // Match 32-to-64-bit zero extensions in which the source is already
 // in a 64-bit register.
 def : Pat<(and GR64:$src, 0xffffffff),
-          (LLGFR (EXTRACT_SUBREG GR64:$src, subreg_32bit))>;
+          (LLGFR (EXTRACT_SUBREG GR64:$src, subreg_l32))>;
 
 // 32-bit extensions from memory.
 def LLC   : UnaryRXY<"llc", 0xE394, azextloadi8,  GR32, 1>;
@@ -449,7 +453,7 @@ def LLGFRL : UnaryRILPC<"llgfrl", 0xC4E, aligned_azextloadi32, GR64>;
 
 // Truncations of 64-bit registers to 32-bit registers.
 def : Pat<(i32 (trunc GR64:$src)),
-          (EXTRACT_SUBREG GR64:$src, subreg_32bit)>;
+          (EXTRACT_SUBREG GR64:$src, subreg_l32)>;
 
 // Truncations of 32-bit registers to memory.
 defm STC   : StoreRXPair<"stc", 0x42, 0xE372, truncstorei8,  GR32, 1>;
@@ -589,7 +593,7 @@ def IIHF : BinaryRIL<"iihf", 0xC08, inserthf, GR64, imm64hf32>;
 // An alternative model of inserthf, with the first operand being
 // a zero-extended value.
 def : Pat<(or (zext32 GR32:$src), imm64hf32:$imm),
-          (IIHF (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_32bit),
+          (IIHF (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_l32),
                 imm64hf32:$imm)>;
 
 //===----------------------------------------------------------------------===//
@@ -928,9 +932,9 @@ let Defs = [CC] in {
 let isCodeGenOnly = 1 in
   def RISBLG32 : RotateSelectRIEf<"risblg", 0xEC51, GR32, GR32>,
                  Requires<[FeatureHighWord]>;
-def RISBHG : RotateSelectRIEf<"risbhg", 0xEC5D, GR64, GR64>,
+def RISBHG : RotateSelectRIEf<"risbhg", 0xEC5D, GRH32, GR64>,
              Requires<[FeatureHighWord]>;
-def RISBLG : RotateSelectRIEf<"risblg", 0xEC51, GR64, GR64>,
+def RISBLG : RotateSelectRIEf<"risblg", 0xEC51, GR32, GR64>,
              Requires<[FeatureHighWord]>;
 
 // Rotate second operand left and perform a logical operation with selected
@@ -1023,7 +1027,7 @@ let mayLoad = 1, Defs = [CC] in
   defm CLC : MemorySS<"clc", 0xD5, z_clc, z_clc_loop>;
 
 // String comparison.
-let mayLoad = 1, Defs = [CC], Uses = [R0W] in
+let mayLoad = 1, Defs = [CC], Uses = [R0L] in
   defm CLST : StringRRE<"clst", 0xB25D, z_strcmp>;
 
 // Test under mask.
@@ -1184,11 +1188,11 @@ let Defs = [CC] in {
   def FLOGR : UnaryRRE<"flog", 0xB983, null_frag, GR128, GR64>;
 }
 def : Pat<(ctlz GR64:$src),
-          (EXTRACT_SUBREG (FLOGR GR64:$src), subreg_high)>;
+          (EXTRACT_SUBREG (FLOGR GR64:$src), subreg_h64)>;
 
 // Use subregs to populate the "don't care" bits in a 32-bit to 64-bit anyext.
 def : Pat<(i64 (anyext GR32:$src)),
-          (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_32bit)>;
+          (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_l32)>;
 
 // Extend GR32s and GR64s to GR128s.
 let usesCustomInserter = 1 in {
@@ -1198,7 +1202,7 @@ let usesCustomInserter = 1 in {
 }
 
 // Search a block of memory for a character.
-let mayLoad = 1, Defs = [CC], Uses = [R0W] in
+let mayLoad = 1, Defs = [CC], Uses = [R0L] in
   defm SRST : StringRRE<"srst", 0xb25e, z_search_string>;
 
 //===----------------------------------------------------------------------===//
