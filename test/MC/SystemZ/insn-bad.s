@@ -1390,6 +1390,11 @@
 	lb	%r0, -524289
 	lb	%r0, 524288
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: lbh	%r0, 0
+
+	lbh	%r0, 0
+
 #CHECK: error: invalid register pair
 #CHECK: lcxbr	%f0, %f2
 #CHECK: error: invalid register pair
@@ -1453,6 +1458,11 @@
 
 	ley	%f0, -524289
 	ley	%f0, 524288
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: lfh	%r0, 0
+
+	lfh	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: lg	%r0, -524289
@@ -1555,6 +1565,11 @@
 	lh	%r0, -1
 	lh	%r0, 4096
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: lhh	%r0, 0
+
+	lhh	%r0, 0
+
 #CHECK: error: invalid operand
 #CHECK: lhi	%r0, -32769
 #CHECK: error: invalid operand
@@ -1595,6 +1610,11 @@
 
 	llc	%r0, -524289
 	llc	%r0, 524288
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: llch	%r0, 0
+
+	llch	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: llgc	%r0, -524289
@@ -1655,6 +1675,11 @@
 
 	llh	%r0, -524289
 	llh	%r0, 524288
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: llhh	%r0, 0
+
+	llhh	%r0, 0
 
 #CHECK: error: offset out of range
 #CHECK: llhrl	%r0, -0x1000000002
@@ -2890,6 +2915,11 @@
 	stc	%r0, -1
 	stc	%r0, 4096
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: stch	%r0, 0
+
+	stch	%r0, 0
+
 #CHECK: error: invalid operand
 #CHECK: stcy	%r0, -524289
 #CHECK: error: invalid operand
@@ -2960,6 +2990,11 @@
 	sth	%r0, -1
 	sth	%r0, 4096
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: sthh	%r0, 0
+
+	sthh	%r0, 0
+
 #CHECK: error: offset out of range
 #CHECK: sthrl	%r0, -0x1000000002
 #CHECK: error: offset out of range
@@ -2981,6 +3016,11 @@
 
 	sthy	%r0, -524289
 	sthy	%r0, 524288
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: stfh	%r0, 0
+
+	stfh	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: stmg	%r0, %r0, -524289

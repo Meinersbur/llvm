@@ -198,8 +198,9 @@ let Defs = [CC] in {
 // Select instructions
 //===----------------------------------------------------------------------===//
 
-def Select32 : SelectWrapper<GR32>;
-def Select64 : SelectWrapper<GR64>;
+def Select32Mux : SelectWrapper<GRX32>, Requires<[FeatureHighWord]>;
+def Select32    : SelectWrapper<GR32>;
+def Select64    : SelectWrapper<GR64>;
 
 defm CondStore8  : CondStores<GR32, nonvolatile_truncstorei8,
                               nonvolatile_anyextloadi8, bdxaddr20only>;
@@ -254,6 +255,9 @@ def BASR  : InstRR<0x0D, (outs), (ins GR64:$R1, ADDR64:$R2),
 
 // Register moves.
 let neverHasSideEffects = 1 in {
+  // Expands to LR, RISBHG or RISBLG, depending on the choice of registers.
+  def LRMux : UnaryRRPseudo<"l", null_frag, GRX32, GRX32>,
+              Requires<[FeatureHighWord]>;
   def LR  : UnaryRR <"l",  0x18,   null_frag, GR32, GR32>;
   def LGR : UnaryRRE<"lg", 0xB904, null_frag, GR64, GR64>;
 }
@@ -275,7 +279,10 @@ let Uses = [CC] in {
 // Immediate moves.
 let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
     isReMaterializable = 1 in {
-  // 16-bit sign-extended immediates.
+  // 16-bit sign-extended immediates.  LHIMux expands to LHI or IIHF,
+  // deopending on the choice of register.
+  def LHIMux : UnaryRIPseudo<bitconvert, GRX32, imm32sx16>,
+               Requires<[FeatureHighWord]>;
   def LHI  : UnaryRI<"lhi",  0xA78, bitconvert, GR32, imm32sx16>;
   def LGHI : UnaryRI<"lghi", 0xA79, bitconvert, GR64, imm64sx16>;
 
@@ -293,7 +300,12 @@ let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
 
 // Register loads.
 let canFoldAsLoad = 1, SimpleBDXLoad = 1 in {
+  // Expands to L, LY or LFH, depending on the choice of register.
+  def LMux : UnaryRXYPseudo<"l", load, GRX32, 4>,
+             Requires<[FeatureHighWord]>;
   defm L : UnaryRXPair<"l", 0x58, 0xE358, load, GR32, 4>;
+  def LFH : UnaryRXY<"lfh", 0xE3CA, load, GRH32, 4>,
+            Requires<[FeatureHighWord]>;
   def LG : UnaryRXY<"lg", 0xE304, load, GR64, 8>;
 
   // These instructions are split after register allocation, so we don't
@@ -325,7 +337,12 @@ let Uses = [CC] in {
 
 // Register stores.
 let SimpleBDXStore = 1 in {
+  // Expands to ST, STY or STFH, depending on the choice of register.
+  def STMux : StoreRXYPseudo<store, GRX32, 4>,
+              Requires<[FeatureHighWord]>;
   defm ST : StoreRXPair<"st", 0x50, 0xE350, store, GR32, 4>;
+  def STFH : StoreRXY<"stfh", 0xE3CB, store, GRH32, 4>,
+             Requires<[FeatureHighWord]>;
   def STG : StoreRXY<"stg", 0xE324, store, GR64, 8>;
 
   // These instructions are split after register allocation, so we don't
@@ -395,9 +412,21 @@ let Defs = [CC], CCValues = 0xE, CompareZeroCCMask = 0xE in
 def : Pat<(sext_inreg GR64:$src, i32),
           (LGFR (EXTRACT_SUBREG GR64:$src, subreg_l32))>;
 
-// 32-bit extensions from memory.
-def  LB   : UnaryRXY<"lb", 0xE376, asextloadi8, GR32, 1>;
+// 32-bit extensions from 8-bit memory.  LBMux expands to LB or LBH,
+// depending on the choice of register.
+def LBMux : UnaryRXYPseudo<"lb", asextloadi8, GRX32, 1>,
+            Requires<[FeatureHighWord]>;
+def LB  : UnaryRXY<"lb", 0xE376, asextloadi8, GR32, 1>;
+def LBH : UnaryRXY<"lbh", 0xE3C0, asextloadi8, GRH32, 1>,
+          Requires<[FeatureHighWord]>;
+
+// 32-bit extensions from 16-bit memory.  LHMux expands to LH or LHH,
+// depending on the choice of register.
+def LHMux : UnaryRXYPseudo<"lh", asextloadi16, GRX32, 2>,
+            Requires<[FeatureHighWord]>;
 defm LH   : UnaryRXPair<"lh", 0x48, 0xE378, asextloadi16, GR32, 2>;
+def  LHH  : UnaryRXY<"lhh", 0xE3C4, asextloadi16, GRH32, 2>,
+            Requires<[FeatureHighWord]>;
 def  LHRL : UnaryRILPC<"lhrl", 0xC45, aligned_asextloadi16, GR32>;
 
 // 64-bit extensions from memory.
@@ -415,8 +444,14 @@ let Defs = [CC], CCValues = 0xE, CompareZeroCCMask = 0xE in
 
 // 32-bit extensions from registers.
 let neverHasSideEffects = 1 in {
-  def LLCR : UnaryRRE<"llc", 0xB994, zext8,  GR32, GR32>;
-  def LLHR : UnaryRRE<"llh", 0xB995, zext16, GR32, GR32>;
+  // Expands to LLCR or RISB[LH]G, depending on the choice of registers.
+  def LLCRMux : UnaryRRPseudo<"llc", zext8, GRX32, GRX32>,
+                Requires<[FeatureHighWord]>;
+  def LLCR    : UnaryRRE<"llc", 0xB994, zext8,  GR32, GR32>;
+  // Expands to LLHR or RISB[LH]G, depending on the choice of registers.
+  def LLHRMux : UnaryRRPseudo<"llh", zext16, GRX32, GRX32>,
+                Requires<[FeatureHighWord]>;
+  def LLHR    : UnaryRRE<"llh", 0xB995, zext16, GR32, GR32>;
 }
 
 // 64-bit extensions from registers.
@@ -431,9 +466,21 @@ let neverHasSideEffects = 1 in {
 def : Pat<(and GR64:$src, 0xffffffff),
           (LLGFR (EXTRACT_SUBREG GR64:$src, subreg_l32))>;
 
-// 32-bit extensions from memory.
-def LLC   : UnaryRXY<"llc", 0xE394, azextloadi8,  GR32, 1>;
+// 32-bit extensions from 8-bit memory.  LLCMux expands to LLC or LLCH,
+// depending on the choice of register.
+def LLCMux : UnaryRXYPseudo<"llc", azextloadi8, GRX32, 1>,
+             Requires<[FeatureHighWord]>;
+def LLC  : UnaryRXY<"llc", 0xE394, azextloadi8, GR32, 1>;
+def LLCH : UnaryRXY<"llch", 0xE3C2, azextloadi8, GR32, 1>,
+           Requires<[FeatureHighWord]>;
+
+// 32-bit extensions from 16-bit memory.  LLHMux expands to LLH or LLHH,
+// depending on the choice of register.
+def LLHMux : UnaryRXYPseudo<"llh", azextloadi16, GRX32, 2>,
+             Requires<[FeatureHighWord]>;
 def LLH   : UnaryRXY<"llh", 0xE395, azextloadi16, GR32, 2>;
+def LLHH  : UnaryRXY<"llhh", 0xE3C6, azextloadi16, GR32, 2>,
+            Requires<[FeatureHighWord]>;
 def LLHRL : UnaryRILPC<"llhrl", 0xC42, aligned_azextloadi16, GR32>;
 
 // 64-bit extensions from memory.
@@ -451,10 +498,22 @@ def LLGFRL : UnaryRILPC<"llgfrl", 0xC4E, aligned_azextloadi32, GR64>;
 def : Pat<(i32 (trunc GR64:$src)),
           (EXTRACT_SUBREG GR64:$src, subreg_l32)>;
 
-// Truncations of 32-bit registers to memory.
-defm STC   : StoreRXPair<"stc", 0x42, 0xE372, truncstorei8,  GR32, 1>;
-defm STH   : StoreRXPair<"sth", 0x40, 0xE370, truncstorei16, GR32, 2>;
-def  STHRL : StoreRILPC<"sthrl", 0xC47, aligned_truncstorei16, GR32>;
+// Truncations of 32-bit registers to 8-bit memory.  STCMux expands to
+// STC, STCY or STCH, depending on the choice of register.
+def STCMux : StoreRXYPseudo<truncstorei8, GRX32, 1>,
+             Requires<[FeatureHighWord]>;
+defm STC : StoreRXPair<"stc", 0x42, 0xE372, truncstorei8, GR32, 1>;
+def STCH : StoreRXY<"stch", 0xE3C3, truncstorei8, GRH32, 1>,
+           Requires<[FeatureHighWord]>;
+
+// Truncations of 32-bit registers to 16-bit memory.  STHMux expands to
+// STH, STHY or STHH, depending on the choice of register.
+def STHMux : StoreRXYPseudo<truncstorei16, GRX32, 1>,
+             Requires<[FeatureHighWord]>;
+defm STH : StoreRXPair<"sth", 0x40, 0xE370, truncstorei16, GR32, 2>;
+def STHH : StoreRXY<"sthh", 0xE3C7, truncstorei16, GRH32, 2>,
+           Requires<[FeatureHighWord]>;
+def STHRL : StoreRILPC<"sthrl", 0xC47, aligned_truncstorei16, GR32>;
 
 // Truncations of 64-bit registers to memory.
 defm : StoreGR64Pair<STC, STCY, truncstorei8>;
@@ -570,27 +629,39 @@ defm : InsertMem<"inserti8", ICY, GR64, azextloadi8, bdxaddr20pair>;
 // Insertions of a 16-bit immediate, leaving other bits unaffected.
 // We don't have or_as_insert equivalents of these operations because
 // OI is available instead.
+//
+// IIxMux expands to II[LH]x, depending on the choice of register.
+def IILMux : BinaryRIPseudo<insertll, GRX32, imm32ll16>,
+             Requires<[FeatureHighWord]>;
+def IIHMux : BinaryRIPseudo<insertlh, GRX32, imm32lh16>,
+             Requires<[FeatureHighWord]>;
 def IILL : BinaryRI<"iill", 0xA53, insertll, GR32, imm32ll16>;
 def IILH : BinaryRI<"iilh", 0xA52, insertlh, GR32, imm32lh16>;
+def IIHL : BinaryRI<"iihl", 0xA51, insertll, GRH32, imm32ll16>;
+def IIHH : BinaryRI<"iihh", 0xA50, insertlh, GRH32, imm32lh16>;
 def IILL64 : BinaryAliasRI<insertll, GR64, imm64ll16>;
 def IILH64 : BinaryAliasRI<insertlh, GR64, imm64lh16>;
-def IIHL : BinaryRI<"iihl", 0xA51, inserthl, GR64, imm64hl16>;
-def IIHH : BinaryRI<"iihh", 0xA50, inserthh, GR64, imm64hh16>;
+def IIHL64 : BinaryAliasRI<inserthl, GR64, imm64hl16>;
+def IIHH64 : BinaryAliasRI<inserthh, GR64, imm64hh16>;
 
 // ...likewise for 32-bit immediates.  For GR32s this is a general
 // full-width move.  (We use IILF rather than something like LLILF
 // for 32-bit moves because IILF leaves the upper 32 bits of the
 // GR64 unchanged.)
-let isAsCheapAsAMove = 1, isMoveImm = 1, isReMaterializable = 1 in
+let isAsCheapAsAMove = 1, isMoveImm = 1, isReMaterializable = 1 in {
+  def IIFMux : UnaryRIPseudo<bitconvert, GRX32, uimm32>,
+               Requires<[FeatureHighWord]>;
   def IILF : UnaryRIL<"iilf", 0xC09, bitconvert, GR32, uimm32>;
+  def IIHF : UnaryRIL<"iihf", 0xC08, bitconvert, GRH32, uimm32>;
+}
 def IILF64 : BinaryAliasRIL<insertlf, GR64, imm64lf32>;
-def IIHF : BinaryRIL<"iihf", 0xC08, inserthf, GR64, imm64hf32>;
+def IIHF64 : BinaryAliasRIL<inserthf, GR64, imm64hf32>;
 
 // An alternative model of inserthf, with the first operand being
 // a zero-extended value.
 def : Pat<(or (zext32 GR32:$src), imm64hf32:$imm),
-          (IIHF (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_l32),
-                imm64hf32:$imm)>;
+          (IIHF64 (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$src, subreg_l32),
+                  imm64hf32:$imm)>;
 
 //===----------------------------------------------------------------------===//
 // Addition
@@ -771,20 +842,33 @@ let Defs = [CC] in {
 
   // ORs of a 16-bit immediate, leaving other bits unaffected.
   // The CC result only reflects the 16-bit field, not the full register.
+  //
+  // OIxMux expands to OI[LH]x, depending on the choice of register.
+  def OILMux : BinaryRIPseudo<or, GRX32, imm32ll16>,
+               Requires<[FeatureHighWord]>;
+  def OIHMux : BinaryRIPseudo<or, GRX32, imm32lh16>,
+               Requires<[FeatureHighWord]>;
   def OILL : BinaryRI<"oill", 0xA5B, or, GR32, imm32ll16>;
   def OILH : BinaryRI<"oilh", 0xA5A, or, GR32, imm32lh16>;
+  def OIHL : BinaryRI<"oihl", 0xA59, or, GRH32, imm32ll16>;
+  def OIHH : BinaryRI<"oihh", 0xA58, or, GRH32, imm32lh16>;
   def OILL64 : BinaryAliasRI<or, GR64, imm64ll16>;
   def OILH64 : BinaryAliasRI<or, GR64, imm64lh16>;
-  def OIHL : BinaryRI<"oihl", 0xA59, or, GR64, imm64hl16>;
-  def OIHH : BinaryRI<"oihh", 0xA58, or, GR64, imm64hh16>;
+  def OIHL64 : BinaryAliasRI<or, GR64, imm64hl16>;
+  def OIHH64 : BinaryAliasRI<or, GR64, imm64hh16>;
 
   // ORs of a 32-bit immediate, leaving other bits unaffected.
   // The CC result only reflects the 32-bit field, which means we can
   // use it as a zero indicator for i32 operations but not otherwise.
-  let CCValues = 0xC, CompareZeroCCMask = 0x8 in
+  let CCValues = 0xC, CompareZeroCCMask = 0x8 in {
+    // Expands to OILF or OIHF, depending on the choice of register.
+    def OIFMux : BinaryRIPseudo<or, GRX32, uimm32>,
+                 Requires<[FeatureHighWord]>;
     def OILF : BinaryRIL<"oilf", 0xC0D, or, GR32, uimm32>;
+    def OIHF : BinaryRIL<"oihf", 0xC0C, or, GRH32, uimm32>;
+  }
   def OILF64 : BinaryAliasRIL<or, GR64, imm64lf32>;
-  def OIHF : BinaryRIL<"oihf", 0xC0C, or, GR64, imm64hf32>;
+  def OIHF64 : BinaryAliasRIL<or, GR64, imm64hf32>;
 
   // ORs of memory.
   let CCValues = 0xC, CompareZeroCCMask = 0x8 in {
@@ -925,12 +1009,13 @@ let Defs = [CC] in {
 
 // Forms of RISBG that only affect one word of the destination register.
 // They do not set CC.
-let isCodeGenOnly = 1 in
-  def RISBLG32 : RotateSelectRIEf<"risblg", 0xEC51, GR32, GR32>,
-                 Requires<[FeatureHighWord]>;
-def RISBHG : RotateSelectRIEf<"risbhg", 0xEC5D, GRH32, GR64>,
-             Requires<[FeatureHighWord]>;
+def RISBLL : RotateSelectAliasRIEf<GR32,  GR32>,  Requires<[FeatureHighWord]>;
+def RISBLH : RotateSelectAliasRIEf<GR32,  GRH32>, Requires<[FeatureHighWord]>;
+def RISBHL : RotateSelectAliasRIEf<GRH32, GR32>,  Requires<[FeatureHighWord]>;
+def RISBHH : RotateSelectAliasRIEf<GRH32, GRH32>, Requires<[FeatureHighWord]>;
 def RISBLG : RotateSelectRIEf<"risblg", 0xEC51, GR32, GR64>,
+             Requires<[FeatureHighWord]>;
+def RISBHG : RotateSelectRIEf<"risbhg", 0xEC5D, GRH32, GR64>,
              Requires<[FeatureHighWord]>;
 
 // Rotate second operand left and perform a logical operation with selected
@@ -1090,10 +1175,10 @@ def ATOMIC_LOAD_OILF    : AtomicLoadBinaryImm32<atomic_load_or_32, uimm32>;
 def ATOMIC_LOAD_OGR     : AtomicLoadBinaryReg64<atomic_load_or_64>;
 def ATOMIC_LOAD_OILL64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64ll16>;
 def ATOMIC_LOAD_OILH64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64lh16>;
-def ATOMIC_LOAD_OIHL    : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hl16>;
-def ATOMIC_LOAD_OIHH    : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hh16>;
+def ATOMIC_LOAD_OIHL64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hl16>;
+def ATOMIC_LOAD_OIHH64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hh16>;
 def ATOMIC_LOAD_OILF64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64lf32>;
-def ATOMIC_LOAD_OIHF    : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hf32>;
+def ATOMIC_LOAD_OIHF64  : AtomicLoadBinaryImm64<atomic_load_or_64, imm64hf32>;
 
 def ATOMIC_LOADW_XR     : AtomicLoadWBinaryReg<z_atomic_loadw_xor>;
 def ATOMIC_LOADW_XILF   : AtomicLoadWBinaryImm<z_atomic_loadw_xor, uimm32>;

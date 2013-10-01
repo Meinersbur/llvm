@@ -51,7 +51,10 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   MVT PtrVT = getPointerTy();
 
   // Set up the register classes.
-  addRegisterClass(MVT::i32,  &SystemZ::GR32BitRegClass);
+  if (Subtarget.hasHighWord())
+    addRegisterClass(MVT::i32, &SystemZ::GRX32BitRegClass);
+  else
+    addRegisterClass(MVT::i32, &SystemZ::GR32BitRegClass);
   addRegisterClass(MVT::i64,  &SystemZ::GR64BitRegClass);
   addRegisterClass(MVT::f32,  &SystemZ::FP32BitRegClass);
   addRegisterClass(MVT::f64,  &SystemZ::FP64BitRegClass);
@@ -338,6 +341,7 @@ SystemZTargetLowering::getConstraintType(const std::string &Constraint) const {
     case 'a': // Address register
     case 'd': // Data register (equivalent to 'r')
     case 'f': // Floating-point register
+    case 'h': // High-part register
     case 'r': // General-purpose register
       return C_RegisterClass;
 
@@ -380,6 +384,7 @@ getSingleConstraintMatchWeight(AsmOperandInfo &info,
 
   case 'a': // Address register
   case 'd': // Data register (equivalent to 'r')
+  case 'h': // High-part register
   case 'r': // General-purpose register
     if (CallOperandVal->getType()->isIntegerTy())
       weight = CW_Register;
@@ -459,6 +464,9 @@ getRegForInlineAsmConstraint(const std::string &Constraint, MVT VT) const {
       else if (VT == MVT::i128)
         return std::make_pair(0U, &SystemZ::ADDR128BitRegClass);
       return std::make_pair(0U, &SystemZ::ADDR32BitRegClass);
+
+    case 'h': // High-part register (an LLVM extension)
+      return std::make_pair(0U, &SystemZ::GRH32BitRegClass);
 
     case 'f': // Floating-point register
       if (VT == MVT::f64)
@@ -733,7 +741,7 @@ static bool canUseSiblingCall(CCState ArgCCInfo,
     if (!VA.isRegLoc())
       return false;
     unsigned Reg = VA.getLocReg();
-    if (Reg == SystemZ::R6L || Reg == SystemZ::R6D)
+    if (Reg == SystemZ::R6H || Reg == SystemZ::R6L || Reg == SystemZ::R6D)
       return false;
   }
   return true;
@@ -2866,6 +2874,7 @@ SystemZTargetLowering::emitStringWrapper(MachineInstr *MI,
 MachineBasicBlock *SystemZTargetLowering::
 EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   switch (MI->getOpcode()) {
+  case SystemZ::Select32Mux:
   case SystemZ::Select32:
   case SystemZ::SelectF32:
   case SystemZ::Select64:
@@ -2981,14 +2990,14 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OILL64, 64);
   case SystemZ::ATOMIC_LOAD_OILH64:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH64, 64);
-  case SystemZ::ATOMIC_LOAD_OIHL:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHL, 64);
-  case SystemZ::ATOMIC_LOAD_OIHH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHH, 64);
+  case SystemZ::ATOMIC_LOAD_OIHL64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHL64, 64);
+  case SystemZ::ATOMIC_LOAD_OIHH64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHH64, 64);
   case SystemZ::ATOMIC_LOAD_OILF64:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OILF64, 64);
-  case SystemZ::ATOMIC_LOAD_OIHF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHF, 64);
+  case SystemZ::ATOMIC_LOAD_OIHF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHF64, 64);
 
   case SystemZ::ATOMIC_LOADW_XR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XR, 0);

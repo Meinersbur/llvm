@@ -589,27 +589,19 @@ static int readOpcode(struct InternalInstruction* insn) {
     default:
       dbgprintf(insn, "Unhandled m-mmmm field for instruction (0x%hhx)", mmmmmFromVEX2of3(insn->vexPrefix[1]));
       return -1;
-    case 0:
-      break;
     case VEX_LOB_0F:
-      insn->twoByteEscape = 0x0f;
       insn->opcodeType = TWOBYTE;
       return consumeByte(insn, &insn->opcode);
     case VEX_LOB_0F38:
-      insn->twoByteEscape = 0x0f;
-      insn->threeByteEscape = 0x38;
       insn->opcodeType = THREEBYTE_38;
       return consumeByte(insn, &insn->opcode);
     case VEX_LOB_0F3A:
-      insn->twoByteEscape = 0x0f;
-      insn->threeByteEscape = 0x3a;
       insn->opcodeType = THREEBYTE_3A;
       return consumeByte(insn, &insn->opcode);
     }
   }
   else if (insn->vexSize == 2)
   {
-    insn->twoByteEscape = 0x0f;
     insn->opcodeType = TWOBYTE;
     return consumeByte(insn, &insn->opcode);
   }
@@ -620,15 +612,11 @@ static int readOpcode(struct InternalInstruction* insn) {
   if (current == 0x0f) {
     dbgprintf(insn, "Found a two-byte escape prefix (0x%hhx)", current);
 
-    insn->twoByteEscape = current;
-
     if (consumeByte(insn, &current))
       return -1;
 
     if (current == 0x38) {
       dbgprintf(insn, "Found a three-byte escape prefix (0x%hhx)", current);
-
-      insn->threeByteEscape = current;
 
       if (consumeByte(insn, &current))
         return -1;
@@ -637,8 +625,6 @@ static int readOpcode(struct InternalInstruction* insn) {
     } else if (current == 0x3a) {
       dbgprintf(insn, "Found a three-byte escape prefix (0x%hhx)", current);
 
-      insn->threeByteEscape = current;
-
       if (consumeByte(insn, &current))
         return -1;
 
@@ -646,16 +632,12 @@ static int readOpcode(struct InternalInstruction* insn) {
     } else if (current == 0xa6) {
       dbgprintf(insn, "Found a three-byte escape prefix (0x%hhx)", current);
 
-      insn->threeByteEscape = current;
-
       if (consumeByte(insn, &current))
         return -1;
 
       insn->opcodeType = THREEBYTE_A6;
     } else if (current == 0xa7) {
       dbgprintf(insn, "Found a three-byte escape prefix (0x%hhx)", current);
-
-      insn->threeByteEscape = current;
 
       if (consumeByte(insn, &current))
         return -1;
