@@ -128,6 +128,11 @@
 	ahy	%r0, -524289
 	ahy	%r0, 524288
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: aih	%r0, 0
+
+	aih	%r0, 0
+
 #CHECK: error: invalid operand
 #CHECK: al	%r0, -1
 #CHECK: error: invalid operand
@@ -607,6 +612,11 @@
 	ch	%r0, -1
 	ch	%r0, 4096
 
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: chf	%r0, 0
+
+	chf	%r0, 0
+
 #CHECK: error: invalid operand
 #CHECK: chhsi	-1, 0
 #CHECK: error: invalid operand
@@ -673,6 +683,11 @@
 
 	chy	%r0, -524289
 	chy	%r0, 524288
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: cih	%r0, 0
+
+	cih	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: cij	%r0, -129, 0, 0
@@ -755,6 +770,11 @@
 	clc	0(%r1,%r2), 0(%r1)
 	clc	0(1,%r2), 0(%r1,%r2)
 	clc	0(-), 0
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: clhf	%r0, 0
+
+	clhf	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: clfhsi	-1, 0
@@ -955,6 +975,11 @@
 	cli	0(%r1,%r2), 0
 	cli	0, -1
 	cli	0, 256
+
+#CHECK: error: {{(instruction requires: high-word)?}}
+#CHECK: clih	%r0, 0
+
+	clih	%r0, 0
 
 #CHECK: error: invalid operand
 #CHECK: clij	%r0, -1, 0, 0

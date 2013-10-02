@@ -1561,11 +1561,19 @@ SDValue SystemZTargetLowering::lowerBITCAST(SDValue Op,
   EVT InVT = In.getValueType();
   EVT ResVT = Op.getValueType();
 
-  SDValue Shift32 = DAG.getConstant(32, MVT::i64);
   if (InVT == MVT::i32 && ResVT == MVT::f32) {
-    SDValue In64 = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i64, In);
-    SDValue Shift = DAG.getNode(ISD::SHL, DL, MVT::i64, In64, Shift32);
-    SDValue Out64 = DAG.getNode(ISD::BITCAST, DL, MVT::f64, Shift);
+    SDValue In64;
+    if (Subtarget.hasHighWord()) {
+      SDNode *U64 = DAG.getMachineNode(TargetOpcode::IMPLICIT_DEF, DL,
+                                       MVT::i64);
+      In64 = DAG.getTargetInsertSubreg(SystemZ::subreg_h32, DL,
+                                       MVT::i64, SDValue(U64, 0), In);
+    } else {
+      In64 = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i64, In);
+      In64 = DAG.getNode(ISD::SHL, DL, MVT::i64, In64,
+                         DAG.getConstant(32, MVT::i64));
+    }
+    SDValue Out64 = DAG.getNode(ISD::BITCAST, DL, MVT::f64, In64);
     return DAG.getTargetExtractSubreg(SystemZ::subreg_h32,
                                       DL, MVT::f32, Out64);
   }
@@ -1574,9 +1582,12 @@ SDValue SystemZTargetLowering::lowerBITCAST(SDValue Op,
     SDValue In64 = DAG.getTargetInsertSubreg(SystemZ::subreg_h32, DL,
                                              MVT::f64, SDValue(U64, 0), In);
     SDValue Out64 = DAG.getNode(ISD::BITCAST, DL, MVT::i64, In64);
-    SDValue Shift = DAG.getNode(ISD::SRL, DL, MVT::i64, Out64, Shift32);
-    SDValue Out = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Shift);
-    return Out;
+    if (Subtarget.hasHighWord())
+      return DAG.getTargetExtractSubreg(SystemZ::subreg_h32, DL,
+                                        MVT::i32, Out64);
+    SDValue Shift = DAG.getNode(ISD::SRL, DL, MVT::i64, Out64,
+                                DAG.getConstant(32, MVT::i64));
+    return DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Shift);
   }
   llvm_unreachable("Unexpected bitcast combination");
 }
@@ -2882,6 +2893,14 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   case SystemZ::SelectF128:
     return emitSelect(MI, MBB);
 
+  case SystemZ::CondStore8Mux:
+    return emitCondStore(MI, MBB, SystemZ::STCMux, 0, false);
+  case SystemZ::CondStore8MuxInv:
+    return emitCondStore(MI, MBB, SystemZ::STCMux, 0, true);
+  case SystemZ::CondStore16Mux:
+    return emitCondStore(MI, MBB, SystemZ::STHMux, 0, false);
+  case SystemZ::CondStore16MuxInv:
+    return emitCondStore(MI, MBB, SystemZ::STHMux, 0, true);
   case SystemZ::CondStore8:
     return emitCondStore(MI, MBB, SystemZ::STC, 0, false);
   case SystemZ::CondStore8Inv:
@@ -2963,14 +2982,14 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL64, 64);
   case SystemZ::ATOMIC_LOAD_NILH64:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH64, 64);
-  case SystemZ::ATOMIC_LOAD_NIHL:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL, 64);
-  case SystemZ::ATOMIC_LOAD_NIHH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH, 64);
+  case SystemZ::ATOMIC_LOAD_NIHL64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL64, 64);
+  case SystemZ::ATOMIC_LOAD_NIHH64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH64, 64);
   case SystemZ::ATOMIC_LOAD_NILF64:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF64, 64);
-  case SystemZ::ATOMIC_LOAD_NIHF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF, 64);
+  case SystemZ::ATOMIC_LOAD_NIHF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF64, 64);
 
   case SystemZ::ATOMIC_LOADW_OR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OR, 0);
@@ -3011,8 +3030,8 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XGR, 64);
   case SystemZ::ATOMIC_LOAD_XILF64:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF64, 64);
-  case SystemZ::ATOMIC_LOAD_XIHF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::XIHF, 64);
+  case SystemZ::ATOMIC_LOAD_XIHF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::XIHF64, 64);
 
   case SystemZ::ATOMIC_LOADW_NRi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NR, 0, true);
@@ -3032,14 +3051,14 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL64, 64, true);
   case SystemZ::ATOMIC_LOAD_NILH64i:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH64, 64, true);
-  case SystemZ::ATOMIC_LOAD_NIHLi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL, 64, true);
-  case SystemZ::ATOMIC_LOAD_NIHHi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH, 64, true);
+  case SystemZ::ATOMIC_LOAD_NIHL64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL64, 64, true);
+  case SystemZ::ATOMIC_LOAD_NIHH64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH64, 64, true);
   case SystemZ::ATOMIC_LOAD_NILF64i:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF64, 64, true);
-  case SystemZ::ATOMIC_LOAD_NIHFi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF, 64, true);
+  case SystemZ::ATOMIC_LOAD_NIHF64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF64, 64, true);
 
   case SystemZ::ATOMIC_LOADW_MIN:
     return emitAtomicLoadMinMax(MI, MBB, SystemZ::CR,

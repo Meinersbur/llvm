@@ -1355,7 +1355,7 @@ class UnaryRIPseudo<SDPatternOperator operator, RegisterOperand cls,
   : Pseudo<(outs cls:$R1), (ins imm:$I2),
            [(set cls:$R1, (operator imm:$I2))]>;
 
-// Like UnaryRXY, but expanded after RA depending on the choice of registers.
+// Like UnaryRXY, but expanded after RA depending on the choice of register.
 class UnaryRXYPseudo<string key, SDPatternOperator operator,
                      RegisterOperand cls, bits<5> bytes,
                      AddressingMode mode = bdxaddr20only>
@@ -1386,7 +1386,43 @@ class BinaryRIPseudo<SDPatternOperator operator, RegisterOperand cls,
   let Constraints = "$R1 = $R1src";
 }
 
-// Like StoreRXY, but expanded after RA depending on the choice of registers.
+// Like BinaryRIE, but expanded after RA depending on the choice of register.
+class BinaryRIEPseudo<SDPatternOperator operator, RegisterOperand cls,
+                      Immediate imm>
+  : Pseudo<(outs cls:$R1), (ins cls:$R3, imm:$I2),
+           [(set cls:$R1, (operator cls:$R3, imm:$I2))]>;
+
+// Like BinaryRIAndK, but expanded after RA depending on the choice of register.
+multiclass BinaryRIAndKPseudo<string key, SDPatternOperator operator,
+                              RegisterOperand cls, Immediate imm> {
+  let NumOpsKey = key in {
+    let NumOpsValue = "3" in
+      def K : BinaryRIEPseudo<null_frag, cls, imm>,
+              Requires<[FeatureHighWord, FeatureDistinctOps]>;
+    let NumOpsValue = "2", isConvertibleToThreeAddress = 1 in
+      def "" : BinaryRIPseudo<operator, cls, imm>,
+               Requires<[FeatureHighWord]>;
+  }
+}
+
+// Like CompareRI, but expanded after RA depending on the choice of register.
+class CompareRIPseudo<SDPatternOperator operator, RegisterOperand cls,
+                      Immediate imm>
+  : Pseudo<(outs), (ins cls:$R1, imm:$I2), [(operator cls:$R1, imm:$I2)]>;
+
+// Like CompareRXY, but expanded after RA depending on the choice of register.
+class CompareRXYPseudo<SDPatternOperator operator, RegisterOperand cls,
+                       SDPatternOperator load, bits<5> bytes,
+                       AddressingMode mode = bdxaddr20only>
+  : Pseudo<(outs), (ins cls:$R1, mode:$XBD2),
+           [(operator cls:$R1, (load mode:$XBD2))]> {
+  let mayLoad = 1;
+  let Has20BitOffset = 1;
+  let HasIndex = 1;
+  let AccessBytes = bytes;
+}
+
+// Like StoreRXY, but expanded after RA depending on the choice of register.
 class StoreRXYPseudo<SDPatternOperator operator, RegisterOperand cls,
                      bits<5> bytes, AddressingMode mode = bdxaddr20only>
   : Pseudo<(outs), (ins cls:$R1, mode:$XBD2),
@@ -1395,6 +1431,16 @@ class StoreRXYPseudo<SDPatternOperator operator, RegisterOperand cls,
   let Has20BitOffset = 1;
   let HasIndex = 1;
   let AccessBytes = bytes;
+}
+
+// Like RotateSelectRIEf, but expanded after RA depending on the choice
+// of registers.
+class RotateSelectRIEfPseudo<RegisterOperand cls1, RegisterOperand cls2>
+  : Pseudo<(outs cls1:$R1),
+           (ins cls1:$R1src, cls2:$R2, uimm8:$I3, uimm8:$I4, uimm8zx6:$I5),
+           []> {
+  let Constraints = "$R1 = $R1src";
+  let DisableEncoding = "$R1src";
 }
 
 // Implements "$dst = $cc & (8 >> CC) ? $src1 : $src2", where CC is

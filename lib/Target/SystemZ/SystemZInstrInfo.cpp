@@ -107,6 +107,28 @@ void SystemZInstrInfo::expandRIPseudo(MachineInstr *MI, unsigned LowOpcode,
     MI->getOperand(1).setImm(uint32_t(MI->getOperand(1).getImm()));
 }
 
+// MI is a three-operand RIE-style pseudo instruction.  Replace it with
+// LowOpcode3 if the registers are both low GR32s, otherwise use a move
+// followed by HighOpcode or LowOpcode, depending on whether the target
+// is a high or low GR32.
+void SystemZInstrInfo::expandRIEPseudo(MachineInstr *MI, unsigned LowOpcode,
+                                       unsigned LowOpcodeK,
+                                       unsigned HighOpcode) const {
+  unsigned DestReg = MI->getOperand(0).getReg();
+  unsigned SrcReg = MI->getOperand(1).getReg();
+  bool DestIsHigh = isHighReg(DestReg);
+  bool SrcIsHigh = isHighReg(SrcReg);
+  if (!DestIsHigh && !SrcIsHigh)
+    MI->setDesc(get(LowOpcodeK));
+  else {
+    emitGRX32Move(*MI->getParent(), MI, MI->getDebugLoc(),
+                  DestReg, SrcReg, SystemZ::LR, 32,
+                  MI->getOperand(1).isKill());
+    MI->setDesc(get(DestIsHigh ? HighOpcode : LowOpcode));
+    MI->getOperand(1).setReg(DestReg);
+  }
+}
+
 // MI is an RXY-style pseudo instruction.  Replace it with LowOpcode
 // if the first operand is a low GR32 and HighOpcode if the first operand
 // is a high GR32.
@@ -616,15 +638,15 @@ namespace {
 
 static LogicOp interpretAndImmediate(unsigned Opcode) {
   switch (Opcode) {
-  case SystemZ::NILL:   return LogicOp(32,  0, 16);
-  case SystemZ::NILH:   return LogicOp(32, 16, 16);
+  case SystemZ::NILMux: return LogicOp(32,  0, 16);
+  case SystemZ::NIHMux: return LogicOp(32, 16, 16);
   case SystemZ::NILL64: return LogicOp(64,  0, 16);
   case SystemZ::NILH64: return LogicOp(64, 16, 16);
-  case SystemZ::NIHL:   return LogicOp(64, 32, 16);
-  case SystemZ::NIHH:   return LogicOp(64, 48, 16);
-  case SystemZ::NILF:   return LogicOp(32,  0, 32);
+  case SystemZ::NIHL64: return LogicOp(64, 32, 16);
+  case SystemZ::NIHH64: return LogicOp(64, 48, 16);
+  case SystemZ::NIFMux: return LogicOp(32,  0, 32);
   case SystemZ::NILF64: return LogicOp(64,  0, 32);
-  case SystemZ::NIHF:   return LogicOp(64, 32, 32);
+  case SystemZ::NIHF64: return LogicOp(64, 32, 32);
   default:              return LogicOp();
   }
 }
@@ -651,6 +673,7 @@ SystemZInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
                                         LiveVariables *LV) const {
   MachineInstr *MI = MBBI;
   MachineBasicBlock *MBB = MI->getParent();
+  MachineRegisterInfo &MRI = MBB->getParent()->getRegInfo();
 
   unsigned Opcode = MI->getOpcode();
   unsigned NumOps = MI->getNumOperands();
@@ -660,10 +683,23 @@ SystemZInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
   // because it tends to be shorter and because some instructions
   // have memory forms that can be used during spilling.
   if (TM.getSubtargetImpl()->hasDistinctOps()) {
+    MachineOperand &Dest = MI->getOperand(0);
+    MachineOperand &Src = MI->getOperand(1);
+    unsigned DestReg = Dest.getReg();
+    unsigned SrcReg = Src.getReg();
+    // AHIMux is only really a three-operand instruction when both operands
+    // are low registers.  Try to constrain both operands to be low if
+    // possible.
+    if (Opcode == SystemZ::AHIMux &&
+        TargetRegisterInfo::isVirtualRegister(DestReg) &&
+        TargetRegisterInfo::isVirtualRegister(SrcReg) &&
+        MRI.getRegClass(DestReg)->contains(SystemZ::R1L) &&
+        MRI.getRegClass(SrcReg)->contains(SystemZ::R1L)) {
+      MRI.constrainRegClass(DestReg, &SystemZ::GR32BitRegClass);
+      MRI.constrainRegClass(SrcReg, &SystemZ::GR32BitRegClass);
+    }
     int ThreeOperandOpcode = SystemZ::getThreeOperandOpcode(Opcode);
     if (ThreeOperandOpcode >= 0) {
-      MachineOperand &Dest = MI->getOperand(0);
-      MachineOperand &Src = MI->getOperand(1);
       MachineInstrBuilder MIB =
         BuildMI(*MBB, MBBI, MI->getDebugLoc(), get(ThreeOperandOpcode))
         .addOperand(Dest);
@@ -678,34 +714,27 @@ SystemZInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
 
   // Try to convert an AND into an RISBG-type instruction.
   if (LogicOp And = interpretAndImmediate(Opcode)) {
-    unsigned NewOpcode;
-    if (And.RegSize == 64)
-      NewOpcode = SystemZ::RISBG;
-    else if (TM.getSubtargetImpl()->hasHighWord())
-      NewOpcode = SystemZ::RISBLL;
-    else
-      // We can't use RISBG for 32-bit operations because it clobbers the
-      // high word of the destination too.
-      NewOpcode = 0;
-    if (NewOpcode) {
-      uint64_t Imm = MI->getOperand(2).getImm() << And.ImmLSB;
-      // AND IMMEDIATE leaves the other bits of the register unchanged.
-      Imm |= allOnes(And.RegSize) & ~(allOnes(And.ImmSize) << And.ImmLSB);
-      unsigned Start, End;
-      if (isRxSBGMask(Imm, And.RegSize, Start, End)) {
-        if (NewOpcode == SystemZ::RISBLL) {
-          Start &= 31;
-          End &= 31;
-        }
-        MachineOperand &Dest = MI->getOperand(0);
-        MachineOperand &Src = MI->getOperand(1);
-        MachineInstrBuilder MIB =
-          BuildMI(*MBB, MI, MI->getDebugLoc(), get(NewOpcode))
-          .addOperand(Dest).addReg(0)
-          .addReg(Src.getReg(), getKillRegState(Src.isKill()), Src.getSubReg())
-          .addImm(Start).addImm(End + 128).addImm(0);
-        return finishConvertToThreeAddress(MI, MIB, LV);
+    uint64_t Imm = MI->getOperand(2).getImm() << And.ImmLSB;
+    // AND IMMEDIATE leaves the other bits of the register unchanged.
+    Imm |= allOnes(And.RegSize) & ~(allOnes(And.ImmSize) << And.ImmLSB);
+    unsigned Start, End;
+    if (isRxSBGMask(Imm, And.RegSize, Start, End)) {
+      unsigned NewOpcode;
+      if (And.RegSize == 64)
+        NewOpcode = SystemZ::RISBG;
+      else {
+        NewOpcode = SystemZ::RISBMux;
+        Start &= 31;
+        End &= 31;
       }
+      MachineOperand &Dest = MI->getOperand(0);
+      MachineOperand &Src = MI->getOperand(1);
+      MachineInstrBuilder MIB =
+        BuildMI(*MBB, MI, MI->getDebugLoc(), get(NewOpcode))
+        .addOperand(Dest).addReg(0)
+        .addReg(Src.getReg(), getKillRegState(Src.isKill()), Src.getSubReg())
+        .addImm(Start).addImm(End + 128).addImm(0);
+      return finishConvertToThreeAddress(MI, MIB, LV);
     }
   }
   return 0;
@@ -889,6 +918,18 @@ SystemZInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
     expandRIPseudo(MI, SystemZ::IILH, SystemZ::IIHH, false);
     return true;
 
+  case SystemZ::NIFMux:
+    expandRIPseudo(MI, SystemZ::NILF, SystemZ::NIHF, false);
+    return true;
+
+  case SystemZ::NILMux:
+    expandRIPseudo(MI, SystemZ::NILL, SystemZ::NIHL, false);
+    return true;
+
+  case SystemZ::NIHMux:
+    expandRIPseudo(MI, SystemZ::NILH, SystemZ::NIHH, false);
+    return true;
+
   case SystemZ::OIFMux:
     expandRIPseudo(MI, SystemZ::OILF, SystemZ::OIHF, false);
     return true;
@@ -900,6 +941,58 @@ SystemZInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   case SystemZ::OIHMux:
     expandRIPseudo(MI, SystemZ::OILH, SystemZ::OIHH, false);
     return true;
+
+  case SystemZ::XIFMux:
+    expandRIPseudo(MI, SystemZ::XILF, SystemZ::XIHF, false);
+    return true;
+
+  case SystemZ::TMLMux:
+    expandRIPseudo(MI, SystemZ::TMLL, SystemZ::TMHL, false);
+    return true;
+
+  case SystemZ::TMHMux:
+    expandRIPseudo(MI, SystemZ::TMLH, SystemZ::TMHH, false);
+    return true;
+
+  case SystemZ::AHIMux:
+    expandRIPseudo(MI, SystemZ::AHI, SystemZ::AIH, false);
+    return true;
+
+  case SystemZ::AHIMuxK:
+    expandRIEPseudo(MI, SystemZ::AHI, SystemZ::AHIK, SystemZ::AIH);
+    return true;
+
+  case SystemZ::AFIMux:
+    expandRIPseudo(MI, SystemZ::AFI, SystemZ::AIH, false);
+    return true;
+
+  case SystemZ::CFIMux:
+    expandRIPseudo(MI, SystemZ::CFI, SystemZ::CIH, false);
+    return true;
+
+  case SystemZ::CLFIMux:
+    expandRIPseudo(MI, SystemZ::CLFI, SystemZ::CLIH, false);
+    return true;
+
+  case SystemZ::CMux:
+    expandRXYPseudo(MI, SystemZ::C, SystemZ::CHF);
+    return true;
+
+  case SystemZ::CLMux:
+    expandRXYPseudo(MI, SystemZ::CL, SystemZ::CLHF);
+    return true;
+
+  case SystemZ::RISBMux: {
+    bool DestIsHigh = isHighReg(MI->getOperand(0).getReg());
+    bool SrcIsHigh = isHighReg(MI->getOperand(2).getReg());
+    if (SrcIsHigh == DestIsHigh)
+      MI->setDesc(get(DestIsHigh ? SystemZ::RISBHH : SystemZ::RISBLL));
+    else {
+      MI->setDesc(get(DestIsHigh ? SystemZ::RISBHL : SystemZ::RISBLH));
+      MI->getOperand(5).setImm(MI->getOperand(5).getImm() ^ 32);
+    }
+    return true;
+  }
 
   case SystemZ::ADJDYNALLOC:
     splitAdjDynAlloc(MI);
