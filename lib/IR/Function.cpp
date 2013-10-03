@@ -454,8 +454,8 @@ enum IIT_Info {
   IIT_EXTEND_VEC_ARG = 23,
   IIT_TRUNC_VEC_ARG = 24,
   IIT_ANYPTR = 25,
-  IIT_V1   = 27,
-  IIT_VARARG = 26
+  IIT_V1   = 26,
+  IIT_VARARG = 27
 };
 
 

@@ -26,9 +26,9 @@ def int_molly_ptr_local : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to fi
 //def int_molly_combuf_recv_wait: Intrinsic<[], [llvm_ptr_ty/*ptr to combuf*/]>;
 
 // Get a pointer to the first element into a buffer that sends to dst
-def int_molly_combuf_sendbuf_ptr : Intrinsic<[llvm_anyptr_ty/*ptr to buf elts*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*rank of dst*/]>;
+//def int_molly_combuf_sendbuf_ptr : Intrinsic<[llvm_anyptr_ty/*ptr to buf elts*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*rank of dst*/]>;
 // Get a pointer to the first element into the buffer that receives from src
-def int_molly_combuf_recvbuf_ptr : Intrinsic<[llvm_anyptr_ty/*ptr to buf elts*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*rank of src*/]>;
+//def int_molly_combuf_recvbuf_ptr : Intrinsic<[llvm_anyptr_ty/*ptr to buf elts*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*rank of src*/]>;
 
 def int_molly_cluster_dimensions : Intrinsic<[llvm_i64_ty/*number of dimensions*/]>;
 def int_molly_cluster_current_coordinate : Intrinsic<[llvm_i64_ty/*coordinate*/], [llvm_i64_ty/*dimension*/]>;
@@ -132,8 +132,8 @@ def int_molly_combuf_send_dst_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to combu
 def int_molly_combuf_send_free : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/]>;
 
 // Get a pointer to a specific element in the send buffer
-// mollyrt signature: void __molly_combuf_send_ptr(void *sendbuf, uint64_t dst, uint64_t pos)
-//def int_molly_combuf_send_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*target rank*/, llvm_i64_ty/*element pos in buf*/]>;
+// mollyrt signature: void __molly_combuf_send_ptr(void *sendbuf, uint64_t dst)
+def int_molly_combuf_send_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*target rank*/]>;
 
 // Wait for previous transfers to finish so we can write into the buffer
 // mollyrt signature: void __molly_combuf_send_wait(void *sendbuf, uint64_t dstNode)
@@ -157,8 +157,8 @@ def int_molly_combuf_recv_src_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to combu
 def int_molly_combuf_recv_free : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/]>;
 
 // Get a pointer to a specific element in the recv buffer
-// mollyrt signature: void __molly_combuf_send_ptr(void *recvbuf, uint64_t src, uint64_t pos)
-//def int_molly_combuf_recv_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/, llvm_i64_ty/*element pos in buf*/]>;
+// mollyrt signature: void __molly_combuf_send_ptr(void *recvbuf, uint64_t src)
+def int_molly_combuf_recv_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/]>;
 
 // Wait for the data to be received completely so we can read from the buffer
 // mollyrt signature: void *__molly_combuf_recv_wait(void *recvbuf, uint64_t srcRank)

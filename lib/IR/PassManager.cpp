@@ -1767,7 +1767,7 @@ void PassManager::add(Pass *P, bool preserve/* = false*/) {
 void PassManager::unpreserve(Pass *pass) {
   PM->unpreserve(pass);
 }
-#endif
+#endif /* MOLLY */
 
 /// run - Execute all of the passes scheduled for execution.  Keep track of
 /// whether any of the passes modifies the module, and if so, return true.
