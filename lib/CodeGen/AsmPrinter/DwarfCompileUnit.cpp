@@ -181,12 +181,6 @@ void CompileUnit::addLabel(DIE *Die, uint16_t Attribute, uint16_t Form,
                            const MCSymbol *Label) {
   DIEValue *Value = new (DIEValueAllocator) DIELabel(Label);
   Die->addValue(Attribute, Form, Value);
-
-  SymbolCU Entry;
-  Entry.CU = this;
-  Entry.Sym = Label;
-
-  DD->addLabel(Entry);
 }
 
 /// addLabelAddress - Add a dwarf label attribute data and value using
@@ -194,13 +188,8 @@ void CompileUnit::addLabel(DIE *Die, uint16_t Attribute, uint16_t Form,
 ///
 void CompileUnit::addLabelAddress(DIE *Die, uint16_t Attribute,
                                   MCSymbol *Label) {
-  if (Label) {
-    SymbolCU Entry;
-    Entry.CU = this;
-    Entry.Sym = Label;
-
-    DD->addLabel(Entry);
-  }
+  if (Label)
+    DD->addArangeLabel(SymbolCU(this, Label));
 
   if (!DD->useSplitDwarf()) {
     if (Label != NULL) {
@@ -221,6 +210,7 @@ void CompileUnit::addLabelAddress(DIE *Die, uint16_t Attribute,
 /// form given and an op of either DW_FORM_addr or DW_FORM_GNU_addr_index.
 ///
 void CompileUnit::addOpAddress(DIE *Die, const MCSymbol *Sym) {
+  DD->addArangeLabel(SymbolCU(this, Sym));
   if (!DD->useSplitDwarf()) {
     addUInt(Die, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_addr);
     addLabel(Die, 0, dwarf::DW_FORM_udata, Sym);
@@ -818,9 +808,16 @@ DIE *CompileUnit::getOrCreateContextDIE(DIDescriptor Context) {
 
 /// addToContextOwner - Add Die into the list of its context owner's children.
 void CompileUnit::addToContextOwner(DIE *Die, DIDescriptor Context) {
-  if (DIE *ContextDIE = getOrCreateContextDIE(Context))
+  assert(!Die->getParent());
+  if (DIE *ContextDIE = getOrCreateContextDIE(Context)) {
+    if (Die->getParent()) {
+      // While creating the context, if this is a type member, we will have
+      // added the child to the context already.
+      assert(Die->getParent() == ContextDIE);
+      return;
+    }
     ContextDIE->addChild(Die);
-  else
+  } else
     addDie(Die);
 }
 
@@ -1134,6 +1131,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
           ElemDie = createStaticMemberDIE(DDTy);
         else
           ElemDie = createMemberDIE(DDTy);
+        Buffer.addChild(ElemDie);
       } else if (Element.isObjCProperty()) {
         DIObjCProperty Property(Element);
         ElemDie = new DIE(Property.getTag());
@@ -1169,9 +1167,9 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
           Entry = createDIEEntry(ElemDie);
           insertDIEEntry(Element, Entry);
         }
+        Buffer.addChild(ElemDie);
       } else
         continue;
-      Buffer.addChild(ElemDie);
     }
 
     if (CTy.isAppleBlockExtension())
@@ -1181,8 +1179,6 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
     if (DIDescriptor(ContainingType).isCompositeType())
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
                   getOrCreateTypeDIE(DIType(ContainingType)));
-    else
-      addToContextOwner(&Buffer, DD->resolve(CTy.getContext()));
 
     if (CTy.isObjcClassComplete())
       addFlag(&Buffer, dwarf::DW_AT_APPLE_objc_complete_type);
