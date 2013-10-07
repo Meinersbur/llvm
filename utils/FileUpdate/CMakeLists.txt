@@ -1,7 +1,7 @@
 
 set(FileUpdate_LIBS LLVMSupport)
 if( MINGW )
-  list(APPEND FileUpdate_LIBS imagehlp psapi)
+  list(APPEND FileUpdate_LIBS imagehlp psapi shell32)
 endif( MINGW )
 if( LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD )
   list(APPEND FileUpdate_LIBS pthread)

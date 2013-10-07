@@ -1,5 +1,6 @@
 ; RUN: llc -march=sparc <%s | FileCheck %s -check-prefix=V8
 ; RUN: llc -march=sparc -mattr=v9 <%s | FileCheck %s -check-prefix=V9
+; RUN: llc -mtriple=sparc64-unknown-linux <%s | FileCheck %s -check-prefix=SPARC64
 
 
 define i32 @test_addx(i64 %a, i64 %b, i64 %c) nounwind readnone noinline {
@@ -65,9 +66,11 @@ define i32 @test_select_int_fcc(float %f, i32 %a, i32 %b) nounwind readnone noin
 entry:
 ;V8-LABEL: test_select_int_fcc:
 ;V8: fcmps
+;V8-NEXT: nop
 ;V8: {{fbe|fbne}}
 ;V9-LABEL: test_select_int_fcc:
 ;V9: fcmps
+;V9-NEXT-NOT: nop
 ;V9-NOT: {{fbe|fbne}}
 ;V9: mov{{e|ne}} %fcc0
   %0 = fcmp une float %f, 0.000000e+00
@@ -94,9 +97,11 @@ define double @test_select_dfp_fcc(double %f, double %f1, double %f2) nounwind r
 entry:
 ;V8-LABEL: test_select_dfp_fcc:
 ;V8: fcmpd
+;V8-NEXT: nop
 ;V8: {{fbne|fbe}}
 ;V9-LABEL: test_select_dfp_fcc:
 ;V9: fcmpd
+;V9-NEXT-NOT: nop
 ;V9-NOT: {{fbne|fbe}}
 ;V9: fmovd{{e|ne}} %fcc0
   %0 = fcmp une double %f, 0.000000e+00
@@ -134,4 +139,53 @@ exit.0:
 
 exit.1:
    ret i32 1
+}
+
+; V8-LABEL: test_adde_sube
+; V8:       addcc
+; V8:       addxcc
+; V8:       addxcc
+; V8:       addxcc
+; V8:       subcc
+; V8:       subxcc
+; V8:       subxcc
+; V8:       subxcc
+
+
+; V9-LABEL: test_adde_sube
+; V9:       addcc
+; V9:       addxcc
+; V9:       addxcc
+; V9:       addxcc
+; V9:       subcc
+; V9:       subxcc
+; V9:       subxcc
+; V9:       subxcc
+
+; SPARC64-LABEL: test_adde_sube
+; SPARC64:       addcc
+; SPARC64:       addxcc
+; SPARC64:       addxcc
+; SPARC64:       addxcc
+; SPARC64:       subcc
+; SPARC64:       subxcc
+; SPARC64:       subxcc
+; SPARC64:       subxcc
+
+
+define void @test_adde_sube(i8* %a, i8* %b, i8* %sum, i8* %diff) {
+entry:
+   %0 = bitcast i8* %a to i128*
+   %1 = bitcast i8* %b to i128*
+   %2 = load i128* %0
+   %3 = load i128* %1
+   %4 = add i128 %2, %3
+   %5 = bitcast i8* %sum to i128*
+   store i128 %4, i128* %5
+   tail call void asm sideeffect "", "=*m,*m"(i128 *%0, i128* %5) nounwind
+   %6 = load i128* %0
+   %7 = sub i128 %2, %6
+   %8 = bitcast i8* %diff to i128*
+   store i128 %7, i128* %8
+   ret void
 }

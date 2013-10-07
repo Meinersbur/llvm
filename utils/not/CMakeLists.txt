@@ -1,7 +1,7 @@
 
 set(not_LIBS LLVMSupport)
 if( MINGW )
-  list(APPEND not_LIBS imagehlp psapi)
+  list(APPEND not_LIBS imagehlp psapi shell32)
 endif( MINGW )
 if( LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD )
   list(APPEND not_LIBS pthread)
