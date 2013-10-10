@@ -2,7 +2,7 @@
 set(FileCheck_LIBS LLVMSupport)
 #target_link_libraries(FileCheck LLVMSupport)
 if( MINGW )
-  list(FileCheck imagehlp psapi shell32)
+  list(APPEND FileCheck_LIBS imagehlp psapi shell32)
   #target_link_libraries(FileCheck imagehlp psapi shell32)
 endif( MINGW )
 if( LLVM_ENABLE_THREADS AND HAVE_LIBPTHREAD )

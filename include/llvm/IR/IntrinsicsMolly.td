@@ -98,7 +98,7 @@ def int_molly_cluster_rankof : Intrinsic<[llvm_i64_ty/*coordinate*/], [llvm_vara
 
 // Initialize the local part of a field
 // mollyrt signature: void __molly_local_init(void *localbuf, uint64_t count)
-def int_molly_local_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_i64_ty/*number of local elts*/]>;
+def int_molly_local_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_i64_ty/*number of local elts*/, llvm_ptr_ty/*rankoffunc*/, llvm_ptr_ty/*localindexfunc*/]>;
 
 // Free the local part of a field
 // mollyrt signature: void __molly_local_free(void *localbuf)
@@ -167,3 +167,15 @@ def int_molly_combuf_recv_wait : Intrinsic<[llvm_anyptr_ty/*ptr to recvd data*/]
 // Buffer has been read completely, can be overwritten again by the next transfer
 // mollyrt signature: void __molly_combuf_recv(void *recvbuf, uint64_t)
 def int_molly_combuf_recv : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/]>;
+
+
+
+// Load the value from the home location
+// Just to be used if outside SCoP
+// mollyrt signature: void __molly_value_load(void *buf, void *val, uint64_t rank, uint64_t idx)
+def int_molly_value_load : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*target ptr to value*/, llvm_i64_ty/*rank that stores te value*/, llvm_i64_ty/*local idx on that rank*/]>;
+
+// Store the value to its home location
+// mollyrt signature: void __molly_value_store(void *buf, void *val, uint64_t rank, uint64_t idx)
+def int_molly_value_store : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*ptr to value to store*/, llvm_i64_ty/*rank that stores te value*/, llvm_i64_ty/*local idx on that rank*/]>;
+
