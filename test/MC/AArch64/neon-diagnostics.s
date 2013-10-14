@@ -3880,3 +3880,409 @@
 // CHECK-ERROR: error: invalid operand for instruction
 // CHECK-ERROR:          frsqrts d8, s22, d18
 // CHECK-ERROR:                      ^
+
+//----------------------------------------------------------------------
+// Vector load/store multiple N-element structure (class SIMD lselem)
+//----------------------------------------------------------------------
+         ld1 {x3}, [x2]
+         ld1 {v4}, [x0]
+         ld1 {v32.16b}, [x0]
+         ld1 {v15.8h}, [x32]
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        ld1 {x3}, [x2]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        ld1 {v4}, [x0]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        ld1 {v32.16b}, [x0]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        ld1 {v15.8h}, [x32]
+// CHECK-ERROR:                       ^
+
+         ld1 {v0.16b, v2.16b}, [x0]
+         ld1 {v0.8h, v1.8h, v2.8h, v3.8h, v4.8h}, [x0]
+         ld1 v0.8b, v1.8b}, [x0]
+         ld1 {v0.8h-v4.8h}, [x0]
+         ld1 {v1.8h-v1.8h}, [x0]
+         ld1 {v15.8h-v17.4h}, [x15]
+         ld1 {v0.8b-v2.8b, [x0]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld1 {v0.16b, v2.16b}, [x0]
+// CHECK-ERROR:                     ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        ld1 {v0.8h, v1.8h, v2.8h, v3.8h, v4.8h}, [x0]
+// CHECK-ERROR:                                         ^
+// CHECK-ERROR: error: '{' expected
+// CHECK-ERROR:        ld1 v0.8b, v1.8b}, [x0]
+// CHECK-ERROR:            ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        ld1 {v0.8h-v4.8h}, [x0]
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        ld1 {v1.8h-v1.8h}, [x0]
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        ld1 {v15.8h-v17.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: '}' expected
+// CHECK-ERROR:        ld1 {v0.8b-v2.8b, [x0]
+// CHECK-ERROR:                        ^
+
+         ld2 {v15.8h, v16.4h}, [x15]
+         ld2 {v0.8b, v2.8b}, [x0]
+         ld2 {v15.4h, v16.4h, v17.4h}, [x32]
+         ld2 {v15.8h-v16.4h}, [x15]
+         ld2 {v0.2d-v2.2d}, [x0]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld2 {v15.8h, v16.4h}, [x15]
+// CHECK-ERROR:                     ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld2 {v0.8b, v2.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        ld2 {v15.4h, v16.4h, v17.4h}, [x32]
+// CHECK-ERROR:            ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        ld2 {v15.8h-v16.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        ld2 {v0.2d-v2.2d}, [x0]
+// CHECK-ERROR:            ^
+
+         ld3 {v15.8h, v16.8h, v17.4h}, [x15]
+         ld3 {v0.8b, v1,8b, v2.8b, v3.8b}, [x0]
+         ld3 {v0.8b, v2.8b, v3.8b}, [x0]
+         ld3 {v15.8h-v17.4h}, [x15]
+         ld3 {v31.4s-v2.4s}, [sp]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld3 {v15.8h, v16.8h, v17.4h}, [x15]
+// CHECK-ERROR:                             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        ld3 {v0.8b, v1,8b, v2.8b, v3.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld3 {v0.8b, v2.8b, v3.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        ld3 {v15.8h-v17.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        ld3 {v31.4s-v2.4s}, [sp]
+// CHECK-ERROR:            ^
+
+         ld4 {v15.8h, v16.8h, v17.4h, v18.8h}, [x15]
+         ld4 {v0.8b, v2.8b, v3.8b, v4.8b}, [x0]
+         ld4 {v15.4h, v16.4h, v17.4h, v18.4h, v19.4h}, [x31]
+         ld4 {v15.8h-v18.4h}, [x15]
+         ld4 {v31.2s-v1.2s}, [x31]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld4 {v15.8h, v16.8h, v17.4h, v18.8h}, [x15]
+// CHECK-ERROR:                             ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        ld4 {v0.8b, v2.8b, v3.8b, v4.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        ld4 {v15.4h, v16.4h, v17.4h, v18.4h, v19.4h}, [x31]
+// CHECK-ERROR:                                             ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        ld4 {v15.8h-v18.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        ld4 {v31.2s-v1.2s}, [x31]
+// CHECK-ERROR:            ^
+
+         st1 {x3}, [x2]
+         st1 {v4}, [x0]
+         st1 {v32.16b}, [x0]
+         st1 {v15.8h}, [x32]
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        st1 {x3}, [x2]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        st1 {v4}, [x0]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        st1 {v32.16b}, [x0]
+// CHECK-ERROR:             ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        st1 {v15.8h}, [x32]
+// CHECK-ERROR:                       ^
+
+         st1 {v0.16b, v2.16b}, [x0]
+         st1 {v0.8h, v1.8h, v2.8h, v3.8h, v4.8h}, [x0]
+         st1 v0.8b, v1.8b}, [x0]
+         st1 {v0.8h-v4.8h}, [x0]
+         st1 {v1.8h-v1.8h}, [x0]
+         st1 {v15.8h-v17.4h}, [x15]
+         st1 {v0.8b-v2.8b, [x0]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st1 {v0.16b, v2.16b}, [x0]
+// CHECK-ERROR:                     ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        st1 {v0.8h, v1.8h, v2.8h, v3.8h, v4.8h}, [x0]
+// CHECK-ERROR:                                         ^
+// CHECK-ERROR: error: '{' expected
+// CHECK-ERROR:        st1 v0.8b, v1.8b}, [x0]
+// CHECK-ERROR:            ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        st1 {v0.8h-v4.8h}, [x0]
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        st1 {v1.8h-v1.8h}, [x0]
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        st1 {v15.8h-v17.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: '}' expected
+// CHECK-ERROR:        st1 {v0.8b-v2.8b, [x0]
+// CHECK-ERROR:                        ^
+
+         st2 {v15.8h, v16.4h}, [x15]
+         st2 {v0.8b, v2.8b}, [x0]
+         st2 {v15.4h, v16.4h, v17.4h}, [x30]
+         st2 {v15.8h-v16.4h}, [x15]
+         st2 {v0.2d-v2.2d}, [x0]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st2 {v15.8h, v16.4h}, [x15]
+// CHECK-ERROR:                     ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st2 {v0.8b, v2.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        st2 {v15.4h, v16.4h, v17.4h}, [x30]
+// CHECK-ERROR:            ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        st2 {v15.8h-v16.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        st2 {v0.2d-v2.2d}, [x0]
+// CHECK-ERROR:            ^
+
+         st3 {v15.8h, v16.8h, v17.4h}, [x15]
+         st3 {v0.8b, v1,8b, v2.8b, v3.8b}, [x0]
+         st3 {v0.8b, v2.8b, v3.8b}, [x0]
+         st3 {v15.8h-v17.4h}, [x15]
+         st3 {v31.4s-v2.4s}, [sp]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st3 {v15.8h, v16.8h, v17.4h}, [x15]
+// CHECK-ERROR:                             ^
+// CHECK-ERROR: error: expected vector type register
+// CHECK-ERROR:        st3 {v0.8b, v1,8b, v2.8b, v3.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st3 {v0.8b, v2.8b, v3.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        st3 {v15.8h-v17.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        st3 {v31.4s-v2.4s}, [sp]
+// CHECK-ERROR:            ^
+
+         st4 {v15.8h, v16.8h, v17.4h, v18.8h}, [x15]
+         st4 {v0.8b, v2.8b, v3.8b, v4.8b}, [x0]
+         st4 {v15.4h, v16.4h, v17.4h, v18.4h, v19.4h}, [x31]
+         st4 {v15.8h-v18.4h}, [x15]
+         st4 {v31.2s-v1.2s}, [x31]
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st4 {v15.8h, v16.8h, v17.4h, v18.8h}, [x15]
+// CHECK-ERROR:                             ^
+// CHECK-ERROR: error: invalid space between two vectors
+// CHECK-ERROR:        st4 {v0.8b, v2.8b, v3.8b, v4.8b}, [x0]
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid number of vectors
+// CHECK-ERROR:        st4 {v15.4h, v16.4h, v17.4h, v18.4h, v19.4h}, [x31]
+// CHECK-ERROR:                                             ^
+// CHECK-ERROR: error: expected the same vector layout
+// CHECK-ERROR:        st4 {v15.8h-v18.4h}, [x15]
+// CHECK-ERROR:                        ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        st4 {v31.2s-v1.2s}, [x31]
+// CHECK-ERROR:            ^
+
+         ins v2.b[16], w1
+         ins v7.h[8], w14
+         ins v20.s[5], w30
+         ins v1.d[2], x7
+         ins v2.b[3], b1
+         ins v7.h[2], h14
+         ins v20.s[1], s30
+         ins v1.d[0], d7
+
+// CHECK-ERROR: error: lane number incompatible with layout
+// CHECK-ERROR:         ins v2.b[16], w1
+// CHECK-ERROR:                  ^
+// CHECK-ERROR: error: lane number incompatible with layout
+// CHECK-ERROR:         ins v7.h[8], w14
+// CHECK-ERROR:                  ^
+// CHECK-ERROR: error: lane number incompatible with layout
+// CHECK-ERROR:         ins v20.s[5], w30
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: lane number incompatible with layout
+// CHECK-ERROR:         ins v1.d[2], x7
+// CHECK-ERROR:                  ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:         ins v2.b[3], b1
+// CHECK-ERROR:                      ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:         ins v7.h[2], h14
+// CHECK-ERROR:                      ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:         ins v20.s[1], s30
+// CHECK-ERROR:                       ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:         ins v1.d[0], d7
+// CHECK-ERROR:                      ^
+
+         smov w1, v0.b[16]
+         smov w14, v6.h[8]
+         smov x1, v0.b[16]
+         smov x14, v6.h[8]
+         smov x20, v9.s[5]
+         smov w1, v0.d[0]
+         smov w14, v6.d[1]
+         smov x1, v0.d[0]
+         smov x14, v6.d[1]
+         smov x20, v9.d[0]
+
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         smov w1, v0.b[16]
+// CHECK-ERROR                       ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         smov w14, v6.h[8]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         smov x1, v0.b[16]
+// CHECK-ERROR                       ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         smov x14, v6.h[8]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         smov x20, v9.s[5]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         smov w1, v0.d[0]
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         smov w14, v6.d[1]
+// CHECK-ERROR                      ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         smov x1, v0.d[0]
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         smov x14, v6.d[1]
+// CHECK-ERROR                      ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         smov x20, v9.d[0]
+// CHECK-ERROR                      ^
+
+         umov w1, v0.b[16]
+         umov w14, v6.h[8]
+         umov w20, v9.s[5]
+         umov x7, v18.d[3]
+         umov w1, v0.d[0]
+         umov s20, v9.s[2]
+         umov d7, v18.d[1]
+
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         umov w1, v0.b[16]
+// CHECK-ERROR                       ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         umov w14, v6.h[8]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         umov w20, v9.s[5]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: lane number incompatible with layout
+// CHECK-ERROR         umov x7, v18.d[3]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         umov w1, v0.d[0]
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         umov s20, v9.s[2]
+// CHECK-ERROR              ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         umov d7, v18.d[1]
+// CHECK-ERROR              ^
+
+         Ins v1.h[2], v3.b[6]
+         Ins v6.h[7], v7.s[2]
+         Ins v15.d[0], v22.s[2]
+         Ins v0.d[0], v4.b[1]
+
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         Ins v1.h[2], v3.b[6]
+// CHECK-ERROR                         ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         Ins v6.h[7], v7.s[2]
+// CHECK-ERROR                         ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         Ins v15.d[0], v22.s[2]
+// CHECK-ERROR                           ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         Ins v0.d[0], v4.b[1]
+// CHECK-ERROR                         ^
+
+         dup v1.8h, v2.b[2]
+         dup v11.4s, v7.h[7]
+         dup v17.2d, v20.s[0]
+         dup v1.16b, v2.h[2]
+         dup v11.8h, v7.s[3]
+         dup v17.4s, v20.d[0]
+         dup v5.2d, v1.b[1]
+
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v1.8h, v2.b[2]
+// CHECK-ERROR                       ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v11.4s, v7.h[7]
+// CHECK-ERROR                        ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v17.2d, v20.s[0]
+// CHECK-ERROR                         ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v1.16b, v2.h[2]
+// CHECK-ERROR                        ^
+// CHECK-ERROR invalid operand for instruction
+// CHECK-ERROR         dup v11.8h, v7.s[3]
+// CHECK-ERROR                        ^
+// CHECK-ERROR invalid operand for instruction
+// CHECK-ERROR         dup v17.4s, v20.d[0]
+// CHECK-ERROR                         ^
+// CHECK-ERROR invalid operand for instruction
+// CHECK-ERROR         dup v5.2d, v1.b[1]
+// CHECK-ERROR                       ^
+
+         dup v1.8b, b1
+         dup v11.4h, h14
+         dup v17.2s, s30
+         dup v1.16b, d2
+         dup v11.8s, w16
+         dup v17.4d, w28
+         dup v5.2d, w0
+
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v1.8b, b1
+// CHECK-ERROR                    ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v11.4h, h14
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v17.2s, s30
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v1.16b, d2
+// CHECK-ERROR                     ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v11.8s, w16
+// CHECK-ERROR             ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v17.4d, w28
+// CHECK-ERROR             ^
+// CHECK-ERROR error: invalid operand for instruction
+// CHECK-ERROR         dup v5.2d, w0
+// CHECK-ERROR                    ^
+

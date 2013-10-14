@@ -538,9 +538,9 @@ DIBuilder::createTemplateTypeParameter(DIDescriptor Context, StringRef Name,
                                        unsigned ColumnNo) {
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_template_type_parameter),
-    getNonCompileUnitScope(Context),
+    DIScope(getNonCompileUnitScope(Context)).getRef(),
     MDString::get(VMContext, Name),
-    Ty,
+    Ty.getRef(),
     File,
     ConstantInt::get(Type::getInt32Ty(VMContext), LineNo),
     ConstantInt::get(Type::getInt32Ty(VMContext), ColumnNo)
@@ -556,9 +556,9 @@ DIBuilder::createTemplateValueParameter(unsigned Tag, DIDescriptor Context,
                                         unsigned ColumnNo) {
   Value *Elts[] = {
     GetTagConstant(VMContext, Tag),
-    getNonCompileUnitScope(Context),
+    DIScope(getNonCompileUnitScope(Context)).getRef(),
     MDString::get(VMContext, Name),
-    Ty,
+    Ty.getRef(),
     Val,
     File,
     ConstantInt::get(Type::getInt32Ty(VMContext), LineNo),
@@ -878,7 +878,7 @@ DICompositeType DIBuilder::createForwardDecl(unsigned Tag, StringRef Name,
   Value *Elts[] = {
     GetTagConstant(VMContext, Tag),
     F.getFileNode(),
-    getNonCompileUnitScope(Scope),
+    DIScope(getNonCompileUnitScope(Scope)).getRef(),
     MDString::get(VMContext, Name),
     ConstantInt::get(Type::getInt32Ty(VMContext), Line),
     ConstantInt::get(Type::getInt64Ty(VMContext), SizeInBits),
@@ -1041,6 +1041,28 @@ DIVariable DIBuilder::createComplexVariable(unsigned Tag, DIDescriptor Scope,
 }
 
 /// createFunction - Create a new descriptor for the specified function.
+/// FIXME: this is added for dragonegg. Once we update dragonegg
+/// to call resolve function, this will be removed.
+DISubprogram DIBuilder::createFunction(DIScopeRef Context,
+                                       StringRef Name,
+                                       StringRef LinkageName,
+                                       DIFile File, unsigned LineNo,
+                                       DICompositeType Ty,
+                                       bool isLocalToUnit, bool isDefinition,
+                                       unsigned ScopeLine,
+                                       unsigned Flags, bool isOptimized,
+                                       Function *Fn,
+                                       MDNode *TParams,
+                                       MDNode *Decl) {
+  // dragonegg does not generate identifier for types, so using an empty map
+  // to resolve the context should be fine.
+  DITypeIdentifierMap EmptyMap;
+  return createFunction(Context.resolve(EmptyMap), Name, LinkageName, File,
+                        LineNo, Ty, isLocalToUnit, isDefinition, ScopeLine,
+                        Flags, isOptimized, Fn, TParams, Decl);
+}
+
+/// createFunction - Create a new descriptor for the specified function.
 DISubprogram DIBuilder::createFunction(DIDescriptor Context,
                                        StringRef Name,
                                        StringRef LinkageName,
@@ -1058,7 +1080,7 @@ DISubprogram DIBuilder::createFunction(DIDescriptor Context,
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_subprogram),
     File.getFileNode(),
-    getNonCompileUnitScope(Context),
+    DIScope(getNonCompileUnitScope(Context)).getRef(),
     MDString::get(VMContext, Name),
     MDString::get(VMContext, Name),
     MDString::get(VMContext, LinkageName),
@@ -1107,7 +1129,7 @@ DISubprogram DIBuilder::createMethod(DIDescriptor Context,
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_subprogram),
     F.getFileNode(),
-    getNonCompileUnitScope(Context),
+    DIScope(getNonCompileUnitScope(Context)).getRef(),
     MDString::get(VMContext, Name),
     MDString::get(VMContext, Name),
     MDString::get(VMContext, LinkageName),

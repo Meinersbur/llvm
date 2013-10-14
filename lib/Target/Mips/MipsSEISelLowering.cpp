@@ -188,6 +188,13 @@ addMSAIntType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   setOperationAction(ISD::VSELECT, Ty, Legal);
   setOperationAction(ISD::XOR, Ty, Legal);
 
+  if (Ty == MVT::v4i32 || Ty == MVT::v2i64) {
+    setOperationAction(ISD::FP_TO_SINT, Ty, Legal);
+    setOperationAction(ISD::FP_TO_UINT, Ty, Legal);
+    setOperationAction(ISD::SINT_TO_FP, Ty, Legal);
+    setOperationAction(ISD::UINT_TO_FP, Ty, Legal);
+  }
+
   setOperationAction(ISD::SETCC, Ty, Legal);
   setCondCodeAction(ISD::SETNE, Ty, Expand);
   setCondCodeAction(ISD::SETGE, Ty, Expand);
@@ -216,6 +223,7 @@ addMSAFloatType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
     setOperationAction(ISD::FADD,  Ty, Legal);
     setOperationAction(ISD::FDIV,  Ty, Legal);
     setOperationAction(ISD::FLOG2, Ty, Legal);
+    setOperationAction(ISD::FMA,   Ty, Legal);
     setOperationAction(ISD::FMUL,  Ty, Legal);
     setOperationAction(ISD::FRINT, Ty, Legal);
     setOperationAction(ISD::FSQRT, Ty, Legal);
@@ -1300,6 +1308,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fdiv_d:
     return DAG.getNode(ISD::FDIV, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_ffint_u_w:
+  case Intrinsic::mips_ffint_u_d:
+    return DAG.getNode(ISD::UINT_TO_FP, DL, Op->getValueType(0),
+                       Op->getOperand(1));
+  case Intrinsic::mips_ffint_s_w:
+  case Intrinsic::mips_ffint_s_d:
+    return DAG.getNode(ISD::SINT_TO_FP, DL, Op->getValueType(0),
+                       Op->getOperand(1));
   case Intrinsic::mips_fill_b:
   case Intrinsic::mips_fill_h:
   case Intrinsic::mips_fill_w:
@@ -1317,10 +1333,21 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_flog2_w:
   case Intrinsic::mips_flog2_d:
     return DAG.getNode(ISD::FLOG2, DL, Op->getValueType(0), Op->getOperand(1));
+  case Intrinsic::mips_fmadd_w:
+  case Intrinsic::mips_fmadd_d:
+    return DAG.getNode(ISD::FMA, SDLoc(Op), Op->getValueType(0),
+                       Op->getOperand(1), Op->getOperand(2), Op->getOperand(3));
   case Intrinsic::mips_fmul_w:
   case Intrinsic::mips_fmul_d:
     return DAG.getNode(ISD::FMUL, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_fmsub_w:
+  case Intrinsic::mips_fmsub_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::FSUB, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::FMUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_frint_w:
   case Intrinsic::mips_frint_d:
     return DAG.getNode(ISD::FRINT, DL, Op->getValueType(0), Op->getOperand(1));
@@ -1331,6 +1358,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fsub_d:
     return DAG.getNode(ISD::FSUB, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_ftrunc_u_w:
+  case Intrinsic::mips_ftrunc_u_d:
+    return DAG.getNode(ISD::FP_TO_UINT, DL, Op->getValueType(0),
+                       Op->getOperand(1));
+  case Intrinsic::mips_ftrunc_s_w:
+  case Intrinsic::mips_ftrunc_s_d:
+    return DAG.getNode(ISD::FP_TO_SINT, DL, Op->getValueType(0),
+                       Op->getOperand(1));
   case Intrinsic::mips_ilvev_b:
   case Intrinsic::mips_ilvev_h:
   case Intrinsic::mips_ilvev_w:
@@ -1366,6 +1401,15 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_ldi_w:
   case Intrinsic::mips_ldi_d:
     return lowerMSASplatImm(Op, 1, DAG);
+  case Intrinsic::mips_maddv_b:
+  case Intrinsic::mips_maddv_h:
+  case Intrinsic::mips_maddv_w:
+  case Intrinsic::mips_maddv_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::ADD, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::MUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_max_s_b:
   case Intrinsic::mips_max_s_h:
   case Intrinsic::mips_max_s_w:
@@ -1432,6 +1476,15 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_mulv_d:
     return DAG.getNode(ISD::MUL, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_msubv_b:
+  case Intrinsic::mips_msubv_h:
+  case Intrinsic::mips_msubv_w:
+  case Intrinsic::mips_msubv_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::SUB, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::MUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_nlzc_b:
   case Intrinsic::mips_nlzc_h:
   case Intrinsic::mips_nlzc_w:
