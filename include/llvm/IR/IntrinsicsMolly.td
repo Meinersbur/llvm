@@ -105,7 +105,7 @@ def int_molly_cluster_rankof : Intrinsic<[llvm_i64_ty/*coordinate*/], [llvm_vara
 
 // Initialize the local part of a field
 // mollyrt signature: void __molly_local_init(void *localbuf, uint64_t count)
-def int_molly_local_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_i64_ty/*number of local elts*/, llvm_ptr_ty/*rankoffunc*/, llvm_ptr_ty/*localindexfunc*/]>;
+def int_molly_local_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_i64_ty/*number of local elts*/, llvm_anyptr_ty/*rankoffunc*/, llvm_anyptr_ty/*localindexfunc*/]>;
 
 // Free the local part of a field
 // mollyrt signature: void __molly_local_free(void *localbuf)
