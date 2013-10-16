@@ -8,6 +8,5 @@ add_llvm_library(LLVMInstrumentation
   GCOVProfiling.cpp
   MemorySanitizer.cpp
   Instrumentation.cpp
-  ProfilingUtils.cpp
   ThreadSanitizer.cpp
   )
