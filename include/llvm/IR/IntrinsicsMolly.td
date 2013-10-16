@@ -35,6 +35,13 @@ def int_molly_cluster_current_coordinate : Intrinsic<[llvm_i64_ty/*coordinate*/]
 
 //def int_molly : Intrinsic<[], [], []>;
 
+// Put initialization code here
+def int_molly_global_init : Intrinsic<[], []>;
+
+// Put deallocation code here
+def int_molly_global_free : Intrinsic<[], []>;
+
+
 
 
 //===----------------------------------------------------------------------===//
@@ -43,11 +50,9 @@ def int_molly_cluster_current_coordinate : Intrinsic<[llvm_i64_ty/*coordinate*/]
 //   Molly will convert them to something else
 //===----------------------------------------------------------------------===//
 
-// Put initialization code here
-def int_molly_global_init : Intrinsic<[], []>;
 
-// Put deallocation code here
-def int_molly_global_free : Intrinsic<[], []>;
+// Call the original main function from the application
+def int_molly_orig_main : Intrinsic<[llvm_i32_ty], [llvm_i32_ty/*argc*/, llvm_anyptr_ty/*argv*/]>;
 
 
 // Pass info about a field to Molly
@@ -79,6 +84,9 @@ def int_molly_cluster_dims : Intrinsic<[llvm_i64_ty], []>;
 // Get the number of nodes in one dimension of the cluster
 def int_molly_cluster_length : Intrinsic<[llvm_i64_ty], [llvm_i64_ty/*dimension*/]>;
 
+// Return the rank where this intrnsics is executed
+def int_molly_cluster_myrank : Intrinsic<[llvm_i64_ty/*coordinate*/], []>;
+
 
 //===----------------------------------------------------------------------===//
 // Inner interface 
@@ -94,7 +102,6 @@ def int_molly_cluster_pos : Intrinsic<[llvm_i64_ty/*coordinate*/], [llvm_i64_ty/
 // mollyrt signature: uint64_t __molly_cluster_rankof(int coords[])
 // Maybe we can Molly let do this for efficiency reasons
 def int_molly_cluster_rankof : Intrinsic<[llvm_i64_ty/*coordinate*/], [llvm_vararg_ty/*coordinates*/]>;
-
 
 // Initialize the local part of a field
 // mollyrt signature: void __molly_local_init(void *localbuf, uint64_t count)
@@ -120,7 +127,7 @@ def int_molly_local_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to fi
 
 // Allocate and initialize a combuf that sends to another node
 // NOTE: Instead of eltSize would have preferred a link to the field/localbuf, logically a combuf is associated to a SCoP, not a field
-// mollyrt signature: void *__molly_combuf_send_alloc(uint64_t dstCount, size_t eltSize)
+// mollyrt signature: void *__molly_combuf_send_alloc(uint64_t dstCount, uint64_t eltSize)
 def int_molly_combuf_send_alloc : Intrinsic<[llvm_ptr_ty], [llvm_i64_ty/*number of targets*/, llvm_i64_ty/*byte size per elt*/]>;
 
 // Init the buffer size of one target
@@ -132,7 +139,7 @@ def int_molly_combuf_send_dst_init : Intrinsic<[], [llvm_anyptr_ty/*ptr to combu
 def int_molly_combuf_send_free : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/]>;
 
 // Get a pointer to a specific element in the send buffer
-// mollyrt signature: void __molly_combuf_send_ptr(void *sendbuf, uint64_t dst)
+// mollyrt signature: void *__molly_combuf_send_ptr(void *sendbuf, uint64_t dst)
 def int_molly_combuf_send_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*target rank*/]>;
 
 // Wait for previous transfers to finish so we can write into the buffer
