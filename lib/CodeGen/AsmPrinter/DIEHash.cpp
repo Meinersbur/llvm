@@ -189,29 +189,69 @@ void DIEHash::collectAttributes(DIE *Die, DIEAttrs &Attrs) {
 
 // Hash an individual attribute \param Attr based on the type of attribute and
 // the form.
-void DIEHash::hashAttribute(AttrEntry Attr) {
+void DIEHash::hashAttribute(AttrEntry Attr, dwarf::Tag Tag) {
   const DIEValue *Value = Attr.Val;
   const DIEAbbrevData *Desc = Attr.Desc;
 
-  // 7.27s3
+  // 7.27 Step 3
   // ... An attribute that refers to another type entry T is processed as
   // follows:
-  // a) If T is in the list of [previously hashed types], use the letter 'R' as
-  // the marker and use the unsigned LEB128 encoding of [the index of T in the
-  // list] as the attribute value; otherwise,
-
-  // [TODO: implement clause (a)]
-
   if (const DIEEntry *EntryAttr = dyn_cast<DIEEntry>(Value)) {
     DIE *Entry = EntryAttr->getEntry();
 
-    // b) use the letter 'T' as a the marker, ...
+    // Step 5
+    // If the tag in Step 3 is one of ...
+    if (Tag == dwarf::DW_TAG_pointer_type) {
+      // ... and the referenced type (via the DW_AT_type or DW_AT_friend
+      // attribute) ...
+      assert(Desc->getAttribute() == dwarf::DW_AT_type ||
+             Desc->getAttribute() == dwarf::DW_AT_friend);
+      // [FIXME] ... has a DW_AT_name attribute,
+      // append the letter 'N'
+      addULEB128('N');
+
+      // the DWARF attribute code (DW_AT_type or DW_AT_friend),
+      addULEB128(Desc->getAttribute());
+
+      // the context of the tag,
+      if (DIE *Parent = Entry->getParent())
+        addParentContext(Parent);
+
+      // the letter 'E',
+      addULEB128('E');
+
+      // and the name of the type.
+      addString(getDIEStringAttr(Entry, dwarf::DW_AT_name));
+
+      // FIXME:
+      // For DW_TAG_friend, if the referenced entry is the DW_TAG_subprogram,
+      // the context is omitted and the name to be used is the ABI-specific name
+      // of the subprogram (e.g., the mangled linker name).
+      return;
+    }
+
+    unsigned &DieNumber = Numbering[Entry];
+    if (DieNumber) {
+      // a) If T is in the list of [previously hashed types], use the letter
+      // 'R' as the marker
+      addULEB128('R');
+
+      addULEB128(Desc->getAttribute());
+
+      // and use the unsigned LEB128 encoding of [the index of T in the
+      // list] as the attribute value;
+      addULEB128(DieNumber);
+      return;
+    }
+
+    // otherwise, b) use the letter 'T' as a the marker, ...
     addULEB128('T');
 
     addULEB128(Desc->getAttribute());
 
     // ... process the type T recursively by performing Steps 2 through 7, and
     // use the result as the attribute value.
+    DieNumber = Numbering.size();
     computeHash(Entry);
     return;
   }
@@ -230,6 +270,7 @@ void DIEHash::hashAttribute(AttrEntry Attr) {
   case dwarf::DW_FORM_string:
     llvm_unreachable(
         "Add support for DW_FORM_string if we ever start emitting them again");
+  case dwarf::DW_FORM_GNU_str_index:
   case dwarf::DW_FORM_strp:
     addULEB128(dwarf::DW_FORM_string);
     addString(cast<DIEString>(Value)->getString());
@@ -242,17 +283,18 @@ void DIEHash::hashAttribute(AttrEntry Attr) {
     addULEB128(dwarf::DW_FORM_sdata);
     addSLEB128((int64_t)cast<DIEInteger>(Value)->getValue());
     break;
-  // TODO: Add support for additional forms.
+  default:
+    llvm_unreachable("Add support for additional forms");
   }
 }
 
 // Go through the attributes from \param Attrs in the order specified in 7.27.4
 // and hash them.
-void DIEHash::hashAttributes(const DIEAttrs &Attrs) {
+void DIEHash::hashAttributes(const DIEAttrs &Attrs, dwarf::Tag Tag) {
 #define ADD_ATTR(ATTR)                                                         \
   {                                                                            \
     if (ATTR.Val != 0)                                                         \
-      hashAttribute(ATTR);                                                     \
+      hashAttribute(ATTR, Tag);                                                \
   }
 
   ADD_ATTR(Attrs.DW_AT_name);
@@ -312,14 +354,13 @@ void DIEHash::hashAttributes(const DIEAttrs &Attrs) {
 void DIEHash::addAttributes(DIE *Die) {
   DIEAttrs Attrs = {};
   collectAttributes(Die, Attrs);
-  hashAttributes(Attrs);
+  hashAttributes(Attrs, Die->getTag());
 }
 
 // Compute the hash of a DIE. This is based on the type signature computation
 // given in section 7.27 of the DWARF4 standard. It is the md5 hash of a
 // flattened description of the DIE.
 void DIEHash::computeHash(DIE *Die) {
-
   // Append the letter 'D', followed by the DWARF tag of the DIE.
   addULEB128('D');
   addULEB128(Die->getTag());
@@ -375,6 +416,8 @@ uint64_t DIEHash::computeDIEODRSignature(DIE *Die) {
 /// with the inclusion of the full CU and all top level CU entities.
 // TODO: Initialize the type chain at 0 instead of 1 for CU signatures.
 uint64_t DIEHash::computeCUSignature(DIE *Die) {
+  Numbering.clear();
+  Numbering[Die] = 1;
 
   // Hash the DIE.
   computeHash(Die);
@@ -394,6 +437,8 @@ uint64_t DIEHash::computeCUSignature(DIE *Die) {
 /// with the inclusion of additional forms not specifically called out in the
 /// standard.
 uint64_t DIEHash::computeTypeSignature(DIE *Die) {
+  Numbering.clear();
+  Numbering[Die] = 1;
 
   if (DIE *Parent = Die->getParent())
     addParentContext(Parent);

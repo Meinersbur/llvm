@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/MD5.h"
 
 namespace llvm {
@@ -118,12 +119,13 @@ private:
   void collectAttributes(DIE *Die, DIEAttrs &Attrs);
 
   /// \brief Hashes the attributes in \param Attrs in order.
-  void hashAttributes(const DIEAttrs &Attrs);
+  void hashAttributes(const DIEAttrs &Attrs, dwarf::Tag Tag);
 
   /// \brief Hashes an individual attribute.
-  void hashAttribute(AttrEntry Attr);
+  void hashAttribute(AttrEntry Attr, dwarf::Tag Tag);
 
 private:
   MD5 Hash;
+  DenseMap<DIE*, unsigned> Numbering;
 };
 }
