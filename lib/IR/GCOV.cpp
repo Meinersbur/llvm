@@ -51,7 +51,7 @@ bool GCOVFile::read(GCOVBuffer &Buffer) {
       // Use existing function while reading .gcda file.
       assert(i < Functions.size() && ".gcda data does not match .gcno data");
       GFun = Functions[i];
-    } else if (isGCNOFile(Format)){
+    } else if (isGCNOFile(Format)) {
       GFun = new GCOVFunction();
       Functions.push_back(GFun);
     }
@@ -85,7 +85,7 @@ GCOVFunction::~GCOVFunction() {
   DeleteContainerPointers(Blocks);
 }
 
-/// read - Read a aunction from the buffer. Return false if buffer cursor
+/// read - Read a function from the buffer. Return false if buffer cursor
 /// does not point to a function tag.
 bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
   if (!Buff.readFunctionTag())
@@ -117,7 +117,7 @@ bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
   (void)BlockTagFound;
   assert(BlockTagFound && "Block Tag not found!");
   uint32_t BlockCount = Buff.readInt();
-  for (int i = 0, e = BlockCount; i != e; ++i) {
+  for (uint32_t i = 0, e = BlockCount; i != e; ++i) {
     Buff.readInt(); // Block flags;
     Blocks.push_back(new GCOVBlock(i));
   }
@@ -127,7 +127,7 @@ bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
     uint32_t EdgeCount = (Buff.readInt() - 1) / 2;
     uint32_t BlockNo = Buff.readInt();
     assert(BlockNo < BlockCount && "Unexpected Block number!");
-    for (int i = 0, e = EdgeCount; i != e; ++i) {
+    for (uint32_t i = 0, e = EdgeCount; i != e; ++i) {
       Blocks[BlockNo]->addEdge(Buff.readInt());
       Buff.readInt(); // Edge flag
     }
@@ -136,14 +136,14 @@ bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
   // read line table.
   while (Buff.readLineTag()) {
     uint32_t LineTableLength = Buff.readInt();
-    uint32_t Size = Buff.getCursor() + LineTableLength*4;
+    uint32_t EndPos = Buff.getCursor() + LineTableLength*4;
     uint32_t BlockNo = Buff.readInt();
     assert(BlockNo < BlockCount && "Unexpected Block number!");
     GCOVBlock *Block = Blocks[BlockNo];
     Buff.readInt(); // flag
-    while (Buff.getCursor() != (Size - 4)) {
+    while (Buff.getCursor() != (EndPos - 4)) {
       StringRef Filename = Buff.readString();
-      if (Buff.getCursor() == (Size - 4)) break;
+      if (Buff.getCursor() == (EndPos - 4)) break;
       while (uint32_t L = Buff.readInt())
         Block->addLine(Filename, L);
     }
@@ -219,7 +219,7 @@ void GCOVBlock::dump() {
 /// collectLineCounts - Collect line counts. This must be used after
 /// reading .gcno and .gcda files.
 void GCOVLines::collectLineCounts(FileInfo &FI, StringRef Filename, 
-                                  uint32_t Count) {
+                                  uint64_t Count) {
   for (SmallVectorImpl<uint32_t>::iterator I = Lines.begin(),
          E = Lines.end(); I != E; ++I)
     FI.addLineCount(Filename, *I, Count);
@@ -236,7 +236,7 @@ void GCOVLines::dump() {
 // FileInfo implementation.
 
 /// addLineCount - Add line count for the given line number in a file.
-void FileInfo::addLineCount(StringRef Filename, uint32_t Line, uint32_t Count) {
+void FileInfo::addLineCount(StringRef Filename, uint32_t Line, uint64_t Count) {
   if (LineInfo.find(Filename) == LineInfo.end()) {
     OwningPtr<MemoryBuffer> Buff;
     if (error_code ec = MemoryBuffer::getFileOrSTDIN(Filename, Buff)) {
