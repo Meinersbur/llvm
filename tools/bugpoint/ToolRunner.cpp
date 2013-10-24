@@ -653,27 +653,31 @@ AbstractInterpreter *AbstractInterpreter::createJIT(const char *Argv0,
   return 0;
 }
 
-GCC::FileType CBE::OutputCode(const std::string &Bitcode,
-                              sys::Path &OutputCFile, std::string &Error,
+GCC::FileType CBE::OutputCode(StringRef Bitcode,
+                              std::string &OutputCFile, std::string &Error,
                               unsigned Timeout, unsigned MemoryLimit) {
-  sys::Path uniqueFile(Bitcode+".cbe.c");
-  std::string ErrMsg;
-  if (uniqueFile.makeUnique(true, &ErrMsg)) {
-    errs() << "Error making unique filename: " << ErrMsg << "\n";
+  //std::string uniqueFile(Bitcode+".cbe.c");
+  //std::string ErrMsg;
+
+  SmallString<128> uniqueFile;
+  int ErrorFD;
+  error_code EC = sys::fs::createTemporaryFile(Bitcode, ".cbe.c", ErrorFD, uniqueFile);
+  if (EC) {
+    errs() << "Error making unique filename: " << EC.message() << "\n";
     exit(1);
   }
-  OutputCFile = uniqueFile;
+  OutputCFile = uniqueFile.str();
   std::vector<const char *> LLCArgs;
-  LLCArgs.push_back(LLCPath.c_str());
+  LLCArgs.push_back(LLCPath.data());
 
   // Add any extra LLC args.
   for (unsigned i = 0, e = ToolArgs.size(); i != e; ++i)
-    LLCArgs.push_back(ToolArgs[i].c_str());
+    LLCArgs.push_back(ToolArgs[i].data());
 
   LLCArgs.push_back("-o");
-  LLCArgs.push_back(OutputCFile.c_str());   // Output to the C file
+  LLCArgs.push_back(OutputCFile.data());   // Output to the C file
   LLCArgs.push_back("-march=c");            // Output C language
-  LLCArgs.push_back(Bitcode.c_str());      // This is the input bitcode
+  LLCArgs.push_back(Bitcode.data());      // This is the input bitcode
   LLCArgs.push_back(0);
 
   outs() << "<cbe>"; outs().flush();
@@ -682,17 +686,17 @@ GCC::FileType CBE::OutputCode(const std::string &Bitcode,
           errs() << " " << LLCArgs[i];
         errs() << "\n";
         );
-  if (RunProgramWithTimeout(LLCPath, &LLCArgs[0], sys::Path(), sys::Path(),
-                            sys::Path(), Timeout, MemoryLimit))
+  if (RunProgramWithTimeout(LLCPath, &LLCArgs[0], StringRef(), StringRef(),
+                            StringRef(), Timeout, MemoryLimit))
     Error = ProcessFailure(LLCPath, &LLCArgs[0], Timeout, MemoryLimit);
   return GCC::CFile;
 }
 
 void CBE::compileProgram(const std::string &Bitcode, std::string *Error,
                          unsigned Timeout, unsigned MemoryLimit) {
-  sys::Path OutputCFile;
+  std::string OutputCFile;
   OutputCode(Bitcode, OutputCFile, *Error, Timeout, MemoryLimit);
-  OutputCFile.eraseFromDisk();
+  sys::fs::remove(OutputCFile);
 }
 
 int CBE::ExecuteProgram(const std::string &Bitcode,
@@ -704,15 +708,15 @@ int CBE::ExecuteProgram(const std::string &Bitcode,
                         const std::vector<std::string> &SharedLibs,
                         unsigned Timeout,
                         unsigned MemoryLimit) {
-  sys::Path OutputCFile;
+  std::string OutputCFile;
   OutputCode(Bitcode, OutputCFile, *Error, Timeout, MemoryLimit);
 
-  FileRemover CFileRemove(OutputCFile.str(), !SaveTemps);
+  FileRemover CFileRemove(OutputCFile, !SaveTemps);
 
   std::vector<std::string> GCCArgs(ArgsForGCC);
   GCCArgs.insert(GCCArgs.end(), SharedLibs.begin(), SharedLibs.end());
 
-  return gcc->ExecuteProgram(OutputCFile.str(), Args, GCC::CFile,
+  return gcc->ExecuteProgram(OutputCFile, Args, GCC::CFile,
                              InputFile, OutputFile, Error, GCCArgs,
                              Timeout, MemoryLimit);
 }
@@ -724,15 +728,15 @@ CBE *AbstractInterpreter::createCBE(const char *Argv0,
                                     const std::string &GCCBinary,
                                     const std::vector<std::string> *Args,
                                     const std::vector<std::string> *GCCArgs) {
-  sys::Path LLCPath =
+  std::string LLCPath =
     PrependMainExecutablePath("llc", Argv0, (void *)(intptr_t)&createCBE);
-  if (LLCPath.isEmpty()) {
+  if (LLCPath.empty()) {
     Message =
       "Cannot find `llc' in executable directory!\n";
     return 0;
   }
 
-  Message = "Found llc: " + LLCPath.str() + "\n";
+  Message = "Found llc: " + LLCPath + "\n";
   GCC *gcc = GCC::create(Message, GCCBinary, GCCArgs);
   if (!gcc) {
     errs() << Message << "\n";

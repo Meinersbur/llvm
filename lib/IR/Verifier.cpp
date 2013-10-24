@@ -2374,7 +2374,9 @@ bool llvm::verifyFunction(const Function &f, VerifierFailureAction action) {
   FunctionPassManager FPM(F.getParent());
   Verifier *V = new Verifier(action);
   FPM.add(V);
+  FPM.doInitialization(); //MK BUG: was missing 
   FPM.run(F);
+  FPM.doFinalization();
   return V->Broken;
 }
 

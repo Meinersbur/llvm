@@ -705,6 +705,10 @@ void RegionInfo::Calculate(Function &F) {
 }
 
 bool RegionInfo::runOnFunction(Function &F) {
+  if (F.getName() == "test") {
+    int a = 0;
+  }
+
   releaseMemory();
 
   DT = &getAnalysis<DominatorTree>();
