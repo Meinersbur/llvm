@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/GCOV.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
@@ -44,25 +45,28 @@ bool GCOVFile::read(GCOVBuffer &Buffer) {
   if (Format == GCOV::InvalidGCOV)
     return false;
 
-  unsigned i = 0;
-  while (1) {
-    GCOVFunction *GFun = NULL;
-    if (isGCDAFile(Format)) {
-      // Use existing function while reading .gcda file.
-      assert(i < Functions.size() && ".gcda data does not match .gcno data");
-      GFun = Functions[i];
-    } else if (isGCNOFile(Format)) {
-      GFun = new GCOVFunction();
+  if (isGCNOFile(Format)) {
+    while (true) {
+      GCOVFunction *GFun = new GCOVFunction();
+      if (!GFun->read(Buffer, Format))
+        break;
       Functions.push_back(GFun);
     }
-    if (!GFun || !GFun->read(Buffer, Format))
-      break;
-    ++i;
   }
+  else if (isGCDAFile(Format)) {
+    for (size_t i = 0, e = Functions.size(); i < e; ++i) {
+      bool ReadGCDA = Functions[i]->read(Buffer, Format);
+      (void)ReadGCDA;
+      assert(ReadGCDA && ".gcda data does not match .gcno data");
+    }
+    while (Buffer.readProgramTag())
+      ++ProgramCount;
+  }
+
   return true;
 }
 
-/// dump - Dump GCOVFile content on standard out for debugging purposes.
+/// dump - Dump GCOVFile content to dbgs() for debugging purposes.
 void GCOVFile::dump() {
   for (SmallVectorImpl<GCOVFunction *>::iterator I = Functions.begin(),
          E = Functions.end(); I != E; ++I)
@@ -75,6 +79,7 @@ void GCOVFile::collectLineCounts(FileInfo &FI) {
   for (SmallVectorImpl<GCOVFunction *>::iterator I = Functions.begin(),
          E = Functions.end(); I != E; ++I) 
     (*I)->collectLineCounts(FI);
+  FI.setProgramCount(ProgramCount);
 }
 
 //===----------------------------------------------------------------------===//
@@ -103,9 +108,18 @@ bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
 
   if (Format == GCOV::GCDA_402 || Format == GCOV::GCDA_404) {
     Buff.readArcTag();
+    uint32_t i = 0;
     uint32_t Count = Buff.readInt() / 2;
-    for (unsigned i = 0, e = Count; i != e; ++i) {
-      Blocks[i]->addCount(Buff.readInt64());
+
+    // This for loop adds the counts for each block. A second nested loop is
+    // required to combine the edge counts that are contained in the GCDA file.
+    for (uint32_t Line = 0; i < Count; ++Line) {
+      GCOVBlock &Block = *Blocks[Line];
+      for (size_t Edge = 0, End = Block.getNumEdges(); Edge < End; ++Edge) {
+        assert(i < Count && "Unexpected number of Edges!");
+        Block.addCount(Buff.readInt64());
+        ++i;
+      }
     }
     return true;
   }
@@ -152,9 +166,9 @@ bool GCOVFunction::read(GCOVBuffer &Buff, GCOV::GCOVFormat Format) {
   return true;
 }
 
-/// dump - Dump GCOVFunction content on standard out for debugging purposes.
+/// dump - Dump GCOVFunction content to dbgs() for debugging purposes.
 void GCOVFunction::dump() {
-  outs() <<  "===== " << Name << " @ " << Filename << ":" << LineNumber << "\n";
+  dbgs() <<  "===== " << Name << " @ " << Filename << ":" << LineNumber << "\n";
   for (SmallVectorImpl<GCOVBlock *>::iterator I = Blocks.begin(),
          E = Blocks.end(); I != E; ++I)
     (*I)->dump();
@@ -192,23 +206,23 @@ void GCOVBlock::collectLineCounts(FileInfo &FI) {
     I->second->collectLineCounts(FI, I->first(), Counter);
 }
 
-/// dump - Dump GCOVBlock content on standard out for debugging purposes.
+/// dump - Dump GCOVBlock content to dbgs() for debugging purposes.
 void GCOVBlock::dump() {
-  outs() << "Block : " << Number << " Counter : " << Counter << "\n";
+  dbgs() << "Block : " << Number << " Counter : " << Counter << "\n";
   if (!Edges.empty()) {
-    outs() << "\tEdges : ";
+    dbgs() << "\tEdges : ";
     for (SmallVectorImpl<uint32_t>::iterator I = Edges.begin(), E = Edges.end();
          I != E; ++I)
-      outs() << (*I) << ",";
-    outs() << "\n";
+      dbgs() << (*I) << ",";
+    dbgs() << "\n";
   }
   if (!Lines.empty()) {
-    outs() << "\tLines : ";
+    dbgs() << "\tLines : ";
     for (StringMap<GCOVLines *>::iterator LI = Lines.begin(),
            LE = Lines.end(); LI != LE; ++LI) {
-      outs() << LI->first() << " -> ";
+      dbgs() << LI->first() << " -> ";
       LI->second->dump();
-      outs() << "\n";
+      dbgs() << "\n";
     }
   }
 }
@@ -225,33 +239,15 @@ void GCOVLines::collectLineCounts(FileInfo &FI, StringRef Filename,
     FI.addLineCount(Filename, *I, Count);
 }
 
-/// dump - Dump GCOVLines content on standard out for debugging purposes.
+/// dump - Dump GCOVLines content to dbgs() for debugging purposes.
 void GCOVLines::dump() {
   for (SmallVectorImpl<uint32_t>::iterator I = Lines.begin(),
          E = Lines.end(); I != E; ++I)
-    outs() << (*I) << ",";
+    dbgs() << (*I) << ",";
 }
 
 //===----------------------------------------------------------------------===//
 // FileInfo implementation.
-
-/// addLineCount - Add line count for the given line number in a file.
-void FileInfo::addLineCount(StringRef Filename, uint32_t Line, uint64_t Count) {
-  if (LineInfo.find(Filename) == LineInfo.end()) {
-    OwningPtr<MemoryBuffer> Buff;
-    if (error_code ec = MemoryBuffer::getFileOrSTDIN(Filename, Buff)) {
-      errs() << Filename << ": " << ec.message() << "\n";
-      return;
-    }
-    StringRef AllLines = Buff.take()->getBuffer();
-    LineCounts L(AllLines.count('\n'));
-    L[Line-1] = Count;
-    LineInfo[Filename] = L;
-    return;
-  }
-  LineCounts &L = LineInfo[Filename];
-  L[Line-1] = Count;
-}
 
 /// print -  Print source files with collected line count information.
 void FileInfo::print(StringRef gcnoFile, StringRef gcdaFile) {
@@ -261,6 +257,7 @@ void FileInfo::print(StringRef gcnoFile, StringRef gcdaFile) {
     outs() << "        -:    0:Source:" << Filename << "\n";
     outs() << "        -:    0:Graph:" << gcnoFile << "\n";
     outs() << "        -:    0:Data:" << gcdaFile << "\n";
+    outs() << "        -:    0:Programs:" << ProgramCount << "\n";
     LineCounts &L = LineInfo[Filename];
     OwningPtr<MemoryBuffer> Buff;
     if (error_code ec = MemoryBuffer::getFileOrSTDIN(Filename, Buff)) {
@@ -268,16 +265,22 @@ void FileInfo::print(StringRef gcnoFile, StringRef gcdaFile) {
       return;
     }
     StringRef AllLines = Buff.take()->getBuffer();
-    for (unsigned i = 0, e = L.size(); i != e; ++i) {
-      if (L[i])
-        outs() << format("%9lu:", L[i]);
-      else
+    uint32_t i = 0;
+    while (!AllLines.empty()) {
+      if (L.find(i) != L.end()) {
+        if (L[i] == 0)
+          outs() << "    #####:";
+        else
+          outs() << format("%9lu:", L[i]);
+      } else {
         outs() << "        -:";
+      }
       std::pair<StringRef, StringRef> P = AllLines.split('\n');
       if (AllLines != P.first)
         outs() << format("%5u:", i+1) << P.first;
       outs() << "\n";
       AllLines = P.second;
+      ++i;
     }
   }
 }
