@@ -144,7 +144,7 @@ def int_molly_combuf_send_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr
 
 // Wait for previous transfers to finish so we can write into the buffer
 // mollyrt signature: void __molly_combuf_send_wait(void *sendbuf, uint64_t dstNode)
-def int_molly_combuf_send_wait : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*target rank*/]>;
+def int_molly_combuf_send_wait : Intrinsic<[llvm_anyptr_ty/*ptr buffer*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*target rank*/]>;
 
 // Writing to buffer has been finished so it can transported to the other side
 // mollyrt signature: void __molly_combuf_send(void *sendbuf, uint64_t dstNode)
@@ -169,7 +169,7 @@ def int_molly_combuf_recv_ptr : Intrinsic<[llvm_anyptr_ty], [llvm_anyptr_ty/*ptr
 
 // Wait for the data to be received completely so we can read from the buffer
 // mollyrt signature: void *__molly_combuf_recv_wait(void *recvbuf, uint64_t srcRank)
-def int_molly_combuf_recv_wait : Intrinsic<[llvm_anyptr_ty/*ptr to recvd data*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/]>;
+def int_molly_combuf_recv_wait : Intrinsic<[llvm_anyptr_ty/*ptr to recved data*/], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/]>;
 
 // Buffer has been read completely, can be overwritten again by the next transfer
 // mollyrt signature: void __molly_combuf_recv(void *recvbuf, uint64_t)

@@ -34,7 +34,7 @@ struct CTargetMachine : public TargetMachine {
 								   AnalysisID StartBefore
 								   );
 
-  virtual const DataLayout *getDataLayout() const { return 0; }
+  virtual const DataLayout *getDataLayout() const { return NULL; }
 };
 
 extern Target TheCBackendTarget;

@@ -81,6 +81,7 @@ namespace {
   /// CWriter - This class is the main chunk of code that converts an LLVM
   /// module to a C translation unit.
   class CWriter : public FunctionPass, public InstVisitor<CWriter> {
+    CTargetMachine *targetMachine;
     formatted_raw_ostream &Out;
     IntrinsicLowering *IL;
     Mangler *Mang;
@@ -107,8 +108,8 @@ namespace {
 
   public:
     static char ID;
-    explicit CWriter(formatted_raw_ostream &o)
-      : FunctionPass(ID), Out(o), IL(0), Mang(0), LI(0),
+    explicit CWriter(CTargetMachine *targetMachine, formatted_raw_ostream &o)
+      : FunctionPass(ID), targetMachine(targetMachine), Out(o), IL(0), Mang(0), LI(0),
         TheModule(0), TAsm(0), MRI(0), MOFI(0), TCtx(0), TD(0),
         OpaqueCounter(0), NextAnonValueNumber(0) {
       initializeLoopInfoPass(*PassRegistry::getPassRegistry());
@@ -1707,7 +1708,7 @@ bool CWriter::doInitialization(Module &M) {
   TAsm = new CBEMCAsmInfo();
   MRI  = new MCRegisterInfo();
   TCtx = new MCContext(TAsm, MRI, NULL);
-  Mang = new Mangler(*TCtx, NULL);
+  Mang = new Mangler(targetMachine);
 
   // Keep track of which functions are static ctors/dtors so they can have
   // an attribute added to their prototypes.
@@ -3520,9 +3521,9 @@ bool CTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
   PM.add(createGCLoweringPass());
   PM.add(createLowerInvokePass());
   PM.add(createCFGSimplificationPass());   // clean up after lower invoke.
-  PM.add(new CWriter(o));
+  PM.add(new CWriter(this, o));
 #if defined(LLVM_3_1) || defined(LLVM_3_2)
-  // This interface is depricated for 3.3+
+  // This interface is deprecated for 3.3+
   PM.add(createGCInfoDeleter());
 #endif
   return false;
