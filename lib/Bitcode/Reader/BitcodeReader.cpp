@@ -90,7 +90,6 @@ static GlobalValue::LinkageTypes GetDecodedLinkage(unsigned Val) {
   case 12: return GlobalValue::AvailableExternallyLinkage;
   case 13: return GlobalValue::LinkerPrivateLinkage;
   case 14: return GlobalValue::LinkerPrivateWeakLinkage;
-  case 15: return GlobalValue::LinkOnceODRAutoHideLinkage;
   }
 }
 
@@ -623,11 +622,7 @@ bool BitcodeReader::ParseAttrKind(uint64_t Code, Attribute::AttrKind *Kind) {
     *Kind = Attribute::ZExt;
     return false;
   default:
-    std::string Buf;
-    raw_string_ostream fmt(Buf);
-    fmt << "Unknown attribute kind (" << Code << ")";
-    fmt.flush();
-    return Error(Buf.c_str());
+    return Error("Unknown attribute kind");
   }
 }
 

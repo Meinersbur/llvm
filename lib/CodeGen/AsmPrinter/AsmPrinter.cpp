@@ -48,6 +48,7 @@
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Transforms/Utils/GlobalStatus.h"
 using namespace llvm;
 
 static const char *const DWARFGroupName = "DWARF Emission";
@@ -212,14 +213,12 @@ bool AsmPrinter::doInitialization(Module &M) {
   llvm_unreachable("Unknown exception type.");
 }
 
-void AsmPrinter::EmitLinkage(unsigned L, MCSymbol *GVSym) const {
-  GlobalValue::LinkageTypes Linkage = (GlobalValue::LinkageTypes)L;
-
+void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
+  GlobalValue::LinkageTypes Linkage = GV->getLinkage();
   switch (Linkage) {
   case GlobalValue::CommonLinkage:
   case GlobalValue::LinkOnceAnyLinkage:
   case GlobalValue::LinkOnceODRLinkage:
-  case GlobalValue::LinkOnceODRAutoHideLinkage:
   case GlobalValue::WeakAnyLinkage:
   case GlobalValue::WeakODRLinkage:
   case GlobalValue::LinkerPrivateWeakLinkage:
@@ -227,7 +226,19 @@ void AsmPrinter::EmitLinkage(unsigned L, MCSymbol *GVSym) const {
       // .globl _foo
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Global);
 
-      if (Linkage != GlobalValue::LinkOnceODRAutoHideLinkage)
+      bool CanBeHidden = false;
+
+      if (Linkage == GlobalValue::LinkOnceODRLinkage) {
+        if (GV->hasUnnamedAddr()) {
+          CanBeHidden = true;
+        } else {
+          GlobalStatus GS;
+          if (!GlobalStatus::analyzeGlobal(GV, GS) && !GS.IsCompared)
+            CanBeHidden = true;
+        }
+      }
+
+      if (!CanBeHidden)
         // .weak_definition _foo
         OutStreamer.EmitSymbolAttribute(GVSym, MCSA_WeakDefinition);
       else
@@ -399,7 +410,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
 
     OutStreamer.SwitchSection(TLVSect);
     // Emit the linkage here.
-    EmitLinkage(GV->getLinkage(), GVSym);
+    EmitLinkage(GV, GVSym);
     OutStreamer.EmitLabel(GVSym);
 
     // Three pointers in size:
@@ -418,7 +429,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
 
   OutStreamer.SwitchSection(TheSection);
 
-  EmitLinkage(GV->getLinkage(), GVSym);
+  EmitLinkage(GV, GVSym);
   EmitAlignment(AlignLog, GV);
 
   OutStreamer.EmitLabel(GVSym);
@@ -444,7 +455,7 @@ void AsmPrinter::EmitFunctionHeader() {
   OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F, Mang, TM));
   EmitVisibility(CurrentFnSym, F->getVisibility());
 
-  EmitLinkage(F->getLinkage(), CurrentFnSym);
+  EmitLinkage(F, CurrentFnSym);
   EmitAlignment(MF->getAlignment(), F);
 
   if (MAI->hasDotTypeDotSizeDirective())

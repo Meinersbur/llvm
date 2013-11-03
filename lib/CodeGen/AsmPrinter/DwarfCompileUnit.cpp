@@ -22,6 +22,8 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/MC/MCSection.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
@@ -94,6 +96,35 @@ int64_t CompileUnit::getDefaultLowerBound() const {
   }
 
   return -1;
+}
+
+/// Check whether the DIE for this MDNode can be shared across CUs.
+static bool isShareableAcrossCUs(const MDNode *N) {
+  // When the MDNode can be part of the type system, the DIE can be
+  // shared across CUs.
+  return DIDescriptor(N).isType() ||
+         (DIDescriptor(N).isSubprogram() && !DISubprogram(N).isDefinition());
+}
+
+/// getDIE - Returns the debug information entry map slot for the
+/// specified debug variable. We delegate the request to DwarfDebug
+/// when the DIE for this MDNode can be shared across CUs. The mappings
+/// will be kept in DwarfDebug for shareable DIEs.
+DIE *CompileUnit::getDIE(const MDNode *N) const {
+  if (isShareableAcrossCUs(N))
+    return DD->getDIE(N);
+  return MDNodeToDieMap.lookup(N);
+}
+
+/// insertDIE - Insert DIE into the map. We delegate the request to DwarfDebug
+/// when the DIE for this MDNode can be shared across CUs. The mappings
+/// will be kept in DwarfDebug for shareable DIEs.
+void CompileUnit::insertDIE(const MDNode *N, DIE *D) {
+  if (isShareableAcrossCUs(N)) {
+    DD->insertDIE(N, D);
+    return;
+  }
+  MDNodeToDieMap.insert(std::make_pair(N, D));
 }
 
 /// addFlag - Add a flag that is true.
@@ -243,8 +274,21 @@ void CompileUnit::addDelta(DIE *Die, dwarf::Attribute Attribute, dwarf::Form For
 /// addDIEEntry - Add a DIE attribute data and value.
 ///
 void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIE *Entry) {
-  // We currently only use ref4.
-  Die->addValue(Attribute, dwarf::DW_FORM_ref4, createDIEEntry(Entry));
+  addDIEEntry(Die, Attribute, createDIEEntry(Entry));
+}
+
+void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
+                              DIEEntry *Entry) {
+  const DIE *DieCU = Die->getCompileUnitOrNull();
+  const DIE *EntryCU = Entry->getEntry()->getCompileUnitOrNull();
+  if (!DieCU)
+    // We assume that Die belongs to this CU, if it is not linked to any CU yet.
+    DieCU = getCUDie();
+  if (!EntryCU)
+    EntryCU = getCUDie();
+  Die->addValue(Attribute, EntryCU == DieCU ? dwarf::DW_FORM_ref4
+                                            : dwarf::DW_FORM_ref_addr,
+                Entry);
 }
 
 /// Create a DIE with the given Tag, add the DIE to its parent, and
@@ -880,7 +924,7 @@ void CompileUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
   DIEEntry *Entry = getDIEEntry(Ty);
   // If it exists then use the existing value.
   if (Entry) {
-    Entity->addValue(Attribute, dwarf::DW_FORM_ref4, Entry);
+    addDIEEntry(Entity, Attribute, Entry);
     return;
   }
 
@@ -890,7 +934,7 @@ void CompileUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
   // Set up proxy.
   Entry = createDIEEntry(Buffer);
   insertDIEEntry(Ty, Entry);
-  Entity->addValue(Attribute, dwarf::DW_FORM_ref4, Entry);
+  addDIEEntry(Entity, Attribute, Entry);
 
   // If this is a complete composite type then include it in the
   // list of global types.
@@ -1786,33 +1830,6 @@ void CompileUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
   DIEBlock *MemLocationDie = new (DIEValueAllocator) DIEBlock();
   addUInt(MemLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_plus_uconst);
 
-  uint64_t Size = DT.getSizeInBits();
-  uint64_t FieldSize = getBaseTypeSize(DD, DT);
-
-  if (Size != FieldSize) {
-    // Handle bitfield.
-    addUInt(MemberDie, dwarf::DW_AT_byte_size, None,
-            getBaseTypeSize(DD, DT) >> 3);
-    addUInt(MemberDie, dwarf::DW_AT_bit_size, None, DT.getSizeInBits());
-
-    uint64_t Offset = DT.getOffsetInBits();
-    uint64_t AlignMask = ~(DT.getAlignInBits() - 1);
-    uint64_t HiMark = (Offset + FieldSize) & AlignMask;
-    uint64_t FieldOffset = (HiMark - FieldSize);
-    Offset -= FieldOffset;
-
-    // Maybe we need to work from the other end.
-    if (Asm->getDataLayout().isLittleEndian())
-      Offset = FieldSize - (Offset + Size);
-    addUInt(MemberDie, dwarf::DW_AT_bit_offset, None, Offset);
-
-    // Here WD_AT_data_member_location points to the anonymous
-    // field that includes this bit field.
-    addUInt(MemLocationDie, dwarf::DW_FORM_udata, FieldOffset >> 3);
-
-  } else
-    // This is not a bitfield.
-    addUInt(MemLocationDie, dwarf::DW_FORM_udata, DT.getOffsetInBits() >> 3);
 
   if (DT.getTag() == dwarf::DW_TAG_inheritance && DT.isVirtual()) {
 
@@ -1830,8 +1847,37 @@ void CompileUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
     addUInt(VBaseLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_plus);
 
     addBlock(MemberDie, dwarf::DW_AT_data_member_location, VBaseLocationDie);
-  } else
-    addBlock(MemberDie, dwarf::DW_AT_data_member_location, MemLocationDie);
+  } else {
+    uint64_t Size = DT.getSizeInBits();
+    uint64_t FieldSize = getBaseTypeSize(DD, DT);
+    uint64_t OffsetInBytes;
+
+    if (Size != FieldSize) {
+      // Handle bitfield.
+      addUInt(MemberDie, dwarf::DW_AT_byte_size, None,
+              getBaseTypeSize(DD, DT) >> 3);
+      addUInt(MemberDie, dwarf::DW_AT_bit_size, None, DT.getSizeInBits());
+
+      uint64_t Offset = DT.getOffsetInBits();
+      uint64_t AlignMask = ~(DT.getAlignInBits() - 1);
+      uint64_t HiMark = (Offset + FieldSize) & AlignMask;
+      uint64_t FieldOffset = (HiMark - FieldSize);
+      Offset -= FieldOffset;
+
+      // Maybe we need to work from the other end.
+      if (Asm->getDataLayout().isLittleEndian())
+        Offset = FieldSize - (Offset + Size);
+      addUInt(MemberDie, dwarf::DW_AT_bit_offset, None, Offset);
+
+      // Here WD_AT_data_member_location points to the anonymous
+      // field that includes this bit field.
+      OffsetInBytes = FieldOffset >> 3;
+    } else
+      // This is not a bitfield.
+      OffsetInBytes = DT.getOffsetInBits() >> 3;
+    addUInt(MemberDie, dwarf::DW_AT_data_member_location, None,
+            OffsetInBytes);
+  }
 
   if (DT.isProtected())
     addUInt(MemberDie, dwarf::DW_AT_accessibility, dwarf::DW_FORM_data1,
@@ -1899,4 +1945,15 @@ DIE *CompileUnit::getOrCreateStaticMemberDIE(const DIDerivedType DT) {
     addConstantFPValue(StaticMemberDIE, CFP);
 
   return StaticMemberDIE;
+}
+
+void CompileUnit::emitHeader(const MCSection *ASection,
+                             const MCSymbol *ASectionSym) {
+  Asm->OutStreamer.AddComment("DWARF version number");
+  Asm->EmitInt16(DD->getDwarfVersion());
+  Asm->OutStreamer.AddComment("Offset Into Abbrev. Section");
+  Asm->EmitSectionOffset(Asm->GetTempSymbol(ASection->getLabelBeginName()),
+                         ASectionSym);
+  Asm->OutStreamer.AddComment("Address Size (in bytes)");
+  Asm->EmitInt8(Asm->getDataLayout().getPointerSize());
 }

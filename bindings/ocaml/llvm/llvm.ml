@@ -332,7 +332,7 @@ external value_name : llvalue -> string = "llvm_value_name"
 external set_value_name : string -> llvalue -> unit = "llvm_set_value_name"
 external dump_value : llvalue -> unit = "llvm_dump_value"
 external replace_all_uses_with : llvalue -> llvalue -> unit
-                               = "LLVMReplaceAllUsesWith"
+                               = "llvm_replace_all_uses_with"
 
 (*--... Operations on uses .................................................--*)
 external use_begin : llvalue -> lluse option = "llvm_use_begin"
@@ -1167,6 +1167,8 @@ external build_ptrdiff : llvalue -> llvalue -> string -> llbuilder -> llvalue
 module MemoryBuffer = struct
   external of_file : string -> llmemorybuffer = "llvm_memorybuffer_of_file"
   external of_stdin : unit -> llmemorybuffer = "llvm_memorybuffer_of_stdin"
+  external of_string : ?name:string -> string -> llmemorybuffer = "llvm_memorybuffer_of_string"
+  external as_string : llmemorybuffer -> string = "llvm_memorybuffer_as_string"
   external dispose : llmemorybuffer -> unit = "llvm_memorybuffer_dispose"
 end
 

@@ -1,4 +1,4 @@
-/*===-- llvm_ocaml.c - LLVM Ocaml Glue --------------------------*- C++ -*-===*\
+/*===-- llvm_ocaml.c - LLVM OCaml Glue --------------------------*- C++ -*-===*\
 |*                                                                            *|
 |*                     The LLVM Compiler Infrastructure                       *|
 |*                                                                            *|
@@ -7,7 +7,7 @@
 |*                                                                            *|
 |*===----------------------------------------------------------------------===*|
 |*                                                                            *|
-|* This file glues LLVM's ocaml interface to its C interface. These functions *|
+|* This file glues LLVM's OCaml interface to its C interface. These functions *|
 |* are by and large transparent wrappers to the corresponding C functions.    *|
 |*                                                                            *|
 |* Note that these functions intentionally take liberties with the CAMLparamX *|
@@ -482,6 +482,13 @@ CAMLprim value llvm_set_value_name(value Name, LLVMValueRef Val) {
 /* llvalue -> unit */
 CAMLprim value llvm_dump_value(LLVMValueRef Val) {
   LLVMDumpValue(Val);
+  return Val_unit;
+}
+
+/* llvalue -> llvalue -> unit */
+CAMLprim value llvm_replace_all_uses_with(LLVMValueRef OldVal,
+                                          LLVMValueRef NewVal) {
+  LLVMReplaceAllUsesWith(OldVal, NewVal);
   return Val_unit;
 }
 
@@ -1987,6 +1994,30 @@ CAMLprim LLVMMemoryBufferRef llvm_memorybuffer_of_stdin(value Unit) {
     llvm_raise(llvm_ioerror_exn, Message);
   
   return MemBuf;
+}
+
+/* ?name:string -> string -> llmemorybuffer */
+CAMLprim LLVMMemoryBufferRef llvm_memorybuffer_of_string(value Name, value String) {
+  const char *NameCStr;
+  if(Name == Val_int(0))
+    NameCStr = "";
+  else
+    NameCStr = String_val(Field(Name, 0));
+
+  LLVMMemoryBufferRef MemBuf;
+  MemBuf = LLVMCreateMemoryBufferWithMemoryRangeCopy(
+                String_val(String), caml_string_length(String), NameCStr);
+
+  return MemBuf;
+}
+
+/* llmemorybuffer -> string */
+CAMLprim value llvm_memorybuffer_as_string(LLVMMemoryBufferRef MemBuf) {
+  value String = caml_alloc_string(LLVMGetBufferSize(MemBuf));
+  memcpy(String_val(String), LLVMGetBufferStart(MemBuf),
+         LLVMGetBufferSize(MemBuf));
+
+  return String;
 }
 
 /* llmemorybuffer -> unit */

@@ -274,7 +274,7 @@ typedef enum {
   LLVMLinkOnceAnyLinkage, /**< Keep one copy of function when linking (inline)*/
   LLVMLinkOnceODRLinkage, /**< Same, but only replaced by something
                             equivalent. */
-  LLVMLinkOnceODRAutoHideLinkage, /**< Like LinkOnceODR, but possibly hidden. */
+  LLVMLinkOnceODRAutoHideLinkage, /**< Obsolete */
   LLVMWeakAnyLinkage,     /**< Keep one copy of function when linking (weak) */
   LLVMWeakODRLinkage,     /**< Same, but only replaced by something
                             equivalent. */
@@ -432,6 +432,15 @@ void LLVMInstallFatalErrorHandler(LLVMFatalErrorHandler Handler);
  * behavior to the default.
  */
 void LLVMResetFatalErrorHandler(void);
+
+/**
+ * Disable LLVM's built-in stack trace code. This must be called before any
+ * other LLVM APIs; otherwise the results are undefined.
+ *
+ * FIXME: This API should be replaced by a LLVMEnablePrettyStackTrace()
+ * function; the default should be that pretty stack traces are disabled.
+ */
+void LLVMDisablePrettyStackTrace(void);
 
 /**
  * @defgroup LLVMCCoreContext Contexts
