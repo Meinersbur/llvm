@@ -566,11 +566,6 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
       DecodeIITType(NextElt, Infos, OutputTable);
     return;
   }
-  case IIT_VARARG: {
-      // Consume all the remaining args
-      OutputTable.push_back(IITDescriptor::get(IITDescriptor::Vararg, 0));
-      return;
-    }
   }
   llvm_unreachable("unhandled");
 }
