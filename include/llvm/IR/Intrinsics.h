@@ -79,8 +79,7 @@ namespace Intrinsic {
     enum IITDescriptorKind {
       Void, VarArg, MMX, Metadata, Half, Float, Double,
       Integer, Vector, Pointer, Struct,
-      Argument, ExtendVecArgument, TruncVecArgument, 
-      Vararg
+      Argument, ExtendVecArgument, TruncVecArgument
     } Kind;
     
     union {

@@ -617,7 +617,7 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
 
   switch (D.Kind) {
   case IITDescriptor::Void: return Type::getVoidTy(Context);
-  case IITDescriptor::VarArg: return Type::getVoidTy(Context);
+  //case IITDescriptor::VarArg: return Type::getVoidTy(Context);
   case IITDescriptor::MMX: return Type::getX86_MMXTy(Context);
   case IITDescriptor::Metadata: return Type::getMetadataTy(Context);
   case IITDescriptor::Half: return Type::getHalfTy(Context);
@@ -651,7 +651,7 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
     varargStart = std::max(varargStart, D.getArgumentNumber()+1);
     return VectorType::getTruncatedElementVectorType(cast<VectorType>(
                                                   Tys[D.getArgumentNumber()]));
-  case IITDescriptor::Vararg:
+  case IITDescriptor::VarArg:
      llvm_unreachable("Since we'd need to return multiple elements, we cannot handle varargs here");
   }
   llvm_unreachable("unhandled");
@@ -670,12 +670,12 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
 
   SmallVector<Type*, 8> ArgTys;
   while (!TableRef.empty()) {
-    if (TableRef.front().Kind == IITDescriptor::Vararg) { 
+    if (TableRef.front().Kind == IITDescriptor::VarArg) {
       TableRef = TableRef.slice(1);
       ArgTys.append(Tys.begin() + varargStart, Tys.end());
       varargStart = Tys.size();
       continue;
-    } 
+    }
     ArgTys.push_back(DecodeFixedType(TableRef, Tys, Context, varargStart));
   }
 

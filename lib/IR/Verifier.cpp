@@ -2194,8 +2194,6 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
            !isa<VectorType>(ArgTys[D.getArgumentNumber()]) ||
            VectorType::getTruncatedElementVectorType(
                          cast<VectorType>(ArgTys[D.getArgumentNumber()])) != Ty;
-  case IITDescriptor::Vararg:
-    return false;
   }
   llvm_unreachable("unhandled");
 }
@@ -2247,7 +2245,7 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   Assert1(!VerifyIntrinsicType(IFTy->getReturnType(), TableRef, ArgTys),
           "Intrinsic has incorrect return type!", IF);
   for (unsigned i = 0, e = IFTy->getNumParams(); i != e; ++i) {
-    if (TableRef.front().Kind == Intrinsic::IITDescriptor::Vararg) {
+    if (TableRef.front().Kind == Intrinsic::IITDescriptor::VarArg) {
       TableRef = TableRef.slice(1);
       for (;i!=e;i+=1) {
         ArgTys.push_back(IFTy->getParamType(i));
