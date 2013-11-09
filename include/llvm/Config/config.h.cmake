@@ -167,6 +167,9 @@
 /* Define if the gv program is available */
 #cmakedefine HAVE_GV ${HAVE_GV}
 
+#cmakedefine HAVE_INKSCAPE ${HAVE_INKSCAPE}
+#cmakedefine HAVE_INKVIEW ${HAVE_INKVIEW}
+
 /* Define to 1 if the system has the type `int64_t'. */
 #cmakedefine HAVE_INT64_T ${HAVE_INT64_T}
 
@@ -587,6 +590,10 @@
 
 /* Define to path to xdot.py program if found or 'echo xdot' otherwise */
 #cmakedefine LLVM_PATH_XDOT "${LLVM_PATH_XDOT}"
+
+#cmakedefine LLVM_PATH_INKSCAPE "${LLVM_PATH_INKSCAPE}"
+
+#cmakedefine LLVM_PATH_INKVIEW "${LLVM_PATH_INKVIEW}"
 
 /* Installation prefix directory */
 #cmakedefine LLVM_PREFIX "${LLVM_PREFIX}"

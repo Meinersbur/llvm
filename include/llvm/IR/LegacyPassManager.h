@@ -65,6 +65,12 @@ private:
   /// PassManagerImpl_New is the actual class. PassManager is just the
   /// wraper to publish simple pass manager interface
   PassManagerImpl *PM;
+
+#ifdef MOLLY
+public:
+  void add(Pass *P, bool preserve/* = false*/);
+  void unpreserve(Pass*);
+#endif
 };
 
 /// FunctionPassManager manages FunctionPasses and BasicBlockPassManagers.

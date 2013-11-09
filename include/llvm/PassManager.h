@@ -35,23 +35,5 @@ using legacy::PassManager;
 using legacy::FunctionPassManager;
 
 }
-#ifdef MOLLY
-  //FIXME: This is an extremely ugly hack to force other passes to preserve passes they don't know about (here e.g.: polly::IndependentBlocks preserving molly::FieldDetection)
-  //virtual void add(Pass *P, bool preserve/* = false*/) = 0;
-  //virtual void unpreserve(Pass*) = 0;
-  //template<typename T>
-  //void unpreserve() { unpreserve(&T::ID); }
-#endif
-
-#ifdef MOLLY
-  void add(Pass *P, bool preserve/* = false*/);
-  void unpreserve(Pass*);
-#endif
-
-#ifdef MOLLY
-public:
-  void add(Pass *P, bool preserve/* = false*/) { assert(!preserve && "Not yet supported for FPM"); add(P); }
-  //void unpreserve(Pass*) { }
-#endif
 
 #endif

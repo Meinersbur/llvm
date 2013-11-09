@@ -103,7 +103,79 @@ void llvm::DisplayGraph(StringRef FilenameRef, bool wait,
   std::string Filename = FilenameRef;
   wait &= !ViewBackground;
   std::string ErrMsg;
-#if HAVE_GRAPHVIZ
+
+#if (HAVE_INKSCAPE || HAVE_INKVIEW) && (HAVE_DOT || HAVE_FDP || HAVE_NEATO || HAVE_TWOPI || HAVE_CIRCO)
+  std::string PSFilename = Filename + ".svgz";
+  std::string prog;
+
+  // Set default grapher
+#if HAVE_CIRCO
+  prog = LLVM_PATH_CIRCO;
+#endif
+#if HAVE_TWOPI
+  prog = LLVM_PATH_TWOPI;
+#endif
+#if HAVE_NEATO
+  prog = LLVM_PATH_NEATO;
+#endif
+#if HAVE_FDP
+  prog = LLVM_PATH_FDP;
+#endif
+#if HAVE_DOT
+  prog = LLVM_PATH_DOT;
+#endif
+
+  // Find which program the user wants
+#if HAVE_DOT
+  if (program == GraphProgram::DOT)
+    prog = LLVM_PATH_DOT;
+#endif
+#if (HAVE_FDP)
+  if (program == GraphProgram::FDP)
+    prog = LLVM_PATH_FDP;
+#endif
+#if (HAVE_NEATO)
+  if (program == GraphProgram::NEATO)
+    prog = LLVM_PATH_NEATO;
+#endif
+#if (HAVE_TWOPI)
+  if (program == GraphProgram::TWOPI)
+    prog = LLVM_PATH_TWOPI;
+#endif
+#if (HAVE_CIRCO)
+  if (program == GraphProgram::CIRCO)
+    prog = LLVM_PATH_CIRCO;
+#endif
+
+  std::vector<const char*> args;
+  args.push_back(prog.c_str());
+  args.push_back("-Tsvgz");
+  args.push_back("-Nfontname=Courier");
+  args.push_back("-Gsize=7.5,10");
+  args.push_back(Filename.c_str());
+  args.push_back("-o");
+  args.push_back(PSFilename.c_str());
+  args.push_back(0);
+
+  errs() << "Running '" << prog << "' program... ";
+
+  if (!ExecGraphViewer(prog, args, Filename, true, ErrMsg))
+    return;
+
+#if HAVE_INKSCAPE
+  std::string ink(LLVM_PATH_INKSCAPE);
+#elif HAVE_INKVIEW
+  std::string ink(LLVM_PATH_INKVIEW);
+#endif
+  args.clear();
+  args.push_back(ink.c_str());
+  args.push_back(PSFilename.c_str());
+  args.push_back(0);
+
+  ErrMsg.clear();
+  if (!ExecGraphViewer(ink, args, PSFilename, wait, ErrMsg))
+    return;
+#elif HAVE_GRAPHVIZ
   std::string Graphviz(LLVM_PATH_GRAPHVIZ);
 
   std::vector<const char*> args;

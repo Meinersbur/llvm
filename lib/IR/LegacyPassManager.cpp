@@ -902,7 +902,7 @@ void PMDataManager::removeNotPreservedAnalysis(Pass *P) {
     if (Info->second->getAsImmutablePass() == 0 &&
         std::find(PreservedSet.begin(), PreservedSet.end(), Info->first) ==
         PreservedSet.end()) {
-#if MOLLY
+#ifdef MOLLY
       if (TPM->forcePreservePass(Info->second)) {
         DEBUG(llvm::dbgs() << " -- Pass '" << Info->second->getPassName() << "' not preserved by '" << P->getPassName() << "', but it's in the preserve list\n");
         continue;
