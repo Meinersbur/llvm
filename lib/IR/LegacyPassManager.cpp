@@ -1,4 +1,4 @@
-//===- PassManager.cpp - LLVM Pass Infrastructure Implementation ----------===//
+//===- LegacyPassManager.cpp - LLVM Pass Infrastructure Implementation ----===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,16 +7,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the LLVM Pass Manager infrastructure.
+// This file implements the legacy LLVM Pass Manager infrastructure.
 //
 //===----------------------------------------------------------------------===//
 
 
-#include "llvm/PassManagers.h"
 #include "llvm/Assembly/PrintModulePass.h"
 #include "llvm/Assembly/Writer.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
-#include "llvm/PassManager.h"
+#include "llvm/IR/LegacyPassManagers.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -29,10 +29,9 @@
 #include <algorithm>
 #include <map>
 using namespace llvm;
+using namespace llvm::legacy;
 
 // See PassManagers.h for Pass Manager infrastructure overview.
-
-namespace llvm {
 
 //===----------------------------------------------------------------------===//
 // Pass debugging information.  Often it is useful to find out what pass is
@@ -41,10 +40,12 @@ namespace llvm {
 // pass name to be printed before it executes.
 //
 
+namespace {
 // Different debug levels that can be enabled...
 enum PassDebugLevel {
   Disabled, Arguments, Structure, Executions, Details
 };
+}
 
 static cl::opt<enum PassDebugLevel>
 PassDebugging("debug-pass", cl::Hidden,
@@ -57,8 +58,10 @@ PassDebugging("debug-pass", cl::Hidden,
   clEnumVal(Details   , "print pass details when it is executed"),
                              clEnumValEnd));
 
+namespace {
 typedef llvm::cl::list<const llvm::PassInfo *, bool, PassNameParser>
 PassOptionList;
+}
 
 // Print IR out before/after specified passes.
 static PassOptionList
@@ -107,8 +110,6 @@ static bool ShouldPrintAfterPass(const PassInfo *PI) {
   return PrintAfterAll || ShouldPrintBeforeOrAfterPass(PI, PrintAfter);
 }
 
-} // End of llvm namespace
-
 /// isPassDebuggingExecutionsOrMore - Return true if -debug-pass=Executions
 /// or higher is specified.
 bool PMDataManager::isPassDebuggingExecutionsOrMore() const {
@@ -150,7 +151,6 @@ void PassManagerPrettyStackEntry::print(raw_ostream &OS) const {
 
 
 namespace {
-
 //===----------------------------------------------------------------------===//
 // BBPassManager
 //
@@ -207,10 +207,10 @@ public:
 };
 
 char BBPassManager::ID = 0;
-}
+} // End anonymous namespace
 
 namespace llvm {
-
+namespace legacy {
 //===----------------------------------------------------------------------===//
 // FunctionPassManagerImpl
 //
@@ -278,7 +278,10 @@ public:
 void FunctionPassManagerImpl::anchor() {}
 
 char FunctionPassManagerImpl::ID = 0;
+} // End of legacy namespace
+} // End of llvm namespace
 
+namespace {
 //===----------------------------------------------------------------------===//
 // MPPassManager
 //
@@ -373,6 +376,10 @@ public:
 };
 
 char MPPassManager::ID = 0;
+} // End anonymous namespace
+
+namespace llvm {
+namespace legacy {
 //===----------------------------------------------------------------------===//
 // PassManagerImpl
 //
@@ -451,6 +458,7 @@ public:
 void PassManagerImpl::anchor() {}
 
 char PassManagerImpl::ID = 0;
+} // End of legacy namespace
 } // End of llvm namespace
 
 namespace {
