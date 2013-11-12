@@ -66,6 +66,16 @@ static cl::opt<int> ConstantIslandsSmallOffset(
   cl::desc("Make small offsets be this amount for testing purposes"),
   cl::Hidden);
 
+//
+// For testing purposes we tell it to not use relaxed load forms so that it
+// will split blocks.
+//
+static cl::opt<bool> NoLoadRelaxation(
+  "mips-constant-islands-no-load-relaxation",
+  cl::init(false),
+  cl::desc("Don't relax loads to long loads - for testing purposes"),
+  cl::Hidden);
+
 
 namespace {
 
@@ -168,6 +178,9 @@ namespace {
         unsigned xMaxDisp = ConstantIslandsSmallOffset?
                             ConstantIslandsSmallOffset: MaxDisp;
         return xMaxDisp;
+      }
+      void setMaxDisp(unsigned val) {
+        MaxDisp = val;
       }
       unsigned getLongFormMaxDisp() const {
         return LongFormMaxDisp;
@@ -615,6 +628,8 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
             Bits = 8;
             Scale = 4;
             LongFormOpcode = Mips::LwRxPcTcpX16;
+            LongFormBits = 16;
+            LongFormScale = 1;
             break;
           case Mips::LwRxPcTcpX16:
             Bits = 16;
@@ -728,7 +743,7 @@ MachineBasicBlock *MipsConstantIslands::splitBlockBeforeInstr
   // Note the new unconditional branch is not being recorded.
   // There doesn't seem to be meaningful DebugInfo available; this doesn't
   // correspond to anything in the source.
-  BuildMI(OrigBB, DebugLoc(), TII->get(Mips::BimmX16)).addMBB(NewBB);
+  BuildMI(OrigBB, DebugLoc(), TII->get(Mips::Bimm16)).addMBB(NewBB);
   ++NumSplit;
 
   // Update the CFG.  All succs of OrigBB are now succs of NewBB.
@@ -872,7 +887,7 @@ static bool BBIsJumpedOver(MachineBasicBlock *MBB) {
   MachineBasicBlock *Succ = *MBB->succ_begin();
   MachineBasicBlock *Pred = *MBB->pred_begin();
   MachineInstr *PredMI = &Pred->back();
-  if (PredMI->getOpcode() == Mips::BimmX16)
+  if (PredMI->getOpcode() == Mips::Bimm16)
     return PredMI->getOperand(0).getMBB() == Succ;
   return false;
 }
@@ -977,6 +992,7 @@ int MipsConstantIslands::findLongFormInRangeCPEntry
                        true)) {
     DEBUG(dbgs() << "In range\n");
     UserMI->setDesc(TII->get(U.getLongFormOpcode()));
+    U.setMaxDisp(U.getLongFormMaxDisp());
     return 2;  // instruction is longer length now
   }
 
@@ -1016,6 +1032,8 @@ int MipsConstantIslands::findLongFormInRangeCPEntry
 /// the specific unconditional branch instruction.
 static inline unsigned getUnconditionalBrDisp(int Opc) {
   switch (Opc) {
+  case Mips::Bimm16:
+    return ((1<<10)-1)*2;
   case Mips::BimmX16:
     return ((1<<16)-1)*2;
   default:
@@ -1103,7 +1121,7 @@ void MipsConstantIslands::createNewWater(unsigned CPUserIndex,
       // but if the preceding conditional branch is out of range, the targets
       // will be exchanged, and the altered branch may be out of range, so the
       // machinery has to know about it.
-      int UncondBr = Mips::BimmX16;
+      int UncondBr = Mips::Bimm16;
       BuildMI(UserMBB, DebugLoc(), TII->get(UncondBr)).addMBB(NewMBB);
       unsigned MaxDisp = getUnconditionalBrDisp(UncondBr);
       ImmBranches.push_back(ImmBranch(&UserMBB->back(),
@@ -1214,9 +1232,10 @@ bool MipsConstantIslands::handleConstantPoolUser(unsigned CPUserIndex) {
     // No water found.
     // we first see if a longer form of the instrucion could have reached
     // the constant. in that case we won't bother to split
-#ifdef IN_PROGRESS
-    result = findLongFormInRangeCPEntry(U, UserOffset);
-#endif
+    if (!NoLoadRelaxation) {
+      result = findLongFormInRangeCPEntry(U, UserOffset);
+      if (result != 0) return true;
+    }
     DEBUG(dbgs() << "No water found\n");
     createNewWater(CPUserIndex, UserOffset, NewMBB);
 

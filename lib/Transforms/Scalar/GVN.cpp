@@ -2732,8 +2732,15 @@ void GVN::addDeadBlock(BasicBlock *BB) {
 
     for (pred_iterator PI = pred_begin(B), PE = pred_end(B); PI != PE; PI++) {
       BasicBlock *P = *PI;
+
       if (!DeadBlocks.count(P))
         continue;
+
+      if (isCriticalEdge(P->getTerminator(), GetSuccessorNumber(P, B))) {
+        if (BasicBlock *S = splitCriticalEdges(P, B))
+          DeadBlocks.insert(P = S);
+      }
+
       for (BasicBlock::iterator II = B->begin(); isa<PHINode>(II); ++II) {
         PHINode &Phi = cast<PHINode>(*II);
         Phi.setIncomingValue(Phi.getBasicBlockIndex(P),
