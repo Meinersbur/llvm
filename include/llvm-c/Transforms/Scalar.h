@@ -56,6 +56,15 @@ void LLVMAddJumpThreadingPass(LLVMPassManagerRef PM);
 /** See llvm::createLICMPass function. */
 void LLVMAddLICMPass(LLVMPassManagerRef PM);
 
+/** See llvm::createQPXUnalignedPass function. */
+void LLVMAddQPXUnalignedPass(LLVMPassManagerRef PM);
+
+/** See llvm::createLoopDataPrefetchPass function. */
+void LLVMAddLoopDataPrefetchPass(LLVMPassManagerRef PM);
+
+/** See llvm::createLoopIncAMPrepPass function. */
+void LLVMAddLoopIncAMPrepPass(LLVMPassManagerRef PM);
+
 /** See llvm::createLoopDeletionPass function. */
 void LLVMAddLoopDeletionPass(LLVMPassManagerRef PM);
 

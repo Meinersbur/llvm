@@ -960,7 +960,9 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
   }
 
   case ISD::SETCC:
-    return SelectSETCC(N);
+    if (N->getValueType(0).getSimpleVT().SimpleTy != MVT::v4i1) // QPX
+      return SelectSETCC(N);
+    break;
   case PPCISD::GlobalBaseReg:
     return getGlobalBaseReg();
 
@@ -1066,6 +1068,8 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
         assert((!isSExt || LoadedVT == MVT::i16) && "Invalid sext update load");
         switch (LoadedVT.getSimpleVT().SimpleTy) {
           default: llvm_unreachable("Invalid PPC load type!");
+          case MVT::v4f64: Opcode = PPC::QVLFDUX; break; // QPX
+          case MVT::v4f32: Opcode = PPC::QVLFSUX; break; // QPX
           case MVT::f64: Opcode = PPC::LFDUX; break;
           case MVT::f32: Opcode = PPC::LFSUX; break;
           case MVT::i32: Opcode = PPC::LWZUX; break;

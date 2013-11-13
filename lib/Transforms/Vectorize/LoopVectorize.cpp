@@ -1883,6 +1883,21 @@ getIntrinsicIDForCall(CallInst *CI, const TargetLibraryInfo *TLI) {
     case Intrinsic::log:
     case Intrinsic::log10:
     case Intrinsic::log2:
+    case Intrinsic::tan:
+    case Intrinsic::asin:
+    case Intrinsic::acos:
+    case Intrinsic::atan:
+    case Intrinsic::atan2:
+    case Intrinsic::cbrt:
+    case Intrinsic::sinh:
+    case Intrinsic::cosh:
+    case Intrinsic::tanh:
+    case Intrinsic::asinh:
+    case Intrinsic::acosh:
+    case Intrinsic::atanh:
+    case Intrinsic::exp10:
+    case Intrinsic::expm1:
+    case Intrinsic::log1p:
     case Intrinsic::fabs:
     case Intrinsic::copysign:
     case Intrinsic::floor:
@@ -1946,6 +1961,66 @@ getIntrinsicIDForCall(CallInst *CI, const TargetLibraryInfo *TLI) {
   case LibFunc::log2f:
   case LibFunc::log2l:
     return checkUnaryFloatSignature(*CI, Intrinsic::log2);
+  case LibFunc::tan:
+  case LibFunc::tanf:
+  case LibFunc::tanl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::tan);
+  case LibFunc::asin:
+  case LibFunc::asinf:
+  case LibFunc::asinl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::asin);
+  case LibFunc::acos:
+  case LibFunc::acosf:
+  case LibFunc::acosl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::acos);
+  case LibFunc::atan:
+  case LibFunc::atanf:
+  case LibFunc::atanl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::atan);
+  case LibFunc::atan2:
+  case LibFunc::atan2f:
+  case LibFunc::atan2l:
+    return checkBinaryFloatSignature(*CI, Intrinsic::atan2);
+  case LibFunc::cbrt:
+  case LibFunc::cbrtf:
+  case LibFunc::cbrtl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::cbrt);
+  case LibFunc::sinh:
+  case LibFunc::sinhf:
+  case LibFunc::sinhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::sinh);
+  case LibFunc::cosh:
+  case LibFunc::coshf:
+  case LibFunc::coshl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::cosh);
+  case LibFunc::tanh:
+  case LibFunc::tanhf:
+  case LibFunc::tanhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::tanh);
+  case LibFunc::asinh:
+  case LibFunc::asinhf:
+  case LibFunc::asinhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::asinh);
+  case LibFunc::acosh:
+  case LibFunc::acoshf:
+  case LibFunc::acoshl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::acosh);
+  case LibFunc::atanh:
+  case LibFunc::atanhf:
+  case LibFunc::atanhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::atanh);
+  case LibFunc::exp10:
+  case LibFunc::exp10f:
+  case LibFunc::exp10l:
+    return checkUnaryFloatSignature(*CI, Intrinsic::exp10);
+  case LibFunc::expm1:
+  case LibFunc::expm1f:
+  case LibFunc::expm1l:
+    return checkUnaryFloatSignature(*CI, Intrinsic::expm1);
+  case LibFunc::log1p:
+  case LibFunc::log1pf:
+  case LibFunc::log1pl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::log1p);
   case LibFunc::fabs:
   case LibFunc::fabsf:
   case LibFunc::fabsl:

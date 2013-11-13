@@ -421,6 +421,21 @@ private:
   SDValue SoftenFloatRes_UNDEF(SDNode *N);
   SDValue SoftenFloatRes_VAARG(SDNode *N);
   SDValue SoftenFloatRes_XINT_TO_FP(SDNode *N);
+  SDValue SoftenFloatRes_FTAN(SDNode *N);
+  SDValue SoftenFloatRes_FASIN(SDNode *N);
+  SDValue SoftenFloatRes_FACOS(SDNode *N);
+  SDValue SoftenFloatRes_FATAN(SDNode *N);
+  SDValue SoftenFloatRes_FATAN2(SDNode *N);
+  SDValue SoftenFloatRes_FCBRT(SDNode *N);
+  SDValue SoftenFloatRes_FSINH(SDNode *N);
+  SDValue SoftenFloatRes_FCOSH(SDNode *N);
+  SDValue SoftenFloatRes_FTANH(SDNode *N);
+  SDValue SoftenFloatRes_FASINH(SDNode *N);
+  SDValue SoftenFloatRes_FACOSH(SDNode *N);
+  SDValue SoftenFloatRes_FATANH(SDNode *N);
+  SDValue SoftenFloatRes_FEXP10(SDNode *N);
+  SDValue SoftenFloatRes_FEXPM1(SDNode *N);
+  SDValue SoftenFloatRes_FLOG1P(SDNode *N);
 
   // Operand Float to Integer Conversion.
   bool SoftenFloatOperand(SDNode *N, unsigned OpNo);
@@ -478,6 +493,21 @@ private:
   void ExpandFloatRes_FTRUNC    (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_LOAD      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_XINT_TO_FP(SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FTAN      (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FASIN     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FACOS     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FATAN     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FATAN2    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FCBRT     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FSINH     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FCOSH     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FTANH     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FASINH    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FACOSH    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FATANH    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FEXP10    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FEXPM1    (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FLOG1P    (SDNode *N, SDValue &Lo, SDValue &Hi);
 
   // Float Operand Expansion.
   bool ExpandFloatOperand(SDNode *N, unsigned OperandNo);

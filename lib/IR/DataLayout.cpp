@@ -517,6 +517,13 @@ unsigned DataLayout::getPointerTypeSizeInBits(Type *Ty) const {
   return getTypeSizeInBits(Ty->getScalarType());
 }
 
+uint64_t DataLayout::getTypeStoreSize(Type *Ty) const {
+  if (Ty->isVectorTy() && getTypeSizeInBits(Ty->getScalarType()) < 8)
+    return Ty->getVectorNumElements();
+
+  return (getTypeSizeInBits(Ty)+7)/8;
+}
+
 /*!
   \param abi_or_pref Flag that determines which alignment is returned. true
   returns the ABI alignment, false returns the preferred alignment.

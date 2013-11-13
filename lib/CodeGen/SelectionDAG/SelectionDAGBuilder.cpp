@@ -4593,6 +4593,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     bool isVol = cast<ConstantInt>(I.getArgOperand(4))->getZExtValue();
     DAG.setRoot(DAG.getMemset(getRoot(), sdl, Op1, Op2, Op3, Align, isVol,
                               MachinePointerInfo(I.getArgOperand(0))));
+    // FIXME: When DAG.getMemset turns this into stores, they should really be
+    // added to PendingMemOps.
     return 0;
   }
   case Intrinsic::memmove: {
@@ -4978,6 +4980,20 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   case Intrinsic::fabs:
   case Intrinsic::sin:
   case Intrinsic::cos:
+  case Intrinsic::tan:
+  case Intrinsic::asin:
+  case Intrinsic::acos:
+  case Intrinsic::atan:
+  case Intrinsic::cbrt:
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+  case Intrinsic::asinh:
+  case Intrinsic::acosh:
+  case Intrinsic::atanh:
+  case Intrinsic::exp10:
+  case Intrinsic::expm1:
+  case Intrinsic::log1p:
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
@@ -4991,6 +5007,20 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     case Intrinsic::fabs:      Opcode = ISD::FABS;       break;
     case Intrinsic::sin:       Opcode = ISD::FSIN;       break;
     case Intrinsic::cos:       Opcode = ISD::FCOS;       break;
+    case Intrinsic::tan:       Opcode = ISD::FTAN;       break;
+    case Intrinsic::asin:      Opcode = ISD::FASIN;      break;
+    case Intrinsic::acos:      Opcode = ISD::FACOS;      break;
+    case Intrinsic::atan:      Opcode = ISD::FATAN;      break;
+    case Intrinsic::cbrt:      Opcode = ISD::FCBRT;      break;
+    case Intrinsic::sinh:      Opcode = ISD::FSINH;      break;
+    case Intrinsic::cosh:      Opcode = ISD::FCOSH;      break;
+    case Intrinsic::tanh:      Opcode = ISD::FTANH;      break;
+    case Intrinsic::asinh:     Opcode = ISD::FASINH;     break;
+    case Intrinsic::acosh:     Opcode = ISD::FACOSH;     break;
+    case Intrinsic::atanh:     Opcode = ISD::FATANH;     break;
+    case Intrinsic::exp10:     Opcode = ISD::FEXP10;     break;
+    case Intrinsic::expm1:     Opcode = ISD::FEXPM1;     break;
+    case Intrinsic::log1p:     Opcode = ISD::FLOG1P;     break;
     case Intrinsic::floor:     Opcode = ISD::FFLOOR;     break;
     case Intrinsic::ceil:      Opcode = ISD::FCEIL;      break;
     case Intrinsic::trunc:     Opcode = ISD::FTRUNC;     break;
@@ -5005,11 +5035,20 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return 0;
   }
   case Intrinsic::copysign:
-    setValue(&I, DAG.getNode(ISD::FCOPYSIGN, sdl,
+  case Intrinsic::atan2: {
+    unsigned Opcode;
+    switch (Intrinsic) {
+    default: llvm_unreachable("Impossible intrinsic");  // Can't reach here.
+    case Intrinsic::copysign:      Opcode = ISD::FCOPYSIGN;      break;
+    case Intrinsic::atan2:         Opcode = ISD::FATAN2;         break;
+    }
+
+    setValue(&I, DAG.getNode(Opcode, sdl,
                              getValue(I.getArgOperand(0)).getValueType(),
                              getValue(I.getArgOperand(0)),
                              getValue(I.getArgOperand(1))));
     return 0;
+  }
   case Intrinsic::fma:
     setValue(&I, DAG.getNode(ISD::FMA, sdl,
                              getValue(I.getArgOperand(0)).getValueType(),
@@ -5816,6 +5855,25 @@ bool SelectionDAGBuilder::visitUnaryFloatCall(const CallInst &I,
   return true;
 }
 
+/// visitBinaryFloatCall - If a call instruction is a binary floating-point
+/// operation (as expected), translate it to an SDNode with the specified opcode
+/// and return true.
+bool SelectionDAGBuilder::visitBinaryFloatCall(const CallInst &I,
+                                               unsigned Opcode) {
+  // Sanity check that it really is a binary floating-point call.
+  if (I.getNumArgOperands() != 2 ||
+      !I.getArgOperand(0)->getType()->isFloatingPointTy() ||
+      I.getType() != I.getArgOperand(0)->getType() ||
+      I.getType() != I.getArgOperand(1)->getType() ||
+      !I.onlyReadsMemory())
+    return false;
+
+  SDValue Tmp1 = getValue(I.getArgOperand(0));
+  SDValue Tmp2 = getValue(I.getArgOperand(1));
+  setValue(&I, DAG.getNode(Opcode, getCurSDLoc(), Tmp1.getValueType(), Tmp1, Tmp2));
+  return true;
+}
+
 void SelectionDAGBuilder::visitCall(const CallInst &I) {
   // Handle inline assembly differently.
   if (isa<InlineAsm>(I.getCalledValue())) {
@@ -5939,6 +5997,96 @@ void SelectionDAGBuilder::visitCall(const CallInst &I) {
       case LibFunc::exp2f:
       case LibFunc::exp2l:
         if (visitUnaryFloatCall(I, ISD::FEXP2))
+          return;
+        break;
+      case LibFunc::tan:
+      case LibFunc::tanf:
+      case LibFunc::tanl:
+        if (visitUnaryFloatCall(I, ISD::FTAN))
+          return;
+        break;
+      case LibFunc::asin:
+      case LibFunc::asinf:
+      case LibFunc::asinl:
+        if (visitUnaryFloatCall(I, ISD::FASIN))
+          return;
+        break;
+      case LibFunc::acos:
+      case LibFunc::acosf:
+      case LibFunc::acosl:
+        if (visitUnaryFloatCall(I, ISD::FACOS))
+          return;
+        break;
+      case LibFunc::atan:
+      case LibFunc::atanf:
+      case LibFunc::atanl:
+        if (visitUnaryFloatCall(I, ISD::FATAN))
+          return;
+        break;
+      case LibFunc::atan2:
+      case LibFunc::atan2f:
+      case LibFunc::atan2l:
+        if (visitBinaryFloatCall(I, ISD::FATAN2))
+          return;
+        break;
+      case LibFunc::cbrt:
+      case LibFunc::cbrtf:
+      case LibFunc::cbrtl:
+        if (visitUnaryFloatCall(I, ISD::FCBRT))
+          return;
+        break;
+      case LibFunc::sinh:
+      case LibFunc::sinhf:
+      case LibFunc::sinhl:
+        if (visitUnaryFloatCall(I, ISD::FSINH))
+          return;
+        break;
+      case LibFunc::cosh:
+      case LibFunc::coshf:
+      case LibFunc::coshl:
+        if (visitUnaryFloatCall(I, ISD::FCOSH))
+          return;
+        break;
+      case LibFunc::tanh:
+      case LibFunc::tanhf:
+      case LibFunc::tanhl:
+        if (visitUnaryFloatCall(I, ISD::FTANH))
+          return;
+        break;
+      case LibFunc::asinh:
+      case LibFunc::asinhf:
+      case LibFunc::asinhl:
+        if (visitUnaryFloatCall(I, ISD::FASINH))
+          return;
+        break;
+      case LibFunc::acosh:
+      case LibFunc::acoshf:
+      case LibFunc::acoshl:
+        if (visitUnaryFloatCall(I, ISD::FACOSH))
+          return;
+        break;
+      case LibFunc::atanh:
+      case LibFunc::atanhf:
+      case LibFunc::atanhl:
+        if (visitUnaryFloatCall(I, ISD::FATANH))
+          return;
+        break;
+      case LibFunc::exp10:
+      case LibFunc::exp10f:
+      case LibFunc::exp10l:
+        if (visitUnaryFloatCall(I, ISD::FEXP10))
+          return;
+        break;
+      case LibFunc::expm1:
+      case LibFunc::expm1f:
+      case LibFunc::expm1l:
+        if (visitUnaryFloatCall(I, ISD::FEXPM1))
+          return;
+        break;
+      case LibFunc::log1p:
+      case LibFunc::log1pf:
+      case LibFunc::log1pl:
+        if (visitUnaryFloatCall(I, ISD::FLOG1P))
           return;
         break;
       case LibFunc::memcmp:

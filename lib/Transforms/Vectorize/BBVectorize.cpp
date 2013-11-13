@@ -664,6 +664,21 @@ namespace {
       case Intrinsic::exp:
       case Intrinsic::exp2:
       case Intrinsic::pow:
+      case Intrinsic::tan:
+      case Intrinsic::asin:
+      case Intrinsic::acos:
+      case Intrinsic::atan:
+      case Intrinsic::atan2:
+      case Intrinsic::cbrt:
+      case Intrinsic::sinh:
+      case Intrinsic::cosh:
+      case Intrinsic::tanh:
+      case Intrinsic::asinh:
+      case Intrinsic::acosh:
+      case Intrinsic::atanh:
+      case Intrinsic::exp10:
+      case Intrinsic::expm1:
+      case Intrinsic::log1p:
         return Config.VectorizeMath;
       case Intrinsic::fma:
       case Intrinsic::fmuladd:

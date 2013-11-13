@@ -136,14 +136,16 @@ def PPCA2Itineraries : ProcessorItineraries<
   InstrItinData<FPFused     , [InstrStage<1, [FU]>],
                               [6, 1, 1, 1]>,
   InstrItinData<FPRes       , [InstrStage<1, [FU]>],
-                              [6, 1]>
+                              [6, 1]>,
+  InstrItinData<VecPerm     , [InstrStage<1, [FU]>], // QPX
+                              [2, 1, 1, 1]>
 ]>;
 
 // ===---------------------------------------------------------------------===//
 // A2 machine model for scheduling and other instruction cost heuristics.
 
 def PPCA2Model : SchedMachineModel {
-  let IssueWidth = 1;  // 2 micro-ops are dispatched per cycle.
+  let IssueWidth = 1;  // 1 micro-op is dispatched per cycle.
   let MinLatency = -1; // OperandCycles are interpreted as MinLatency.
   let LoadLatency = 6; // Optimistic load latency assuming bypass.
                        // This is overriden by OperandCycles if the

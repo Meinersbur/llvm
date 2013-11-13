@@ -60,6 +60,7 @@ namespace {
                          (UnrollAllowPartial.getNumOccurrences() > 0);
       UserRuntime = (R != -1) || (UnrollRuntime.getNumOccurrences() > 0);
       UserCount = (C != -1) || (UnrollCount.getNumOccurrences() > 0);
+      UserRuntime = (R != -1) || (UnrollRuntime.getNumOccurrences() > 0);
 
       initializeLoopUnrollPass(*PassRegistry::getPassRegistry());
     }
@@ -122,6 +123,10 @@ INITIALIZE_PASS_END(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
 Pass *llvm::createLoopUnrollPass(int Threshold, int Count, int AllowPartial,
                                  int Runtime) {
   return new LoopUnroll(Threshold, Count, AllowPartial, Runtime);
+}
+
+Pass *llvm::createSimpleLoopUnrollPass() {
+  return llvm::createLoopUnrollPass(-1, -1, 0, 0);
 }
 
 /// ApproximateLoopSize - Approximate the size of the loop.
@@ -233,9 +238,19 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
       }
       if (TripCount) {
         // Reduce unroll count to be modulo of TripCount for partial unrolling
-        Count = Threshold / LoopSize;
-        while (Count != 0 && TripCount%Count != 0)
+        unsigned PrefCount = Threshold / LoopSize;
+
+        Count = PrefCount;
+        while (Count != 0 && (TripCount%Count != 0 || !isPowerOf2_32(Count)))
           Count--;
+
+        // Prefer a power of two unroll count, but if that makes the count too
+        // small, then try again without the power-of-two preference.
+        if (Count < PrefCount/2) {
+          Count = PrefCount;
+          while (Count != 0 && TripCount%Count != 0)
+            Count--;
+        }
       }
       else if (Runtime) {
         // Reduce unroll count to be a lower power-of-two value

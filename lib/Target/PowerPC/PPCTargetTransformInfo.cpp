@@ -79,6 +79,10 @@ public:
   virtual PopcntSupportKind getPopcntSupport(unsigned TyWidth) const;
   virtual void getUnrollingPreferences(Loop *L, UnrollingPreferences &UP) const;
 
+  virtual bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const;
+  virtual unsigned getL1CacheLineSize() const;
+
+  virtual bool prepForPreIncAM(unsigned &MaxVars) const;
   /// @}
 
   /// \name Vector TTI Implementations
@@ -102,6 +106,7 @@ public:
                                    unsigned Alignment,
                                    unsigned AddressSpace) const;
 
+  virtual bool isPowerPCWithQPX() const;
   /// @}
 };
 
@@ -138,14 +143,30 @@ void PPCTTI::getUnrollingPreferences(Loop *L, UnrollingPreferences &UP) const {
   }
 }
 
+bool PPCTTI::useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const {
+  PrefWrites = false;
+  Dist = 300;
+  return ST->isBGQ();
+}
+
+unsigned PPCTTI::getL1CacheLineSize() const {
+  return 64;
+}
+
+bool PPCTTI::prepForPreIncAM(unsigned &MaxVars) const {
+  MaxVars = 16;
+  return ST->getDarwinDirective() == PPC::DIR_A2;
+}
+
 unsigned PPCTTI::getNumberOfRegisters(bool Vector) const {
-  if (Vector && !ST->hasAltivec())
+  if (Vector && !ST->hasAltivec() && !ST->hasQPX())
     return 0;
   return 32;
 }
 
 unsigned PPCTTI::getRegisterBitWidth(bool Vector) const {
   if (Vector) {
+    if (ST->hasQPX()) return 256;
     if (ST->hasAltivec()) return 128;
     return 0;
   }
@@ -207,6 +228,15 @@ unsigned PPCTTI::getVectorInstrCost(unsigned Opcode, Type *Val,
                                     unsigned Index) const {
   assert(Val->isVectorTy() && "This must be a vector type");
 
+  // Floating point scalars are already located in index #0.
+  if (ST->getDarwinDirective() == PPC::DIR_A2) {
+    if (ST->hasQPX() &&
+        Val->getScalarType()->isFloatingPointTy() && Index == 0)
+      return 0;
+
+    return TargetTransformInfo::getVectorInstrCost(Opcode, Val, Index);
+  }
+
   int ISD = TLI->InstructionOpcodeToISD(Opcode);
   assert(ISD && "Invalid opcode");
 
@@ -245,5 +275,9 @@ unsigned PPCTTI::getMemoryOpCost(unsigned Opcode, Type *Src, unsigned Alignment,
     Cost *= (SrcBytes/Alignment);
 
   return Cost;
+}
+
+bool PPCTTI::isPowerPCWithQPX() const {
+  return ST->hasQPX();
 }
 

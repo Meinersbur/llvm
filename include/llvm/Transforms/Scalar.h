@@ -141,11 +141,33 @@ Pass *createLoopInstSimplifyPass();
 Pass *createLoopUnrollPass(int Threshold = -1, int Count = -1,
                            int AllowPartial = -1, int Runtime = -1);
 
+// Create an unrolling pass for full unrolling only.
+Pass *createSimpleLoopUnrollPass();
+
 //===----------------------------------------------------------------------===//
 //
 // LoopRotate - This pass is a simple loop rotating pass.
 //
 Pass *createLoopRotatePass();
+
+//===----------------------------------------------------------------------===//
+//
+// QPXUnaligned - This pass does IR-level lowering for unaligned QPX memory
+// accesses.
+//
+Pass *createQPXUnalignedPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LoopDataPrefetch - This pass is a simple loop data prefetch pass.
+//
+Pass *createLoopDataPrefetchPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LoopIncAMPrep - Prepare loop memory operations for pre/post-inc modes.
+//
+Pass *createLoopIncAMPrepPass();
 
 //===----------------------------------------------------------------------===//
 //

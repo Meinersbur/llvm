@@ -309,6 +309,23 @@ let Properties = [IntrReadMem] in {
   def int_rint  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
   def int_nearbyint : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
   def int_round : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+
+  def int_tan   : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_asin  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_acos  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_atan  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_atan2 : Intrinsic<[llvm_anyfloat_ty],
+                           [LLVMMatchType<0>, LLVMMatchType<0>]>;
+  def int_cbrt  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_sinh  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_cosh  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_tanh  : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_asinh : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_acosh : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_atanh : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_exp10 : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_expm1 : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
+  def int_log1p : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>]>;
 }
 
 let Properties = [IntrNoMem] in {

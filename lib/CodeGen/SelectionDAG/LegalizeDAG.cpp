@@ -1856,6 +1856,77 @@ SDValue SelectionDAGLegalize::ExpandBUILD_VECTOR(SDNode *Node) {
       // Return shuffle(LowValVec, undef, <0,0,0,0>)
       return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
     }
+  } else {
+    // Try to group the scalars into pairs, shuffle the pairs together, then
+    // shuffle the pairs of pairs together, etc. until the vector has
+    // been built. This will work only if all of the necessary shuffle masks
+    // are legal.
+
+    // FIXME: TLI.isShuffleMaskLegal check before creating new nodes!
+
+    SmallVector<std::pair<SDValue, SmallVector<int, 16> >, 16> IntermedVals,
+                                                               NewIntermedVals;
+    for (unsigned i = 0; i < NumElems; ++i) {
+      SDValue V = Node->getOperand(i);
+      if (V.getOpcode() == ISD::UNDEF)
+        continue;
+
+      SDValue Vec = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, V);
+      IntermedVals.push_back(std::make_pair(Vec, SmallVector<int, 16>(1, i)));
+    }
+
+    while (IntermedVals.size() > 2) {
+      NewIntermedVals.clear();
+      for (unsigned i = 0, e = (IntermedVals.size() & ~1u); i < e; i += 2) {
+        // This vector and the next vector are shuffled together (simply to
+        // append the one to the other).
+        SmallVector<int, 16> ShuffleVec(NumElems, -1);
+
+        SmallVector<int, 16> FinalIndices;
+        FinalIndices.reserve(IntermedVals[i].second.size() +
+                             IntermedVals[i+1].second.size());
+        
+        int k = 0;
+        for (unsigned j = 0, f = IntermedVals[i].second.size(); j != f;
+             ++j, ++k) {
+          ShuffleVec[k] = j;
+          FinalIndices.push_back(IntermedVals[i].second[j]);
+        }
+        for (unsigned j = 0, f = IntermedVals[i+1].second.size(); j != f;
+             ++j, ++k) {
+          ShuffleVec[k] = NumElems + j;
+          FinalIndices.push_back(IntermedVals[i+1].second[j]);
+        }
+
+        SDValue Shuffle = DAG.getVectorShuffle(VT, dl, IntermedVals[i].first,
+          IntermedVals[i+1].first, ShuffleVec.data());
+        NewIntermedVals.push_back(std::make_pair(Shuffle, FinalIndices));
+      }
+
+      // If we had an odd number of defined values, then append the last
+      // element to the array of new vectors.
+      if ((IntermedVals.size() & 1) != 0)
+        NewIntermedVals.push_back(IntermedVals.back());
+
+      IntermedVals.swap(NewIntermedVals);
+    }
+
+    assert(IntermedVals.size() <= 2 && IntermedVals.size() > 0 &&
+           "Invalid number of intermediate vectors");
+    SDValue Vec1 = IntermedVals[0].first;
+    SDValue Vec2;
+    if (IntermedVals.size() > 1)
+      Vec2 = IntermedVals[1].first;
+    else
+      Vec2 = DAG.getUNDEF(VT);
+
+    SmallVector<int, 16> ShuffleVec(NumElems, -1);
+    for (unsigned i = 0, e = IntermedVals[0].second.size(); i != e; ++i)
+      ShuffleVec[IntermedVals[0].second[i]] = i;
+    for (unsigned i = 0, e = IntermedVals[1].second.size(); i != e; ++i)
+      ShuffleVec[IntermedVals[1].second[i]] = NumElems + i;
+
+    return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
   }
 
   // Otherwise, we can't handle this case efficiently.
@@ -3309,6 +3380,81 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
                                       RTLIB::POW_F80, RTLIB::POW_F128,
                                       RTLIB::POW_PPCF128));
     break;
+  case ISD::FTAN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::TAN_F32, RTLIB::TAN_F64,
+                                      RTLIB::TAN_F80, RTLIB::TAN_F128,
+                                      RTLIB::TAN_PPCF128));
+    break;
+  case ISD::FASIN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ASIN_F32, RTLIB::ASIN_F64,
+                                      RTLIB::ASIN_F80, RTLIB::ASIN_F128,
+                                      RTLIB::ASIN_PPCF128));
+    break;
+  case ISD::FACOS:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ACOS_F32, RTLIB::ACOS_F64,
+                                      RTLIB::ACOS_F80, RTLIB::ACOS_F128,
+                                      RTLIB::ACOS_PPCF128));
+    break;
+  case ISD::FATAN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATAN_F32, RTLIB::ATAN_F64,
+                                      RTLIB::ATAN_F80, RTLIB::ATAN_F128,
+                                      RTLIB::ATAN_PPCF128));
+    break;
+  case ISD::FATAN2:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATAN2_F32, RTLIB::ATAN2_F64,
+                                      RTLIB::ATAN2_F80, RTLIB::ATAN2_F128,
+                                      RTLIB::ATAN2_PPCF128));
+    break;
+  case ISD::FCBRT:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::CBRT_F32, RTLIB::CBRT_F64,
+                                      RTLIB::CBRT_F80, RTLIB::CBRT_F128,
+                                      RTLIB::CBRT_PPCF128));
+    break;
+  case ISD::FSINH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::SINH_F32, RTLIB::SINH_F64,
+                                      RTLIB::SINH_F80, RTLIB::SINH_F128,
+                                      RTLIB::SINH_PPCF128));
+    break;
+  case ISD::FCOSH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::COSH_F32, RTLIB::COSH_F64,
+                                      RTLIB::COSH_F80, RTLIB::COSH_F128,
+                                      RTLIB::COSH_PPCF128));
+    break;
+  case ISD::FTANH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::TANH_F32, RTLIB::TANH_F64,
+                                      RTLIB::TANH_F80, RTLIB::TANH_F128,
+                                      RTLIB::TANH_PPCF128));
+    break;
+  case ISD::FASINH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ASINH_F32, RTLIB::ASINH_F64,
+                                      RTLIB::ASINH_F80, RTLIB::ASINH_F128,
+                                      RTLIB::ASINH_PPCF128));
+    break;
+  case ISD::FACOSH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ACOSH_F32, RTLIB::ACOSH_F64,
+                                      RTLIB::ACOSH_F80, RTLIB::ACOSH_F128,
+                                      RTLIB::ACOSH_PPCF128));
+    break;
+  case ISD::FATANH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATANH_F32, RTLIB::ATANH_F64,
+                                      RTLIB::ATANH_F80, RTLIB::ATANH_F128,
+                                      RTLIB::ATANH_PPCF128));
+    break;
+  case ISD::FEXP10:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::EXP10_F32, RTLIB::EXP10_F64,
+                                      RTLIB::EXP10_F80, RTLIB::EXP10_F128,
+                                      RTLIB::EXP10_PPCF128));
+    break;
+  case ISD::FEXPM1:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::EXPM1_F32, RTLIB::EXPM1_F64,
+                                      RTLIB::EXPM1_F80, RTLIB::EXPM1_F128,
+                                      RTLIB::EXPM1_PPCF128));
+    break;
+  case ISD::FLOG1P:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::LOG1P_F32, RTLIB::LOG1P_F64,
+                                      RTLIB::LOG1P_F80, RTLIB::LOG1P_F128,
+                                      RTLIB::LOG1P_PPCF128));
+    break;
   case ISD::FDIV:
     Results.push_back(ExpandFPLibCall(Node, RTLIB::DIV_F32, RTLIB::DIV_F64,
                                       RTLIB::DIV_F80, RTLIB::DIV_F128,
@@ -3996,6 +4142,7 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
   }
   case ISD::FDIV:
   case ISD::FREM:
+  case ISD::FATAN2:
   case ISD::FPOW: {
     Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
     Tmp2 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(1));
@@ -4004,6 +4151,20 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
                                   Tmp3, DAG.getIntPtrConstant(0)));
     break;
   }
+  case ISD::FTAN:
+  case ISD::FASIN:
+  case ISD::FACOS:
+  case ISD::FATAN:
+  case ISD::FCBRT:
+  case ISD::FSINH:
+  case ISD::FCOSH:
+  case ISD::FTANH:
+  case ISD::FASINH:
+  case ISD::FACOSH:
+  case ISD::FATANH:
+  case ISD::FEXP10:
+  case ISD::FEXPM1:
+  case ISD::FLOG1P:
   case ISD::FLOG2:
   case ISD::FEXP2:
   case ISD::FLOG:

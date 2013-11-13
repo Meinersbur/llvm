@@ -31,7 +31,7 @@ class PPCRegisterInfo : public PPCGenRegisterInfo {
   const PPCSubtarget &Subtarget;
 public:
   PPCRegisterInfo(const PPCSubtarget &SubTarget);
-  
+
   /// getPointerRegClass - Return the register class to use to hold pointers.
   /// This is used for addressing modes.
   virtual const TargetRegisterClass *

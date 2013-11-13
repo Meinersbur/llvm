@@ -711,6 +711,21 @@ public:
     case LibFunc::trunc:     case LibFunc::truncf:     case LibFunc::truncl:
     case LibFunc::log2:      case LibFunc::log2f:      case LibFunc::log2l:
     case LibFunc::exp2:      case LibFunc::exp2f:      case LibFunc::exp2l:
+    case LibFunc::tan:       case LibFunc::tanf:       case LibFunc::tanl:
+    case LibFunc::asin:      case LibFunc::asinf:      case LibFunc::asinl:
+    case LibFunc::acos:      case LibFunc::acosf:      case LibFunc::acosl:
+    case LibFunc::atan:      case LibFunc::atanf:      case LibFunc::atanl:
+    case LibFunc::atan2:     case LibFunc::atan2f:     case LibFunc::atan2l:
+    case LibFunc::cbrt:      case LibFunc::cbrtf:      case LibFunc::cbrtl:
+    case LibFunc::sinh:      case LibFunc::sinhf:      case LibFunc::sinhl:
+    case LibFunc::cosh:      case LibFunc::coshf:      case LibFunc::coshl:
+    case LibFunc::tanh:      case LibFunc::tanhf:      case LibFunc::tanhl:
+    case LibFunc::asinh:     case LibFunc::asinhf:     case LibFunc::asinhl:
+    case LibFunc::acosh:     case LibFunc::acoshf:     case LibFunc::acoshl:
+    case LibFunc::atanh:     case LibFunc::atanhf:     case LibFunc::atanhl:
+    case LibFunc::exp10:     case LibFunc::exp10f:     case LibFunc::exp10l:
+    case LibFunc::expm1:     case LibFunc::expm1f:     case LibFunc::expm1l:
+    case LibFunc::log1p:     case LibFunc::log1pf:     case LibFunc::log1pl:
     case LibFunc::memcmp:    case LibFunc::strcmp:     case LibFunc::strcpy:
     case LibFunc::stpcpy:    case LibFunc::strlen:     case LibFunc::strnlen:
     case LibFunc::memchr:
