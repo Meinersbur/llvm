@@ -76,15 +76,12 @@ STATISTIC(NumFastIselDead, "Number of dead insts removed on failure");
 void FastISel::startNewBlock() {
   LocalValueMap.clear();
 
+  // Instructions are appended to FuncInfo.MBB. If the basic block already
+  // contains labels or copies, use the last instruction as the last local
+  // value.
   EmitStartPt = 0;
-
-  // Advance the emit start point past any EH_LABEL instructions.
-  MachineBasicBlock::iterator
-    I = FuncInfo.MBB->begin(), E = FuncInfo.MBB->end();
-  while (I != E && I->getOpcode() == TargetOpcode::EH_LABEL) {
-    EmitStartPt = I;
-    ++I;
-  }
+  if (!FuncInfo.MBB->empty())
+    EmitStartPt = &FuncInfo.MBB->back();
   LastLocalValue = EmitStartPt;
 }
 
@@ -93,7 +90,7 @@ bool FastISel::LowerArguments() {
     // Fallback to SDISel argument lowering code to deal with sret pointer
     // parameter.
     return false;
-  
+
   if (!FastLowerArguments())
     return false;
 
@@ -601,7 +598,7 @@ bool FastISel::SelectCall(const User *I) {
   case Intrinsic::dbg_declare: {
     const DbgDeclareInst *DI = cast<DbgDeclareInst>(Call);
     DIVariable DIVar(DI->getVariable());
-    assert((!DIVar || DIVar.isVariable()) && 
+    assert((!DIVar || DIVar.isVariable()) &&
       "Variable in DbgDeclareInst should be either null or a DIVariable.");
     if (!DIVar ||
         !FuncInfo.MF->getMMI().hasDebugInfo()) {
@@ -615,11 +612,13 @@ bool FastISel::SelectCall(const User *I) {
       return true;
     }
 
+    unsigned Offset = 0;
     Optional<MachineOperand> Op;
     if (const Argument *Arg = dyn_cast<Argument>(Address))
       // Some arguments' frame index is recorded during argument lowering.
-      if (int FI = FuncInfo.getArgumentFrameIndex(Arg))
-        Op = MachineOperand::CreateFI(FI);
+      Offset = FuncInfo.getArgumentFrameIndex(Arg);
+    if (Offset)
+        Op = MachineOperand::CreateFI(Offset);
     if (!Op)
       if (unsigned Reg = lookUpRegForValue(Address))
         Op = MachineOperand::CreateReg(Reg, false);
@@ -639,19 +638,25 @@ bool FastISel::SelectCall(const User *I) {
         (!isa<AllocaInst>(Address) ||
          !FuncInfo.StaticAllocaMap.count(cast<AllocaInst>(Address))))
       Op = MachineOperand::CreateReg(FuncInfo.InitializeRegForValue(Address),
-                                      false);
+                                     false);
 
-    if (Op && Op->isReg())
-      Op->setIsDebug(true);
-
-    if (Op)
-      BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
-              TII.get(TargetOpcode::DBG_VALUE)).addOperand(*Op).addImm(0)
-          .addMetadata(DI->getVariable());
-    else
+    if (Op) {
+      if (Op->isReg()) {
+        Op->setIsDebug(true);
+        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
+                TII.get(TargetOpcode::DBG_VALUE), false, Op->getReg(), 0,
+                DI->getVariable());
+      } else
+        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
+                TII.get(TargetOpcode::DBG_VALUE))
+            .addOperand(*Op)
+            .addImm(0)
+            .addMetadata(DI->getVariable());
+    } else {
       // We can't yet handle anything else here because it would require
       // generating code, thus altering codegen because of debug info.
       DEBUG(dbgs() << "Dropping debug info for " << *DI << "\n");
+    }
     return true;
   }
   case Intrinsic::dbg_value: {
@@ -679,9 +684,10 @@ bool FastISel::SelectCall(const User *I) {
         .addFPImm(CF).addImm(DI->getOffset())
         .addMetadata(DI->getVariable());
     } else if (unsigned Reg = lookUpRegForValue(V)) {
-      BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II)
-        .addReg(Reg, RegState::Debug).addImm(DI->getOffset())
-        .addMetadata(DI->getVariable());
+      // FIXME: This does not handle register-indirect values at offset 0.
+      bool IsIndirect = DI->getOffset() != 0;
+      BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, II, IsIndirect,
+              Reg, DI->getOffset(), DI->getVariable());
     } else {
       // We can't yet handle anything else here because it would require
       // generating code, thus altering codegen because of debug info.

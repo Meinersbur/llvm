@@ -158,6 +158,51 @@ void IntrinsicLowering::AddPrototypes(Module &M) {
       case Intrinsic::exp2:
         EnsureFPIntrinsicsExist(M, I, "exp2f", "exp2", "exp2l");
         break;
+      case Intrinsic::tan:
+        EnsureFPIntrinsicsExist(M, I, "tanf", "tan", "tanl");
+        break;
+      case Intrinsic::asin:
+        EnsureFPIntrinsicsExist(M, I, "asinf", "asin", "asinl");
+        break;
+      case Intrinsic::acos:
+        EnsureFPIntrinsicsExist(M, I, "acosf", "acos", "acosl");
+        break;
+      case Intrinsic::atan:
+        EnsureFPIntrinsicsExist(M, I, "atanf", "atan", "atanl");
+        break;
+      case Intrinsic::atan2:
+        EnsureFPIntrinsicsExist(M, I, "atan2f", "atan2", "atan2l");
+        break;
+      case Intrinsic::cbrt:
+        EnsureFPIntrinsicsExist(M, I, "cbrtf", "cbrt", "cbrtl");
+        break;
+      case Intrinsic::sinh:
+        EnsureFPIntrinsicsExist(M, I, "sinhf", "sinh", "sinhl");
+        break;
+      case Intrinsic::cosh:
+        EnsureFPIntrinsicsExist(M, I, "coshf", "cosh", "coshl");
+        break;
+      case Intrinsic::tanh:
+        EnsureFPIntrinsicsExist(M, I, "tanhf", "tanh", "tanhl");
+        break;
+      case Intrinsic::asinh:
+        EnsureFPIntrinsicsExist(M, I, "asinhf", "asinh", "asinhl");
+        break;
+      case Intrinsic::acosh:
+        EnsureFPIntrinsicsExist(M, I, "acoshf", "acosh", "acoshl");
+        break;
+      case Intrinsic::atanh:
+        EnsureFPIntrinsicsExist(M, I, "atanhf", "atanh", "atanhl");
+        break;
+      case Intrinsic::exp10:
+        EnsureFPIntrinsicsExist(M, I, "exp10f", "exp10", "exp10l");
+        break;
+      case Intrinsic::expm1:
+        EnsureFPIntrinsicsExist(M, I, "expm1f", "expm1", "expm1l");
+        break;
+      case Intrinsic::log1p:
+        EnsureFPIntrinsicsExist(M, I, "log1pf", "log1p", "log1pl");
+        break;
       }
 }
 
@@ -524,6 +569,66 @@ void IntrinsicLowering::LowerIntrinsicCall(CallInst *CI) {
   }
   case Intrinsic::pow: {
     ReplaceFPIntrinsicWithCall(CI, "powf", "pow", "powl");
+    break;
+  }
+  case Intrinsic::tan: {
+    ReplaceFPIntrinsicWithCall(CI, "tanf", "tan", "tanl");
+    break;
+  }
+  case Intrinsic::asin: {
+    ReplaceFPIntrinsicWithCall(CI, "asinf", "asin", "asinl");
+    break;
+  }
+  case Intrinsic::acos: {
+    ReplaceFPIntrinsicWithCall(CI, "acosf", "acos", "acosl");
+    break;
+  }
+  case Intrinsic::atan: {
+    ReplaceFPIntrinsicWithCall(CI, "atanf", "atan", "atanl");
+    break;
+  }
+  case Intrinsic::atan2: {
+    ReplaceFPIntrinsicWithCall(CI, "atan2f", "atan2", "atan2l");
+    break;
+  }
+  case Intrinsic::cbrt: {
+    ReplaceFPIntrinsicWithCall(CI, "cbrtf", "cbrt", "cbrtl");
+    break;
+  }
+  case Intrinsic::sinh: {
+    ReplaceFPIntrinsicWithCall(CI, "sinhf", "sinh", "sinhl");
+    break;
+  }
+  case Intrinsic::cosh: {
+    ReplaceFPIntrinsicWithCall(CI, "coshf", "cosh", "coshl");
+    break;
+  }
+  case Intrinsic::tanh: {
+    ReplaceFPIntrinsicWithCall(CI, "tanhf", "tanh", "tanhl");
+    break;
+  }
+  case Intrinsic::asinh: {
+    ReplaceFPIntrinsicWithCall(CI, "asinhf", "asinh", "asinhl");
+    break;
+  }
+  case Intrinsic::acosh: {
+    ReplaceFPIntrinsicWithCall(CI, "acoshf", "acosh", "acoshl");
+    break;
+  }
+  case Intrinsic::atanh: {
+    ReplaceFPIntrinsicWithCall(CI, "atanhf", "atanh", "atanhl");
+    break;
+  }
+  case Intrinsic::exp10: {
+    ReplaceFPIntrinsicWithCall(CI, "exp10f", "exp10", "exp10l");
+    break;
+  }
+  case Intrinsic::expm1: {
+    ReplaceFPIntrinsicWithCall(CI, "expm1f", "expm1", "expm1l");
+    break;
+  }
+  case Intrinsic::log1p: {
+    ReplaceFPIntrinsicWithCall(CI, "log1pf", "log1p", "log1pl");
     break;
   }
   case Intrinsic::flt_rounds:

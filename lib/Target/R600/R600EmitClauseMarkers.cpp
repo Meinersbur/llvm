@@ -32,6 +32,7 @@ class R600EmitClauseMarkersPass : public MachineFunctionPass {
 private:
   static char ID;
   const R600InstrInfo *TII;
+  int Address;
 
   unsigned OccupiedDwords(MachineInstr *MI) const {
     switch (MI->getOpcode()) {
@@ -83,6 +84,7 @@ private:
     switch (MI->getOpcode()) {
     case AMDGPU::KILL:
     case AMDGPU::RETURN:
+    case AMDGPU::IMPLICIT_DEF:
       return true;
     default:
       return false;
@@ -106,7 +108,7 @@ private:
   bool SubstituteKCacheBank(MachineInstr *MI,
       std::vector<std::pair<unsigned, unsigned> > &CachedConsts) const {
     std::vector<std::pair<unsigned, unsigned> > UsedKCache;
-    const SmallVector<std::pair<MachineOperand *, int64_t>, 3> &Consts =
+    const SmallVectorImpl<std::pair<MachineOperand *, int64_t> > &Consts =
         TII->getSrcs(MI);
     assert((TII->isALUInstr(MI->getOpcode()) ||
         MI->getOpcode() == AMDGPU::DOT_4) && "Can't assign Const");
@@ -159,7 +161,7 @@ private:
   }
 
   MachineBasicBlock::iterator
-  MakeALUClause(MachineBasicBlock &MBB, MachineBasicBlock::iterator I) const {
+  MakeALUClause(MachineBasicBlock &MBB, MachineBasicBlock::iterator I) {
     MachineBasicBlock::iterator ClauseHead = I;
     std::vector<std::pair<unsigned, unsigned> > KCacheBanks;
     bool PushBeforeModifier = false;
@@ -172,6 +174,14 @@ private:
       if (AluInstCount > TII->getMaxAlusPerClause())
         break;
       if (I->getOpcode() == AMDGPU::PRED_X) {
+        // We put PRED_X in its own clause to ensure that ifcvt won't create
+        // clauses with more than 128 insts.
+        // IfCvt is indeed checking that "then" and "else" branches of an if
+        // statement have less than ~60 insts thus converted clauses can't be
+        // bigger than ~121 insts (predicate setter needs to be in the same
+        // clause as predicated alus).
+        if (AluInstCount > 0)
+          break;
         if (TII->getFlagOp(I).getImm() & MO_FLAG_PUSH)
           PushBeforeModifier = true;
         AluInstCount ++;
@@ -199,20 +209,25 @@ private:
     unsigned Opcode = PushBeforeModifier ?
         AMDGPU::CF_ALU_PUSH_BEFORE : AMDGPU::CF_ALU;
     BuildMI(MBB, ClauseHead, MBB.findDebugLoc(ClauseHead), TII->get(Opcode))
-        .addImm(0) // ADDR
+    // We don't use the ADDR field until R600ControlFlowFinalizer pass, where
+    // it is safe to assume it is 0. However if we always put 0 here, the ifcvt
+    // pass may assume that identical ALU clause starter at the beginning of a 
+    // true and false branch can be factorized which is not the case.
+        .addImm(Address++) // ADDR
         .addImm(KCacheBanks.empty()?0:KCacheBanks[0].first) // KB0
         .addImm((KCacheBanks.size() < 2)?0:KCacheBanks[1].first) // KB1
         .addImm(KCacheBanks.empty()?0:2) // KM0
         .addImm((KCacheBanks.size() < 2)?0:2) // KM1
         .addImm(KCacheBanks.empty()?0:KCacheBanks[0].second) // KLINE0
         .addImm((KCacheBanks.size() < 2)?0:KCacheBanks[1].second) // KLINE1
-        .addImm(AluInstCount); // COUNT
+        .addImm(AluInstCount) // COUNT
+        .addImm(1); // Enabled
     return I;
   }
 
 public:
   R600EmitClauseMarkersPass(TargetMachine &tm) : MachineFunctionPass(ID),
-    TII(0) { }
+    TII(0), Address(0) { }
 
   virtual bool runOnMachineFunction(MachineFunction &MF) {
     TII = static_cast<const R600InstrInfo *>(MF.getTarget().getInstrInfo());

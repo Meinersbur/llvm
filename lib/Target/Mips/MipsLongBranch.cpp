@@ -237,6 +237,11 @@ void MipsLongBranch::replaceBranch(MachineBasicBlock &MBB, Iter Br,
 
   MIB.addMBB(MBBOpnd);
 
+  // Bundle the instruction in the delay slot to the newly created branch
+  // and erase the original branch.
+  assert(Br->isBundledWithSucc());
+  MachineBasicBlock::instr_iterator II(Br);
+  MIBundleBuilder(&*MIB).append((++II)->removeFromBundle());
   Br->eraseFromParent();
 }
 
@@ -420,7 +425,7 @@ bool MipsLongBranch::runOnMachineFunction(MachineFunction &F) {
   MF = &F;
   initMBBInfo();
 
-  SmallVector<MBBInfo, 16>::iterator I, E = MBBInfos.end();
+  SmallVectorImpl<MBBInfo>::iterator I, E = MBBInfos.end();
   bool EverMadeChange = false, MadeChange = true;
 
   while (MadeChange) {

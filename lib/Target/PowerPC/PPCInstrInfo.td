@@ -423,7 +423,7 @@ def vrrc : RegisterOperand<VRRC> {
   let ParserMatchClass = PPCRegVRRCAsmOperand;
 }
 def PPCRegCRBITRCAsmOperand : AsmOperandClass {
-  let Name = "RegCRBITRC"; let PredicateMethod = "isRegNumber";
+  let Name = "RegCRBITRC"; let PredicateMethod = "isCRBitNumber";
 }
 def crbitrc : RegisterOperand<CRBITRC> {
   let ParserMatchClass = PPCRegCRBITRCAsmOperand;
@@ -827,6 +827,20 @@ multiclass XForm_26r<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
   }
 }
 
+multiclass XForm_28r<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
+                    string asmbase, string asmstr, InstrItinClass itin,
+                    list<dag> pattern> {
+  let BaseName = asmbase in {
+    def NAME : XForm_28<opcode, xo, OOL, IOL,
+                       !strconcat(asmbase, !strconcat(" ", asmstr)), itin,
+                       pattern>, RecFormRel;
+    let Defs = [CR1] in
+    def o    : XForm_28<opcode, xo, OOL, IOL,
+                       !strconcat(asmbase, !strconcat(". ", asmstr)), itin,
+                       []>, isDOT, RecFormRel;
+  }
+}
+
 multiclass AForm_1r<bits<6> opcode, bits<5> xo, dag OOL, dag IOL,
                     string asmbase, string asmstr, InstrItinClass itin,
                     list<dag> pattern> {
@@ -1140,6 +1154,7 @@ def TAILBA   : IForm<18, 0, 0, (outs), (ins abscalltarget:$dst),
 }
 
 let hasSideEffects = 1, isBarrier = 1, usesCustomInserter = 1 in {
+  let Defs = [CTR] in
   def EH_SjLj_SetJmp32  : Pseudo<(outs gprc:$dst), (ins memr:$buf),
                             "#EH_SJLJ_SETJMP32",
                             [(set i32:$dst, (PPCeh_sjlj_setjmp addr:$buf))]>,
@@ -1285,6 +1300,15 @@ def STWCX : XForm_1<31, 150, (outs), (ins gprc:$rS, memrr:$dst),
 let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1 in
 def TRAP  : XForm_24<31, 4, (outs), (ins), "trap", LdStLoad, [(trap)]>;
 
+def TWI : DForm_base<3, (outs), (ins u5imm:$to, gprc:$rA, s16imm:$imm),
+                     "twi $to, $rA, $imm", IntTrapW, []>;
+def TW : XForm_1<31, 4, (outs), (ins u5imm:$to, gprc:$rA, gprc:$rB),
+                 "tw $to, $rA, $rB", IntTrapW, []>;
+def TDI : DForm_base<2, (outs), (ins u5imm:$to, g8rc:$rA, s16imm:$imm),
+                     "tdi $to, $rA, $imm", IntTrapD, []>;
+def TD : XForm_1<31, 68, (outs), (ins u5imm:$to, g8rc:$rA, g8rc:$rB),
+                 "td $to, $rA, $rB", IntTrapD, []>;
+
 //===----------------------------------------------------------------------===//
 // PPC32 Load Instructions.
 //
@@ -1425,6 +1449,10 @@ def LFIWZX : XForm_25<31, 887, (outs f8rc:$frD), (ins memrr:$src),
                       [(set f64:$frD, (PPClfiwzx xoaddr:$src))]>;
 }
 
+// Load Multiple
+def LMW : DForm_1<46, (outs gprc:$rD), (ins memri:$src),
+                  "lmw $rD, $src", LdStLMW, []>;
+
 //===----------------------------------------------------------------------===//
 // PPC32 Store Instructions.
 //
@@ -1554,6 +1582,10 @@ def : Pat<(pre_store f32:$rS, iPTR:$ptrreg, iPTR:$ptroff),
           (STFSUX $rS, $ptrreg, $ptroff)>;
 def : Pat<(pre_store f64:$rS, iPTR:$ptrreg, iPTR:$ptroff),
           (STFDUX $rS, $ptrreg, $ptroff)>;
+
+// Store Multiple
+def STMW : DForm_1<47, (outs), (ins gprc:$rS, memri:$dst),
+                   "stmw $rS, $dst", LdStLMW, []>;
 
 def SYNC : XForm_24_sync<31, 598, (outs), (ins i32imm:$L),
                         "sync $L", LdStSync, []>;
@@ -1707,6 +1739,9 @@ let isCompare = 1, neverHasSideEffects = 1 in {
 
 let Uses = [RM] in {
   let neverHasSideEffects = 1 in {
+  defm FCTIW  : XForm_26r<63, 14, (outs f8rc:$frD), (ins f8rc:$frB),
+                          "fctiw", "$frD, $frB", FPGeneral,
+                          []>;
   defm FCTIWZ : XForm_26r<63, 15, (outs f8rc:$frD), (ins f8rc:$frB),
                           "fctiwz", "$frD, $frB", FPGeneral,
                           [(set f64:$frD, (PPCfctiwz f64:$frB))]>;
@@ -1715,23 +1750,13 @@ let Uses = [RM] in {
                           "frsp", "$frD, $frB", FPGeneral,
                           [(set f32:$frD, (fround f64:$frB))]>;
 
-  // The frin -> nearbyint mapping is valid only in fast-math mode.
   let Interpretation64Bit = 1 in
   defm FRIND  : XForm_26r<63, 392, (outs f8rc:$frD), (ins f8rc:$frB),
                           "frin", "$frD, $frB", FPGeneral,
-                          [(set f64:$frD, (fnearbyint f64:$frB))]>;
+                          [(set f64:$frD, (frnd f64:$frB))]>;
   defm FRINS  : XForm_26r<63, 392, (outs f4rc:$frD), (ins f4rc:$frB),
                           "frin", "$frD, $frB", FPGeneral,
-                          [(set f32:$frD, (fnearbyint f32:$frB))]>;
-  }
-
-  // These pseudos expand to rint but also set FE_INEXACT when the result does
-  // not equal the argument.
-  let usesCustomInserter = 1, Defs = [RM] in { // FIXME: Model FPSCR!
-    def FRINDrint : Pseudo<(outs f8rc:$frD), (ins f8rc:$frB),
-                            "#FRINDrint", [(set f64:$frD, (frint f64:$frB))]>;
-    def FRINSrint : Pseudo<(outs f4rc:$frD), (ins f4rc:$frB),
-                            "#FRINSrint", [(set f32:$frD, (frint f32:$frB))]>;
+                          [(set f32:$frD, (frnd f32:$frB))]>;
   }
 
   let neverHasSideEffects = 1 in {
@@ -1800,6 +1825,14 @@ let Interpretation64Bit = 1 in
 defm FNEGD  : XForm_26r<63, 40, (outs f8rc:$frD), (ins f8rc:$frB),
                         "fneg", "$frD, $frB", FPGeneral,
                         [(set f64:$frD, (fneg f64:$frB))]>;
+
+defm FCPSGNS : XForm_28r<63, 8, (outs f4rc:$frD), (ins f4rc:$frA, f4rc:$frB),
+                        "fcpsgn", "$frD, $frA, $frB", FPGeneral,
+                        [(set f32:$frD, (fcopysign f32:$frB, f32:$frA))]>;
+let Interpretation64Bit = 1 in
+defm FCPSGND : XForm_28r<63, 8, (outs f8rc:$frD), (ins f8rc:$frA, f8rc:$frB),
+                        "fcpsgn", "$frD, $frA, $frB", FPGeneral,
+                        [(set f64:$frD, (fcopysign f64:$frB, f64:$frA))]>;
 
 // Reciprocal estimates.
 defm FRE      : XForm_26r<63, 24, (outs f8rc:$frD), (ins f8rc:$frB),
@@ -1877,6 +1910,15 @@ def CR6UNSET: XLForm_1_ext<19, 193, (outs), (ins),
 
 // XFX-Form instructions.  Instructions that deal with SPRs.
 //
+
+def MFSPR : XFXForm_1<31, 339, (outs gprc:$RT), (ins i32imm:$SPR),
+                      "mfspr $RT, $SPR", SprMFSPR>;
+def MTSPR : XFXForm_1<31, 467, (outs), (ins i32imm:$SPR, gprc:$RT),
+                      "mtspr $SPR, $RT", SprMTSPR>;
+
+def MFTB : XFXForm_1<31, 371, (outs gprc:$RT), (ins i32imm:$SPR),
+                     "mftb $RT, $SPR", SprMFTB>, Deprecated<DeprecatedMFTB>;
+
 let Uses = [CTR] in {
 def MFCTR : XFXForm_1_ext<31, 339, 9, (outs gprc:$rT), (ins),
                           "mfctr $rT", SprMFSPR>,
@@ -1905,17 +1947,17 @@ def MFLR  : XFXForm_1_ext<31, 339, 8, (outs gprc:$rT), (ins),
             PPC970_DGroup_First, PPC970_Unit_FXU;
 }
 
-// Move to/from VRSAVE: despite being a SPR, the VRSAVE register is renamed like
-// a GPR on the PPC970.  As such, copies in and out have the same performance
-// characteristics as an OR instruction.
-def MTVRSAVE : XFXForm_7_ext<31, 467, 256, (outs), (ins gprc:$rS),
-                             "mtspr 256, $rS", IntGeneral>,
-               PPC970_DGroup_Single, PPC970_Unit_FXU;
-def MFVRSAVE : XFXForm_1_ext<31, 339, 256, (outs gprc:$rT), (ins),
-                             "mfspr $rT, 256", IntGeneral>,
-               PPC970_DGroup_First, PPC970_Unit_FXU;
-
 let isCodeGenOnly = 1 in {
+  // Move to/from VRSAVE: despite being a SPR, the VRSAVE register is renamed
+  // like a GPR on the PPC970.  As such, copies in and out have the same
+  // performance characteristics as an OR instruction.
+  def MTVRSAVE : XFXForm_7_ext<31, 467, 256, (outs), (ins gprc:$rS),
+                               "mtspr 256, $rS", IntGeneral>,
+                 PPC970_DGroup_Single, PPC970_Unit_FXU;
+  def MFVRSAVE : XFXForm_1_ext<31, 339, 256, (outs gprc:$rT), (ins),
+                               "mfspr $rT, 256", IntGeneral>,
+                 PPC970_DGroup_First, PPC970_Unit_FXU;
+
   def MTVRSAVEv : XFXForm_7_ext<31, 467, 256,
                                 (outs VRSAVERC:$reg), (ins gprc:$rS),
                                 "mtspr 256, $rS", IntGeneral>,
@@ -1939,34 +1981,23 @@ def RESTORE_VRSAVE : Pseudo<(outs VRSAVERC:$vrsave), (ins memri:$F),
                      "#RESTORE_VRSAVE", []>;
 
 let neverHasSideEffects = 1 in {
-def MTCRF : XFXForm_5<31, 144, (outs crbitm:$FXM), (ins gprc:$rS),
+def MTOCRF: XFXForm_5a<31, 144, (outs crbitm:$FXM), (ins gprc:$ST),
+                       "mtocrf $FXM, $ST", BrMCRX>,
+            PPC970_DGroup_First, PPC970_Unit_CRU;
+
+def MTCRF : XFXForm_5<31, 144, (outs), (ins i32imm:$FXM, gprc:$rS),
                       "mtcrf $FXM, $rS", BrMCRX>,
             PPC970_MicroCode, PPC970_Unit_CRU;
 
-// This is a pseudo for MFCR, which implicitly uses all 8 of its subregisters;
-// declaring that here gives the local register allocator problems with this:
-//  vreg = MCRF  CR0
-//  MFCR  <kill of whatever preg got assigned to vreg>
-// while not declaring it breaks DeadMachineInstructionElimination.
-// As it turns out, in all cases where we currently use this,
-// we're only interested in one subregister of it.  Represent this in the
-// instruction to keep the register allocator from becoming confused.
-//
-// FIXME: Make this a real Pseudo instruction when the JIT switches to MC.
-let isCodeGenOnly = 1 in
-def MFCRpseud: XFXForm_3<31, 19, (outs gprc:$rT), (ins crbitm:$FXM),
-                       "#MFCRpseud", SprMFCR>,
-            PPC970_MicroCode, PPC970_Unit_CRU;
-
+let hasExtraSrcRegAllocReq = 1 in // to enable post-ra anti-dep breaking.
 def MFOCRF: XFXForm_5a<31, 19, (outs gprc:$rT), (ins crbitm:$FXM),
                        "mfocrf $rT, $FXM", SprMFCR>,
             PPC970_DGroup_First, PPC970_Unit_CRU;
-} // neverHasSideEffects = 1
 
-let neverHasSideEffects = 1 in
 def MFCR : XFXForm_3<31, 19, (outs gprc:$rT), (ins),
                      "mfcr $rT", SprMFCR>,
                      PPC970_MicroCode, PPC970_Unit_CRU;
+} // neverHasSideEffects = 1
 
 // Pseudo instruction to perform FADD in round-to-zero mode.
 let usesCustomInserter = 1, Uses = [RM] in {
@@ -2312,6 +2343,12 @@ def : Pat<(fma (fneg f32:$A), f32:$C, f32:$B),
 def : Pat<(fma f32:$A, (fneg f32:$C), f32:$B),
           (FNMSUBS $A, $C, $B)>;
 
+// FCOPYSIGN's operand types need not agree.
+def : Pat<(fcopysign f64:$frB, f32:$frA),
+          (FCPSGND (COPY_TO_REGCLASS $frA, F8RC), $frB)>;
+def : Pat<(fcopysign f32:$frB, f64:$frA),
+          (FCPSGNS (COPY_TO_REGCLASS $frA, F4RC), $frB)>;
+
 include "PPCInstrAltivec.td"
 include "PPCInstrFP2.td"
 include "PPCInstr64Bit.td"
@@ -2332,6 +2369,35 @@ def EIEIO : XForm_24_eieio<31, 854, (outs), (ins),
 
 def WAIT : XForm_24_sync<31, 62, (outs), (ins i32imm:$L),
                          "wait $L", LdStLoad, []>;
+
+def MTMSR: XForm_mtmsr<31, 146, (outs), (ins gprc:$RS, i32imm:$L),
+                    "mtmsr $RS, $L", SprMTMSR>;
+
+def MFMSR : XForm_rs<31, 83, (outs gprc:$RT), (ins),
+                  "mfmsr $RT", SprMFMSR, []>;
+
+def MTMSRD : XForm_mtmsr<31, 178, (outs), (ins gprc:$RS, i32imm:$L),
+                    "mtmsrd $RS, $L", SprMTMSRD>;
+
+def SLBIE : XForm_16b<31, 434, (outs), (ins gprc:$RB),
+                        "slbie $RB", SprSLBIE, []>;
+
+def SLBMTE : XForm_26<31, 402, (outs), (ins gprc:$RS, gprc:$RB),
+                    "slbmte $RS, $RB", SprSLBMTE, []>;
+
+def SLBMFEE : XForm_26<31, 915, (outs gprc:$RT), (ins gprc:$RB),
+                       "slbmfee $RT, $RB", SprSLBMFEE, []>;
+
+def SLBIA : XForm_0<31, 498, (outs), (ins), "slbia", SprSLBIA, []>;
+
+def TLBSYNC : XForm_0<31, 566, (outs), (ins),
+                        "tlbsync", SprTLBSYNC, []>;
+
+def TLBIEL : XForm_16b<31, 274, (outs), (ins gprc:$RB),
+                          "tlbiel $RB", SprTLBIEL, []>;
+
+def TLBIE : XForm_26<31, 306, (outs), (ins gprc:$RS, gprc:$RB),
+                          "tlbie $RB,$RS", SprTLBIE, []>;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Assembler Instruction Aliases
@@ -2369,6 +2435,12 @@ def : InstAlias<"crclr $bx", (CRXOR crbitrc:$bx, crbitrc:$bx, crbitrc:$bx)>;
 def : InstAlias<"crmove $bx, $by", (CROR crbitrc:$bx, crbitrc:$by, crbitrc:$by)>;
 def : InstAlias<"crnot $bx, $by", (CRNOR crbitrc:$bx, crbitrc:$by, crbitrc:$by)>;
 
+def : InstAlias<"mtxer $Rx", (MTSPR 1, gprc:$Rx)>;
+def : InstAlias<"mfxer $Rx", (MFSPR gprc:$Rx, 1)>;
+
+def : InstAlias<"mftb $Rx", (MFTB gprc:$Rx, 268)>;
+def : InstAlias<"mftbu $Rx", (MFTB gprc:$Rx, 269)>;
+
 def : InstAlias<"xnop", (XORI R0, R0, 0)>;
 
 def : InstAlias<"mr $rA, $rB", (OR8 g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
@@ -2376,6 +2448,8 @@ def : InstAlias<"mr. $rA, $rB", (OR8o g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
 
 def : InstAlias<"not $rA, $rB", (NOR8 g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
 def : InstAlias<"not. $rA, $rB", (NOR8o g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+
+def : InstAlias<"mtcr $rA", (MTCRF8 255, g8rc:$rA)>;
 
 def LAx : PPCAsmPseudo<"la $rA, $addr", (ins gprc:$rA, memri:$addr)>;
 
@@ -2392,6 +2466,46 @@ def : InstAlias<"sub $rA, $rB, $rC", (SUBF8 g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
 def : InstAlias<"sub. $rA, $rB, $rC", (SUBF8o g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
 def : InstAlias<"subc $rA, $rB, $rC", (SUBFC8 g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
 def : InstAlias<"subc. $rA, $rB, $rC", (SUBFC8o g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
+
+def : InstAlias<"mtmsrd $RS", (MTMSRD gprc:$RS, 0)>;
+def : InstAlias<"mtmsr $RS", (MTMSR gprc:$RS, 0)>;
+
+def : InstAlias<"mfsprg $RT, 0", (MFSPR gprc:$RT, 272)>;
+def : InstAlias<"mfsprg $RT, 1", (MFSPR gprc:$RT, 273)>;
+def : InstAlias<"mfsprg $RT, 2", (MFSPR gprc:$RT, 274)>;
+def : InstAlias<"mfsprg $RT, 3", (MFSPR gprc:$RT, 275)>;
+
+def : InstAlias<"mfsprg0 $RT", (MFSPR gprc:$RT, 272)>;
+def : InstAlias<"mfsprg1 $RT", (MFSPR gprc:$RT, 273)>;
+def : InstAlias<"mfsprg2 $RT", (MFSPR gprc:$RT, 274)>;
+def : InstAlias<"mfsprg3 $RT", (MFSPR gprc:$RT, 275)>;
+
+def : InstAlias<"mtsprg 0, $RT", (MTSPR 272, gprc:$RT)>;
+def : InstAlias<"mtsprg 1, $RT", (MTSPR 273, gprc:$RT)>;
+def : InstAlias<"mtsprg 2, $RT", (MTSPR 274, gprc:$RT)>;
+def : InstAlias<"mtsprg 3, $RT", (MTSPR 275, gprc:$RT)>;
+
+def : InstAlias<"mtsprg0 $RT", (MTSPR 272, gprc:$RT)>;
+def : InstAlias<"mtsprg1 $RT", (MTSPR 273, gprc:$RT)>;
+def : InstAlias<"mtsprg2 $RT", (MTSPR 274, gprc:$RT)>;
+def : InstAlias<"mtsprg3 $RT", (MTSPR 275, gprc:$RT)>;
+
+def : InstAlias<"mtasr $RS", (MTSPR 280, gprc:$RS)>;
+
+def : InstAlias<"mfdec $RT", (MFSPR gprc:$RT, 22)>;
+def : InstAlias<"mtdec $RT", (MTSPR 22, gprc:$RT)>;
+
+def : InstAlias<"mfpvr $RT", (MFSPR gprc:$RT, 287)>;
+
+def : InstAlias<"mfsdr1 $RT", (MFSPR gprc:$RT, 25)>;
+def : InstAlias<"mtsdr1 $RT", (MTSPR 25, gprc:$RT)>;
+
+def : InstAlias<"mfsrr0 $RT", (MFSPR gprc:$RT, 26)>;
+def : InstAlias<"mfsrr1 $RT", (MFSPR gprc:$RT, 27)>;
+def : InstAlias<"mtsrr0 $RT", (MTSPR 26, gprc:$RT)>;
+def : InstAlias<"mtsrr1 $RT", (MTSPR 27, gprc:$RT)>;
+
+def : InstAlias<"tlbie $RB", (TLBIE R0, gprc:$RB)>;
 
 def EXTLWI : PPCAsmPseudo<"extlwi $rA, $rS, $n, $b",
                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
@@ -2609,4 +2723,35 @@ def : InstAlias<"cmpdi $rA, $imm", (CMPDI CR0, g8rc:$rA, s16imm:$imm)>;
 def : InstAlias<"cmpd $rA, $rB", (CMPD CR0, g8rc:$rA, g8rc:$rB)>;
 def : InstAlias<"cmpldi $rA, $imm", (CMPLDI CR0, g8rc:$rA, u16imm:$imm)>;
 def : InstAlias<"cmpld $rA, $rB", (CMPLD CR0, g8rc:$rA, g8rc:$rB)>;
+
+def : InstAlias<"cmpi $bf, 0, $rA, $imm", (CMPWI crrc:$bf, gprc:$rA, s16imm:$imm)>;
+def : InstAlias<"cmp $bf, 0, $rA, $rB", (CMPW crrc:$bf, gprc:$rA, gprc:$rB)>;
+def : InstAlias<"cmpli $bf, 0, $rA, $imm", (CMPLWI crrc:$bf, gprc:$rA, u16imm:$imm)>;
+def : InstAlias<"cmpl $bf, 0, $rA, $rB", (CMPLW crrc:$bf, gprc:$rA, gprc:$rB)>;
+def : InstAlias<"cmpi $bf, 1, $rA, $imm", (CMPDI crrc:$bf, g8rc:$rA, s16imm:$imm)>;
+def : InstAlias<"cmp $bf, 1, $rA, $rB", (CMPD crrc:$bf, g8rc:$rA, g8rc:$rB)>;
+def : InstAlias<"cmpli $bf, 1, $rA, $imm", (CMPLDI crrc:$bf, g8rc:$rA, u16imm:$imm)>;
+def : InstAlias<"cmpl $bf, 1, $rA, $rB", (CMPLD crrc:$bf, g8rc:$rA, g8rc:$rB)>;
+
+multiclass TrapExtendedMnemonic<string name, int to> {
+  def : InstAlias<"td"#name#"i $rA, $imm", (TDI to, g8rc:$rA, s16imm:$imm)>;
+  def : InstAlias<"td"#name#" $rA, $rB", (TD to, g8rc:$rA, g8rc:$rB)>;
+  def : InstAlias<"tw"#name#"i $rA, $imm", (TWI to, gprc:$rA, s16imm:$imm)>;
+  def : InstAlias<"tw"#name#" $rA, $rB", (TW to, gprc:$rA, gprc:$rB)>;
+}
+defm : TrapExtendedMnemonic<"lt", 16>;
+defm : TrapExtendedMnemonic<"le", 20>;
+defm : TrapExtendedMnemonic<"eq", 4>;
+defm : TrapExtendedMnemonic<"ge", 12>;
+defm : TrapExtendedMnemonic<"gt", 8>;
+defm : TrapExtendedMnemonic<"nl", 12>;
+defm : TrapExtendedMnemonic<"ne", 24>;
+defm : TrapExtendedMnemonic<"ng", 20>;
+defm : TrapExtendedMnemonic<"llt", 2>;
+defm : TrapExtendedMnemonic<"lle", 6>;
+defm : TrapExtendedMnemonic<"lge", 5>;
+defm : TrapExtendedMnemonic<"lgt", 1>;
+defm : TrapExtendedMnemonic<"lnl", 5>;
+defm : TrapExtendedMnemonic<"lng", 6>;
+defm : TrapExtendedMnemonic<"u", 31>;
 

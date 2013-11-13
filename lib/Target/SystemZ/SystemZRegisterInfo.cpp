@@ -42,41 +42,17 @@ SystemZRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   if (TFI->hasFP(MF)) {
     // R11D is the frame pointer.  Reserve all aliases.
     Reserved.set(SystemZ::R11D);
-    Reserved.set(SystemZ::R11W);
+    Reserved.set(SystemZ::R11L);
+    Reserved.set(SystemZ::R11H);
     Reserved.set(SystemZ::R10Q);
   }
 
   // R15D is the stack pointer.  Reserve all aliases.
   Reserved.set(SystemZ::R15D);
-  Reserved.set(SystemZ::R15W);
+  Reserved.set(SystemZ::R15L);
+  Reserved.set(SystemZ::R15H);
   Reserved.set(SystemZ::R14Q);
   return Reserved;
-}
-
-bool
-SystemZRegisterInfo::saveScavengerRegister(MachineBasicBlock &MBB,
-					   MachineBasicBlock::iterator SaveMBBI,
-					   MachineBasicBlock::iterator &UseMBBI,
-					   const TargetRegisterClass *RC,
-					   unsigned Reg) const {
-  MachineFunction &MF = *MBB.getParent();
-  const SystemZInstrInfo &TII =
-    *static_cast<const SystemZInstrInfo*>(TM.getInstrInfo());
-  const SystemZFrameLowering *TFI =
-    static_cast<const SystemZFrameLowering *>(TM.getFrameLowering());
-  unsigned Base = getFrameRegister(MF);
-  uint64_t Offset = TFI->getEmergencySpillSlotOffset(MF);
-  DebugLoc DL;
-
-  unsigned LoadOpcode, StoreOpcode;
-  TII.getLoadStoreOpcodes(RC, LoadOpcode, StoreOpcode);
-
-  // The offset must always be in range of a 12-bit unsigned displacement.
-  BuildMI(MBB, SaveMBBI, DL, TII.get(StoreOpcode))
-    .addReg(Reg, RegState::Kill).addReg(Base).addImm(Offset).addReg(0);
-  BuildMI(MBB, UseMBBI, DL, TII.get(LoadOpcode), Reg)
-    .addReg(Base).addImm(Offset).addReg(0);
-  return true;
 }
 
 void

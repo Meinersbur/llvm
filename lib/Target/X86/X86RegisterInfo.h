@@ -126,16 +126,15 @@ public:
   unsigned getBaseRegister() const { return BasePtr; }
   // FIXME: Move to FrameInfok
   unsigned getSlotSize() const { return SlotSize; }
-
-  // Exception handling queries.
-  unsigned getEHExceptionRegister() const;
-  unsigned getEHHandlerRegister() const;
 };
 
 // getX86SubSuperRegister - X86 utility function. It returns the sub or super
 // register of a specific X86 register.
 // e.g. getX86SubSuperRegister(X86::EAX, MVT::i16) return X86:AX
 unsigned getX86SubSuperRegister(unsigned, MVT::SimpleValueType, bool High=false);
+
+//get512BitRegister - X86 utility - returns 512-bit super register
+unsigned get512BitSuperRegister(unsigned Reg);
 
 } // End llvm namespace
 

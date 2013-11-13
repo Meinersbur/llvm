@@ -267,7 +267,7 @@ void BugDriver::compileProgram(Module *M, std::string *Error) const {
   // Emit the program to a bitcode file...
   SmallString<128> BitcodeFile;
   int BitcodeFD;
-  error_code EC = sys::fs::unique_file(
+  error_code EC = sys::fs::createUniqueFile(
       OutputPrefix + "-test-program-%%%%%%%.bc", BitcodeFD, BitcodeFile);
   if (EC) {
     errs() << ToolName << ": Error making unique filename: " << EC.message()
@@ -301,12 +301,11 @@ std::string BugDriver::executeProgram(const Module *Program,
   if (AI == 0) AI = Interpreter;
   assert(AI && "Interpreter should have been created already!");
   bool CreatedBitcode = false;
-  std::string ErrMsg;
   if (BitcodeFile.empty()) {
     // Emit the program to a bitcode file...
     SmallString<128> UniqueFilename;
     int UniqueFD;
-    error_code EC = sys::fs::unique_file(
+    error_code EC = sys::fs::createUniqueFile(
         OutputPrefix + "-test-program-%%%%%%%.bc", UniqueFD, UniqueFilename);
     if (EC) {
       errs() << ToolName << ": Error making unique filename: "
@@ -332,7 +331,7 @@ std::string BugDriver::executeProgram(const Module *Program,
 
   // Check to see if this is a valid output filename...
   SmallString<128> UniqueFile;
-  error_code EC = sys::fs::unique_file(OutputFile, UniqueFile);
+  error_code EC = sys::fs::createUniqueFile(OutputFile, UniqueFile);
   if (EC) {
     errs() << ToolName << ": Error making unique filename: "
            << EC.message() << "\n";

@@ -6,14 +6,14 @@ declare void @foo(i8 *)
 
 ; Test the simple case, with the loaded value first.
 define void @f1(i8 *%ptr, i8 %alt, i32 %limit) {
-; CHECK: f1:
+; CHECK-LABEL: f1:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -22,14 +22,14 @@ define void @f1(i8 *%ptr, i8 %alt, i32 %limit) {
 
 ; ...and with the loaded value second
 define void @f2(i8 *%ptr, i8 %alt, i32 %limit) {
-; CHECK: f2:
+; CHECK-LABEL: f2:
 ; CHECK-NOT: %r2
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %alt, i8 %orig
   store i8 %res, i8 *%ptr
@@ -39,14 +39,14 @@ define void @f2(i8 *%ptr, i8 %alt, i32 %limit) {
 ; Test cases where the value is explicitly sign-extended to 32 bits, with the
 ; loaded value first.
 define void @f3(i8 *%ptr, i32 %alt, i32 %limit) {
-; CHECK: f3:
+; CHECK-LABEL: f3:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = sext i8 %orig to i32
   %res = select i1 %cond, i32 %ext, i32 %alt
@@ -57,14 +57,14 @@ define void @f3(i8 *%ptr, i32 %alt, i32 %limit) {
 
 ; ...and with the loaded value second
 define void @f4(i8 *%ptr, i32 %alt, i32 %limit) {
-; CHECK: f4:
+; CHECK-LABEL: f4:
 ; CHECK-NOT: %r2
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = sext i8 %orig to i32
   %res = select i1 %cond, i32 %alt, i32 %ext
@@ -76,14 +76,14 @@ define void @f4(i8 *%ptr, i32 %alt, i32 %limit) {
 ; Test cases where the value is explicitly zero-extended to 32 bits, with the
 ; loaded value first.
 define void @f5(i8 *%ptr, i32 %alt, i32 %limit) {
-; CHECK: f5:
+; CHECK-LABEL: f5:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = zext i8 %orig to i32
   %res = select i1 %cond, i32 %ext, i32 %alt
@@ -94,14 +94,14 @@ define void @f5(i8 *%ptr, i32 %alt, i32 %limit) {
 
 ; ...and with the loaded value second
 define void @f6(i8 *%ptr, i32 %alt, i32 %limit) {
-; CHECK: f6:
+; CHECK-LABEL: f6:
 ; CHECK-NOT: %r2
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = zext i8 %orig to i32
   %res = select i1 %cond, i32 %alt, i32 %ext
@@ -113,14 +113,14 @@ define void @f6(i8 *%ptr, i32 %alt, i32 %limit) {
 ; Test cases where the value is explicitly sign-extended to 64 bits, with the
 ; loaded value first.
 define void @f7(i8 *%ptr, i64 %alt, i32 %limit) {
-; CHECK: f7:
+; CHECK-LABEL: f7:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = sext i8 %orig to i64
   %res = select i1 %cond, i64 %ext, i64 %alt
@@ -131,14 +131,14 @@ define void @f7(i8 *%ptr, i64 %alt, i32 %limit) {
 
 ; ...and with the loaded value second
 define void @f8(i8 *%ptr, i64 %alt, i32 %limit) {
-; CHECK: f8:
+; CHECK-LABEL: f8:
 ; CHECK-NOT: %r2
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = sext i8 %orig to i64
   %res = select i1 %cond, i64 %alt, i64 %ext
@@ -150,14 +150,14 @@ define void @f8(i8 *%ptr, i64 %alt, i32 %limit) {
 ; Test cases where the value is explicitly zero-extended to 64 bits, with the
 ; loaded value first.
 define void @f9(i8 *%ptr, i64 %alt, i32 %limit) {
-; CHECK: f9:
+; CHECK-LABEL: f9:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = zext i8 %orig to i64
   %res = select i1 %cond, i64 %ext, i64 %alt
@@ -168,14 +168,14 @@ define void @f9(i8 *%ptr, i64 %alt, i32 %limit) {
 
 ; ...and with the loaded value second
 define void @f10(i8 *%ptr, i64 %alt, i32 %limit) {
-; CHECK: f10:
+; CHECK-LABEL: f10:
 ; CHECK-NOT: %r2
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %ext = zext i8 %orig to i64
   %res = select i1 %cond, i64 %alt, i64 %ext
@@ -186,7 +186,7 @@ define void @f10(i8 *%ptr, i64 %alt, i32 %limit) {
 
 ; Check the high end of the STC range.
 define void @f11(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f11:
+; CHECK-LABEL: f11:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -194,7 +194,7 @@ define void @f11(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 4095
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -203,7 +203,7 @@ define void @f11(i8 *%base, i8 %alt, i32 %limit) {
 
 ; Check the next byte up, which should use STCY instead of STC.
 define void @f12(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f12:
+; CHECK-LABEL: f12:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -211,7 +211,7 @@ define void @f12(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 4096
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -220,7 +220,7 @@ define void @f12(i8 *%base, i8 %alt, i32 %limit) {
 
 ; Check the high end of the STCY range.
 define void @f13(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f13:
+; CHECK-LABEL: f13:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -228,7 +228,7 @@ define void @f13(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 524287
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -238,7 +238,7 @@ define void @f13(i8 *%base, i8 %alt, i32 %limit) {
 ; Check the next byte up, which needs separate address logic.
 ; Other sequences besides this one would be OK.
 define void @f14(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f14:
+; CHECK-LABEL: f14:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -247,7 +247,7 @@ define void @f14(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 524288
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -256,7 +256,7 @@ define void @f14(i8 *%base, i8 %alt, i32 %limit) {
 
 ; Check the low end of the STCY range.
 define void @f15(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f15:
+; CHECK-LABEL: f15:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -264,7 +264,7 @@ define void @f15(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 -524288
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -274,7 +274,7 @@ define void @f15(i8 *%base, i8 %alt, i32 %limit) {
 ; Check the next byte down, which needs separate address logic.
 ; Other sequences besides this one would be OK.
 define void @f16(i8 *%base, i8 %alt, i32 %limit) {
-; CHECK: f16:
+; CHECK-LABEL: f16:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -283,7 +283,7 @@ define void @f16(i8 *%base, i8 %alt, i32 %limit) {
 ; CHECK: [[LABEL]]:
 ; CHECK: br %r14
   %ptr = getelementptr i8 *%base, i64 -524289
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -292,7 +292,7 @@ define void @f16(i8 *%base, i8 %alt, i32 %limit) {
 
 ; Check that STCY allows an index.
 define void @f17(i64 %base, i64 %index, i8 %alt, i32 %limit) {
-; CHECK: f17:
+; CHECK-LABEL: f17:
 ; CHECK-NOT: %r2
 ; CHECK: jl [[LABEL:[^ ]*]]
 ; CHECK-NOT: %r2
@@ -302,7 +302,7 @@ define void @f17(i64 %base, i64 %index, i8 %alt, i32 %limit) {
   %add1 = add i64 %base, %index
   %add2 = add i64 %add1, 4096
   %ptr = inttoptr i64 %add2 to i8 *
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -311,13 +311,13 @@ define void @f17(i64 %base, i64 %index, i8 %alt, i32 %limit) {
 
 ; Check that volatile loads are not matched.
 define void @f18(i8 *%ptr, i8 %alt, i32 %limit) {
-; CHECK: f18:
+; CHECK-LABEL: f18:
 ; CHECK: lb {{%r[0-5]}}, 0(%r2)
 ; CHECK: {{jl|jnl}} [[LABEL:[^ ]*]]
 ; CHECK: [[LABEL]]:
 ; CHECK: stc {{%r[0-5]}}, 0(%r2)
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load volatile i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -326,13 +326,13 @@ define void @f18(i8 *%ptr, i8 %alt, i32 %limit) {
 
 ; ...likewise stores.  In this case we should have a conditional load into %r3.
 define void @f19(i8 *%ptr, i8 %alt, i32 %limit) {
-; CHECK: f19:
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK-LABEL: f19:
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK: lb %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: stc %r3, 0(%r2)
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store volatile i8 %res, i8 *%ptr
@@ -345,13 +345,14 @@ define void @f19(i8 *%ptr, i8 %alt, i32 %limit) {
 ; to restrict the test to a stronger ordering.
 define void @f20(i8 *%ptr, i8 %alt, i32 %limit) {
 ; FIXME: should use a normal load instead of CS.
-; CHECK: f20:
+; CHECK-LABEL: f20:
 ; CHECK: cs {{%r[0-9]+}},
+; CHECK: jl
 ; CHECK: {{jl|jnl}} [[LABEL:[^ ]*]]
 ; CHECK: [[LABEL]]:
 ; CHECK: stc {{%r[0-9]+}},
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load atomic i8 *%ptr unordered, align 1
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr
@@ -361,13 +362,13 @@ define void @f20(i8 *%ptr, i8 %alt, i32 %limit) {
 ; ...likewise stores.
 define void @f21(i8 *%ptr, i8 %alt, i32 %limit) {
 ; FIXME: should use a normal store instead of CS.
-; CHECK: f21:
-; CHECK: jnl [[LABEL:[^ ]*]]
+; CHECK-LABEL: f21:
+; CHECK: jhe [[LABEL:[^ ]*]]
 ; CHECK: lb %r3, 0(%r2)
 ; CHECK: [[LABEL]]:
 ; CHECK: cs {{%r[0-9]+}},
 ; CHECK: br %r14
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store atomic i8 %res, i8 *%ptr unordered, align 1
@@ -376,7 +377,7 @@ define void @f21(i8 *%ptr, i8 %alt, i32 %limit) {
 
 ; Try a frame index base.
 define void @f22(i8 %alt, i32 %limit) {
-; CHECK: f22:
+; CHECK-LABEL: f22:
 ; CHECK: brasl %r14, foo@PLT
 ; CHECK-NOT: %r15
 ; CHECK: jl [[LABEL:[^ ]*]]
@@ -387,7 +388,7 @@ define void @f22(i8 %alt, i32 %limit) {
 ; CHECK: br %r14
   %ptr = alloca i8
   call void @foo(i8 *%ptr)
-  %cond = icmp ult i32 %limit, 42
+  %cond = icmp ult i32 %limit, 420
   %orig = load i8 *%ptr
   %res = select i1 %cond, i8 %orig, i8 %alt
   store i8 %res, i8 *%ptr

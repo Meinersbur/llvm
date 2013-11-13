@@ -480,7 +480,7 @@ std::string DataLayout::getStringRepresentation() const {
     addrSpaces.push_back(pib->first);
   }
   std::sort(addrSpaces.begin(), addrSpaces.end());
-  for (SmallVector<unsigned, 8>::iterator asb = addrSpaces.begin(),
+  for (SmallVectorImpl<unsigned>::iterator asb = addrSpaces.begin(),
       ase = addrSpaces.end(); asb != ase; ++asb) {
     const PointerAlignElem &PI = Pointers.find(*asb)->second;
     OS << "-p";
@@ -505,6 +505,16 @@ std::string DataLayout::getStringRepresentation() const {
       OS << ':' << (unsigned)LegalIntWidths[i];
   }
   return OS.str();
+}
+
+unsigned DataLayout::getPointerTypeSizeInBits(Type *Ty) const {
+  assert(Ty->isPtrOrPtrVectorTy() &&
+         "This should only be called with a pointer or pointer vector type");
+
+  if (Ty->isPointerTy())
+    return getTypeSizeInBits(Ty);
+
+  return getTypeSizeInBits(Ty->getScalarType());
 }
 
 uint64_t DataLayout::getTypeStoreSize(Type *Ty) const {
@@ -624,6 +634,13 @@ Type *DataLayout::getSmallestLegalIntType(LLVMContext &C, unsigned Width) const 
     if (Width <= LegalIntWidths[i])
       return Type::getIntNTy(C, LegalIntWidths[i]);
   return 0;
+}
+
+unsigned DataLayout::getLargestLegalIntTypeSize() const {
+  unsigned MaxWidth = 0;
+  for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
+    MaxWidth = std::max<unsigned>(MaxWidth, LegalIntWidths[i]);
+  return MaxWidth;
 }
 
 uint64_t DataLayout::getIndexedOffset(Type *ptrTy,

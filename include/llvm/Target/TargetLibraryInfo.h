@@ -24,8 +24,12 @@ namespace llvm {
       under_IO_putc,
       /// void operator delete[](void*);
       ZdaPv,
+      /// void operator delete[](void*, nothrow);
+      ZdaPvRKSt9nothrow_t,
       /// void operator delete(void*);
       ZdlPv,
+      /// void operator delete(void*, nothrow);
+      ZdlPvRKSt9nothrow_t,
       /// void *new[](unsigned int);
       Znaj,
       /// void *new[](unsigned int, nothrow);
@@ -308,6 +312,8 @@ namespace llvm {
       getpwnam,
       /// char *gets(char *s);
       gets,
+      /// int gettimeofday(struct timeval *tp, void *tzp);
+      gettimeofday,
       /// uint32_t htonl(uint32_t hostlong);
       htonl,
       /// uint16_t htons(uint16_t hostshort);
@@ -689,10 +695,28 @@ public:
     case LibFunc::nearbyint: case LibFunc::nearbyintf: case LibFunc::nearbyintl:
     case LibFunc::ceil:      case LibFunc::ceilf:      case LibFunc::ceill:
     case LibFunc::rint:      case LibFunc::rintf:      case LibFunc::rintl:
+    case LibFunc::round:     case LibFunc::roundf:     case LibFunc::roundl:
     case LibFunc::trunc:     case LibFunc::truncf:     case LibFunc::truncl:
     case LibFunc::log2:      case LibFunc::log2f:      case LibFunc::log2l:
     case LibFunc::exp2:      case LibFunc::exp2f:      case LibFunc::exp2l:
-    case LibFunc::memcmp:
+    case LibFunc::tan:       case LibFunc::tanf:       case LibFunc::tanl:
+    case LibFunc::asin:      case LibFunc::asinf:      case LibFunc::asinl:
+    case LibFunc::acos:      case LibFunc::acosf:      case LibFunc::acosl:
+    case LibFunc::atan:      case LibFunc::atanf:      case LibFunc::atanl:
+    case LibFunc::atan2:     case LibFunc::atan2f:     case LibFunc::atan2l:
+    case LibFunc::cbrt:      case LibFunc::cbrtf:      case LibFunc::cbrtl:
+    case LibFunc::sinh:      case LibFunc::sinhf:      case LibFunc::sinhl:
+    case LibFunc::cosh:      case LibFunc::coshf:      case LibFunc::coshl:
+    case LibFunc::tanh:      case LibFunc::tanhf:      case LibFunc::tanhl:
+    case LibFunc::asinh:     case LibFunc::asinhf:     case LibFunc::asinhl:
+    case LibFunc::acosh:     case LibFunc::acoshf:     case LibFunc::acoshl:
+    case LibFunc::atanh:     case LibFunc::atanhf:     case LibFunc::atanhl:
+    case LibFunc::exp10:     case LibFunc::exp10f:     case LibFunc::exp10l:
+    case LibFunc::expm1:     case LibFunc::expm1f:     case LibFunc::expm1l:
+    case LibFunc::log1p:     case LibFunc::log1pf:     case LibFunc::log1pl:
+    case LibFunc::memcmp:    case LibFunc::strcmp:     case LibFunc::strcpy:
+    case LibFunc::stpcpy:    case LibFunc::strlen:     case LibFunc::strnlen:
+    case LibFunc::memchr:
       return true;
     }
     return false;

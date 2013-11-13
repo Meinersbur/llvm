@@ -220,14 +220,15 @@ bool LoopIncAMPrep::runOnLoop(Loop *L, LPPassManager &LPM) {
       dyn_cast<SCEVConstant>(BasePtrSCEV->getStepRecurrence(*SE));
     if (!BasePtrIncSCEV)
       continue;
+    BasePtrStartSCEV = SE->getMinusSCEV(BasePtrStartSCEV, BasePtrIncSCEV);
+    if (!isSafeToExpand(BasePtrStartSCEV, *SE))
+      continue;
 
     PHINode *NewPHI = PHINode::Create(I8PtrTy, HeaderLoopPredCount,
       MemI->hasName() ? MemI->getName() + ".phi" : "",
       Header->getFirstNonPHI());
 
     SCEVExpander SCEVE(*SE, "pistart");
-    BasePtrStartSCEV = SE->getMinusSCEV(BasePtrStartSCEV, BasePtrIncSCEV);
-
     Value *BasePtrStart = SCEVE.expandCodeFor(BasePtrStartSCEV, I8PtrTy,
       LoopPredecessor->getTerminator());
     NewPHI->addIncoming(BasePtrStart, LoopPredecessor);
@@ -265,39 +266,45 @@ bool LoopIncAMPrep::runOnLoop(Loop *L, LPPassManager &LPM) {
       if (Ptr == LastNewPtr)
         continue;
 
-      Instruction *PtrIP = dyn_cast<Instruction>(Ptr);
-      if (PtrIP && isa<Instruction>(NewBasePtr) &&
-          cast<Instruction>(NewBasePtr)->getParent() == PtrIP->getParent())
-        PtrIP = 0;
-      else if (isa<PHINode>(PtrIP))
-        PtrIP = PtrIP->getParent()->getFirstInsertionPt();
-      else if (!PtrIP)
-        PtrIP = I->second;
-
+      Instruction *RealNewPtr;
       const SCEVConstant *Diff =
         cast<SCEVConstant>(SE->getMinusSCEV(I->first, BasePtrSCEV));
-      GetElementPtrInst *NewPtr =
-        GetElementPtrInst::Create(PtrInc, Diff->getValue(),
-          I->second->hasName() ? I->second->getName() + ".off" : "", PtrIP);
-      if (!PtrIP)
-        NewPtr->insertAfter(cast<Instruction>(PtrInc));
-      NewPtr->setIsInBounds(IsPtrInBounds(Ptr));
+      if (Diff->isZero()) {
+        RealNewPtr = NewBasePtr;
+      } else {
+        Instruction *PtrIP = dyn_cast<Instruction>(Ptr);
+        if (PtrIP && isa<Instruction>(NewBasePtr) &&
+            cast<Instruction>(NewBasePtr)->getParent() == PtrIP->getParent())
+          PtrIP = 0;
+        else if (isa<PHINode>(PtrIP))
+          PtrIP = PtrIP->getParent()->getFirstInsertionPt();
+        else if (!PtrIP)
+          PtrIP = I->second;
+  
+        GetElementPtrInst *NewPtr =
+          GetElementPtrInst::Create(PtrInc, Diff->getValue(),
+            I->second->hasName() ? I->second->getName() + ".off" : "", PtrIP);
+        if (!PtrIP)
+          NewPtr->insertAfter(cast<Instruction>(PtrInc));
+        NewPtr->setIsInBounds(IsPtrInBounds(Ptr));
+        RealNewPtr = NewPtr;
+      }
 
       if (Instruction *IDel = dyn_cast<Instruction>(Ptr))
         BBChanged.insert(IDel->getParent());
 
       Instruction *ReplNewPtr;
-      if (Ptr->getType() != NewPtr->getType()) {
-        ReplNewPtr = new BitCastInst(NewPtr, Ptr->getType(),
+      if (Ptr->getType() != RealNewPtr->getType()) {
+        ReplNewPtr = new BitCastInst(RealNewPtr, Ptr->getType(),
           Ptr->hasName() ? Ptr->getName() + ".cast" : "");
-        ReplNewPtr->insertAfter(NewPtr);
+        ReplNewPtr->insertAfter(RealNewPtr);
       } else
-        ReplNewPtr = NewPtr;
+        ReplNewPtr = RealNewPtr;
 
       Ptr->replaceAllUsesWith(ReplNewPtr);
       RecursivelyDeleteTriviallyDeadInstructions(Ptr);
 
-      LastNewPtr = NewPtr;
+      LastNewPtr = RealNewPtr;
     }
 
     MadeChange = true;

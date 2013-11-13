@@ -20,6 +20,7 @@
 #ifndef LLVM_SUPPORT_ELF_H
 #define LLVM_SUPPORT_ELF_H
 
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/DataTypes.h"
 #include <cstring>
 
@@ -276,7 +277,6 @@ enum {
   EM_STM8          = 186, // STMicroeletronics STM8 8-bit microcontroller
   EM_TILE64        = 187, // Tilera TILE64 multicore architecture family
   EM_TILEPRO       = 188, // Tilera TILEPro multicore architecture family
-  EM_MICROBLAZE    = 189, // Xilinx MicroBlaze 32-bit RISC soft processor core
   EM_CUDA          = 190, // NVIDIA CUDA architecture
   EM_TILEGX        = 191, // Tilera TILE-Gx multicore architecture family
   EM_CLOUDSHIELD   = 192, // CloudShield architecture family
@@ -287,8 +287,7 @@ enum {
   EM_RL78          = 197, // Renesas RL78 family
   EM_VIDEOCORE5    = 198, // Broadcom VideoCore V processor
   EM_78KOR         = 199, // Renesas 78KOR family
-  EM_56800EX       = 200, // Freescale 56800EX Digital Signal Controller (DSC)
-  EM_MBLAZE        = 47787 // Xilinx MicroBlaze
+  EM_56800EX       = 200  // Freescale 56800EX Digital Signal Controller (DSC)
 };
 
 // Object file classes.
@@ -416,32 +415,6 @@ enum {
   R_386_TLS_DESC      = 41,
   R_386_IRELATIVE     = 42,
   R_386_NUM           = 43
-};
-
-// MBlaze relocations.
-enum {
-  R_MICROBLAZE_NONE           = 0,
-  R_MICROBLAZE_32             = 1,
-  R_MICROBLAZE_32_PCREL       = 2,
-  R_MICROBLAZE_64_PCREL       = 3,
-  R_MICROBLAZE_32_PCREL_LO    = 4,
-  R_MICROBLAZE_64             = 5,
-  R_MICROBLAZE_32_LO          = 6,
-  R_MICROBLAZE_SRO32          = 7,
-  R_MICROBLAZE_SRW32          = 8,
-  R_MICROBLAZE_64_NONE        = 9,
-  R_MICROBLAZE_32_SYM_OP_SYM  = 10,
-  R_MICROBLAZE_GNU_VTINHERIT  = 11,
-  R_MICROBLAZE_GNU_VTENTRY    = 12,
-  R_MICROBLAZE_GOTPC_64       = 13,
-  R_MICROBLAZE_GOT_64         = 14,
-  R_MICROBLAZE_PLT_64         = 15,
-  R_MICROBLAZE_REL            = 16,
-  R_MICROBLAZE_JUMP_SLOT      = 17,
-  R_MICROBLAZE_GLOB_DAT       = 18,
-  R_MICROBLAZE_GOTOFF_64      = 19,
-  R_MICROBLAZE_GOTOFF_32      = 20,
-  R_MICROBLAZE_COPY           = 21
 };
 
 // ELF Relocation types for PPC32
@@ -678,7 +651,7 @@ enum {
 };
 
 // ARM Specific e_flags
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   EF_ARM_SOFT_FLOAT =     0x00000200U,
   EF_ARM_VFP_FLOAT =      0x00000400U,
   EF_ARM_EABI_UNKNOWN =   0x00000000U,
@@ -828,7 +801,7 @@ enum {
 };
 
 // Mips Specific e_flags
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   EF_MIPS_NOREORDER = 0x00000001, // Don't reorder instructions
   EF_MIPS_PIC       = 0x00000002, // Position independent code
   EF_MIPS_CPIC      = 0x00000004, // Call object with Position independent code
@@ -868,6 +841,8 @@ enum {
   R_MIPS_PC16              = 10,
   R_MIPS_CALL16            = 11,
   R_MIPS_GPREL32           = 12,
+  R_MIPS_UNUSED1           = 13,
+  R_MIPS_UNUSED2           = 14,
   R_MIPS_SHIFT5            = 16,
   R_MIPS_SHIFT6            = 17,
   R_MIPS_64                = 18,
@@ -906,6 +881,17 @@ enum {
   R_MIPS_GLOB_DAT          = 51,
   R_MIPS_COPY              = 126,
   R_MIPS_JUMP_SLOT         = 127,
+  R_MICROMIPS_HI16         = 134,
+  R_MICROMIPS_LO16         = 135,
+  R_MICROMIPS_GOT16        = 138,
+  R_MICROMIPS_CALL16       = 142,
+  R_MICROMIPS_GOT_DISP     = 145,
+  R_MICROMIPS_GOT_PAGE     = 146,
+  R_MICROMIPS_GOT_OFST     = 147,
+  R_MICROMIPS_TLS_DTPREL_HI16 = 164,
+  R_MICROMIPS_TLS_DTPREL_LO16 = 165,
+  R_MICROMIPS_TLS_TPREL_HI16  = 169,
+  R_MICROMIPS_TLS_TPREL_LO16  = 170,
   R_MIPS_NUM               = 218
 };
 
@@ -1142,7 +1128,7 @@ enum {
 };
 
 // Section types.
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   SHT_NULL          = 0,  // No associated section (inactive entry).
   SHT_PROGBITS      = 1,  // Program-defined contents.
   SHT_SYMTAB        = 2,  // Symbol table.
@@ -1190,7 +1176,7 @@ enum {
 };
 
 // Section flags.
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   // Section data should be writable during execution.
   SHF_WRITE = 0x1,
 
@@ -1221,6 +1207,9 @@ enum {
 
   // This section holds Thread-Local Storage.
   SHF_TLS = 0x400U,
+
+  // This section is excluded from the final executable or shared library.
+  SHF_EXCLUDE = 0x80000000U,
 
   // Start of target-specific flags.
 
@@ -1257,7 +1246,7 @@ enum {
 };
 
 // Section Group Flags
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   GRP_COMDAT = 0x1,
   GRP_MASKOS = 0x0ff00000,
   GRP_MASKPROC = 0xf0000000
@@ -1470,11 +1459,16 @@ enum {
   PT_ARM_ARCHEXT = 0x70000000, // Platform architecture compatibility info
   // These all contain stack unwind tables.
   PT_ARM_EXIDX   = 0x70000001,
-  PT_ARM_UNWIND  = 0x70000001
+  PT_ARM_UNWIND  = 0x70000001,
+
+  // MIPS program header types.
+  PT_MIPS_REGINFO  = 0x70000000,  // Register usage information.
+  PT_MIPS_RTPROC   = 0x70000001,  // Runtime procedure table.
+  PT_MIPS_OPTIONS  = 0x70000002   // Options segment.
 };
 
 // Segment flag bits.
-enum {
+enum LLVM_ENUM_INT_TYPE(unsigned) {
   PF_X        = 1,         // Execute
   PF_W        = 2,         // Write
   PF_R        = 4,         // Read

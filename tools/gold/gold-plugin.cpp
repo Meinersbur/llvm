@@ -197,7 +197,7 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
       case LDPT_ADD_SYMBOLS:
         add_symbols = tv->tv_u.tv_add_symbols;
         break;
-      case LDPT_GET_SYMBOLS:
+      case LDPT_GET_SYMBOLS_V2:
         get_symbols = tv->tv_u.tv_get_symbols;
         break;
       case LDPT_ADD_INPUT_FILE:
@@ -252,9 +252,8 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     if (file->offset) {
       offset = file->offset;
     }
-    if (error_code ec =
-        MemoryBuffer::getOpenFile(file->fd, file->name, buffer, file->filesize,
-                                  -1, offset, false)) {
+    if (error_code ec = MemoryBuffer::getOpenFileSlice(
+            file->fd, file->name, buffer, file->filesize, offset)) {
       (*message)(LDPL_ERROR, ec.message().c_str());
       return LDPS_ERR;
     }
@@ -352,8 +351,13 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     }
   }
 
-  if (code_gen)
-    lto_codegen_add_module(code_gen, M);
+  if (code_gen) {
+    if (lto_codegen_add_module(code_gen, M)) {
+      (*message)(LDPL_ERROR, "Error linking module: %s",
+                 lto_get_error_message());
+      return LDPS_ERR;
+    }
+  }
 
   lto_module_dispose(M);
 
@@ -387,6 +391,11 @@ static ld_plugin_status all_symbols_read_hook(void) {
 
         if (options::generate_api_file)
           api_file << I->syms[i].name << "\n";
+      } else if (I->syms[i].resolution == LDPR_PREVAILING_DEF_IRONLY_EXP) {
+        lto_codegen_add_dso_symbol(code_gen, I->syms[i].name);
+
+        if (options::generate_api_file)
+          api_file << I->syms[i].name << " dso only\n";
       }
     }
   }
@@ -418,12 +427,19 @@ static ld_plugin_status all_symbols_read_hook(void) {
     bool err = lto_codegen_write_merged_modules(code_gen, path.c_str());
     if (err)
       (*message)(LDPL_FATAL, "Failed to write the output file.");
-    if (options::generate_bc_file == options::BC_ONLY)
+    if (options::generate_bc_file == options::BC_ONLY) {
+      lto_codegen_dispose(code_gen);
       exit(0);
+    }
   }
-  const char *objPath;
-  if (lto_codegen_compile_to_file(code_gen, &objPath)) {
-    (*message)(LDPL_ERROR, "Could not produce a combined object file\n");
+
+  std::string ObjPath;
+  {
+    const char *Temp;
+    if (lto_codegen_compile_to_file(code_gen, &Temp)) {
+      (*message)(LDPL_ERROR, "Could not produce a combined object file\n");
+    }
+    ObjPath = Temp;
   }
 
   lto_codegen_dispose(code_gen);
@@ -435,9 +451,9 @@ static ld_plugin_status all_symbols_read_hook(void) {
     }
   }
 
-  if ((*add_input_file)(objPath) != LDPS_OK) {
+  if ((*add_input_file)(ObjPath.c_str()) != LDPS_OK) {
     (*message)(LDPL_ERROR, "Unable to add .o file to the link.");
-    (*message)(LDPL_ERROR, "File left behind in: %s", objPath);
+    (*message)(LDPL_ERROR, "File left behind in: %s", ObjPath.c_str());
     return LDPS_ERR;
   }
 
@@ -448,7 +464,7 @@ static ld_plugin_status all_symbols_read_hook(void) {
   }
 
   if (options::obj_path.empty())
-    Cleanup.push_back(objPath);
+    Cleanup.push_back(ObjPath);
 
   return LDPS_OK;
 }

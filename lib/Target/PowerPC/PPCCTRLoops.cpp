@@ -233,6 +233,13 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
 #endif
 
           case Intrinsic::longjmp:
+
+          // Exclude eh_sjlj_setjmp; we don't need to exclude eh_sjlj_longjmp
+          // because, although it does clobber the counter register, the
+          // control can't then return to inside the loop unless there is also
+          // an eh_sjlj_setjmp.
+          case Intrinsic::eh_sjlj_setjmp:
+
           case Intrinsic::memcpy:
           case Intrinsic::memmove:
           case Intrinsic::memset:
@@ -245,13 +252,35 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
           case Intrinsic::pow:
           case Intrinsic::sin:
           case Intrinsic::cos:
+          case Intrinsic::tan:
+          case Intrinsic::asin:
+          case Intrinsic::acos:
+          case Intrinsic::atan:
+          case Intrinsic::atan2:
+          case Intrinsic::cbrt:
+          case Intrinsic::sinh:
+          case Intrinsic::cosh:
+          case Intrinsic::tanh:
+          case Intrinsic::asinh:
+          case Intrinsic::acosh:
+          case Intrinsic::atanh:
+          case Intrinsic::exp10:
+          case Intrinsic::expm1:
+          case Intrinsic::log1p:
             return true;
+          case Intrinsic::copysign:
+            if (CI->getArgOperand(0)->getType()->getScalarType()->
+                isPPC_FP128Ty())
+              return true;
+            else
+              continue; // ISD::FCOPYSIGN is never a library call.
           case Intrinsic::sqrt:      Opcode = ISD::FSQRT;      break;
           case Intrinsic::floor:     Opcode = ISD::FFLOOR;     break;
           case Intrinsic::ceil:      Opcode = ISD::FCEIL;      break;
           case Intrinsic::trunc:     Opcode = ISD::FTRUNC;     break;
           case Intrinsic::rint:      Opcode = ISD::FRINT;      break;
           case Intrinsic::nearbyint: Opcode = ISD::FNEARBYINT; break;
+          case Intrinsic::round:     Opcode = ISD::FROUND;     break;
           }
         }
 
@@ -276,8 +305,9 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
           default: return true;
           case LibFunc::copysign:
           case LibFunc::copysignf:
-          case LibFunc::copysignl:
             continue; // ISD::FCOPYSIGN is never a library call.
+          case LibFunc::copysignl:
+            return true;
           case LibFunc::fabs:
           case LibFunc::fabsf:
           case LibFunc::fabsl:
@@ -302,6 +332,10 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
           case LibFunc::rintf:
           case LibFunc::rintl:
             Opcode = ISD::FRINT; break;
+          case LibFunc::round:
+          case LibFunc::roundf:
+          case LibFunc::roundl:
+            Opcode = ISD::FROUND; break;
           case LibFunc::trunc:
           case LibFunc::truncf:
           case LibFunc::truncl:
@@ -402,7 +436,7 @@ bool PPCCTRLoops::convertToCTRLoop(Loop *L) {
   BasicBlock *CountedExitBlock = 0;
   const SCEV *ExitCount = 0;
   BranchInst *CountedExitBranch = 0;
-  for (SmallVector<BasicBlock*, 4>::iterator I = ExitingBlocks.begin(),
+  for (SmallVectorImpl<BasicBlock *>::iterator I = ExitingBlocks.begin(),
        IE = ExitingBlocks.end(); I != IE; ++I) {
     const SCEV *EC = SE->getExitCount(L, *I);
     DEBUG(dbgs() << "Exit Count for " << *L << " from block " <<

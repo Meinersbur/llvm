@@ -248,7 +248,7 @@ namespace llvm {
   /// SUnit - Scheduling unit. This is a node in the scheduling DAG.
   class SUnit {
   private:
-    enum { BoundaryID = ~0u };
+    enum LLVM_ENUM_INT_TYPE(unsigned) { BoundaryID = ~0u };
 
     SDNode *Node;                       // Representative node.
     MachineInstr *Instr;                // Alternatively, a MachineInstr.
@@ -263,10 +263,10 @@ namespace llvm {
     SmallVector<SDep, 4> Preds;  // All sunit predecessors.
     SmallVector<SDep, 4> Succs;  // All sunit successors.
 
-    typedef SmallVector<SDep, 4>::iterator pred_iterator;
-    typedef SmallVector<SDep, 4>::iterator succ_iterator;
-    typedef SmallVector<SDep, 4>::const_iterator const_pred_iterator;
-    typedef SmallVector<SDep, 4>::const_iterator const_succ_iterator;
+    typedef SmallVectorImpl<SDep>::iterator pred_iterator;
+    typedef SmallVectorImpl<SDep>::iterator succ_iterator;
+    typedef SmallVectorImpl<SDep>::const_iterator const_pred_iterator;
+    typedef SmallVectorImpl<SDep>::const_iterator const_succ_iterator;
 
     unsigned NodeNum;                   // Entry # of node in the node vector.
     unsigned NodeQueueId;               // Queue id of node.

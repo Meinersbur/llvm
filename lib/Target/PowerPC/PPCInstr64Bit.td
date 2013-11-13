@@ -36,10 +36,20 @@ def s17imm64 : Operand<i64> {
 def tocentry : Operand<iPTR> {
   let MIOperandInfo = (ops i64imm:$imm);
 }
+def PPCTLSRegOperand : AsmOperandClass {
+  let Name = "TLSReg"; let PredicateMethod = "isTLSReg";
+  let RenderMethod = "addTLSRegOperands";
+}
 def tlsreg : Operand<i64> {
   let EncoderMethod = "getTLSRegEncoding";
+  let ParserMatchClass = PPCTLSRegOperand;
 }
 def tlsgd : Operand<i64> {}
+def tlscall : Operand<i64> {
+  let PrintMethod = "printTLSCall";
+  let MIOperandInfo = (ops calltarget:$func, tlsgd:$sym);
+  let EncoderMethod = "getTLSCallEncoding";
+}
 
 //===----------------------------------------------------------------------===//
 // 64-bit transformation functions.
@@ -114,6 +124,9 @@ let isCall = 1, PPC970_Unit = 7,
     def BL8  : IForm<18, 0, 1, (outs), (ins calltarget:$func),
                      "bl $func", BrB, []>;  // See Pat patterns below.
 
+    def BL8_TLS  : IForm<18, 0, 1, (outs), (ins tlscall:$func),
+                         "bl $func", BrB, []>;
+
     def BLA8 : IForm<18, 1, 1, (outs), (ins abscalltarget:$func),
                      "bla $func", BrB, [(PPCcall (i64 imm:$func))]>;
   }
@@ -122,13 +135,9 @@ let isCall = 1, PPC970_Unit = 7,
                              (outs), (ins calltarget:$func),
                              "bl $func\n\tnop", BrB, []>;
 
-    def BL8_NOP_TLSGD : IForm_and_DForm_4_zero<18, 0, 1, 24,
-                                  (outs), (ins calltarget:$func, tlsgd:$sym),
-                                  "bl $func($sym)\n\tnop", BrB, []>;
-
-    def BL8_NOP_TLSLD : IForm_and_DForm_4_zero<18, 0, 1, 24,
-                                  (outs), (ins calltarget:$func, tlsgd:$sym),
-                                  "bl $func($sym)\n\tnop", BrB, []>;
+    def BL8_NOP_TLS : IForm_and_DForm_4_zero<18, 0, 1, 24,
+                                  (outs), (ins tlscall:$func),
+                                  "bl $func\n\tnop", BrB, []>;
 
     def BLA8_NOP : IForm_and_DForm_4_zero<18, 1, 1, 24,
                              (outs), (ins abscalltarget:$func),
@@ -256,22 +265,26 @@ def : Pat<(PPCtc_return CTRRC8:$dst, imm:$imm),
 // 64-bit CR instructions
 let Interpretation64Bit = 1 in {
 let neverHasSideEffects = 1 in {
-def MTCRF8 : XFXForm_5<31, 144, (outs crbitm:$FXM), (ins g8rc:$rS),
+def MTOCRF8: XFXForm_5a<31, 144, (outs crbitm:$FXM), (ins g8rc:$ST),
+                        "mtocrf $FXM, $ST", BrMCRX>,
+            PPC970_DGroup_First, PPC970_Unit_CRU;
+
+def MTCRF8 : XFXForm_5<31, 144, (outs), (ins i32imm:$FXM, g8rc:$rS),
                       "mtcrf $FXM, $rS", BrMCRX>,
             PPC970_MicroCode, PPC970_Unit_CRU;
 
-let isCodeGenOnly = 1 in
-def MFCR8pseud: XFXForm_3<31, 19, (outs g8rc:$rT), (ins crbitm:$FXM),
-                       "#MFCR8pseud", SprMFCR>,
-            PPC970_MicroCode, PPC970_Unit_CRU;
-} // neverHasSideEffects = 1
+let hasExtraSrcRegAllocReq = 1 in // to enable post-ra anti-dep breaking.
+def MFOCRF8: XFXForm_5a<31, 19, (outs g8rc:$rT), (ins crbitm:$FXM),
+                        "mfocrf $rT, $FXM", SprMFCR>,
+             PPC970_DGroup_First, PPC970_Unit_CRU;
 
-let neverHasSideEffects = 1 in
 def MFCR8 : XFXForm_3<31, 19, (outs g8rc:$rT), (ins),
                      "mfcr $rT", SprMFCR>,
                      PPC970_MicroCode, PPC970_Unit_CRU;
+} // neverHasSideEffects = 1
 
 let hasSideEffects = 1, isBarrier = 1, usesCustomInserter = 1 in {
+  let Defs = [CTR8] in
   def EH_SjLj_SetJmp64  : Pseudo<(outs gprc:$dst), (ins memr:$buf),
                             "#EH_SJLJ_SETJMP64",
                             [(set i32:$dst, (PPCeh_sjlj_setjmp addr:$buf))]>,
@@ -303,7 +316,7 @@ def MTCTR8loop : XFXForm_7_ext<31, 467, 9, (outs), (ins g8rc:$rS),
                  PPC970_DGroup_First, PPC970_Unit_FXU;
 }
 
-let Pattern = [(set i64:$rT, readcyclecounter)] in
+let isCodeGenOnly = 1, Pattern = [(set i64:$rT, readcyclecounter)] in
 def MFTB8 : XFXForm_1_ext<31, 339, 268, (outs g8rc:$rT), (ins),
                           "mfspr $rT, 268", SprMFTB>,
             PPC970_DGroup_First, PPC970_Unit_FXU;
@@ -401,9 +414,8 @@ defm ADD8  : XOForm_1r<31, 266, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                        [(set i64:$rT, (add i64:$rA, i64:$rB))]>;
 // ADD8 has a special form: reg = ADD8(reg, sym@tls) for use by the
 // initial-exec thread-local storage model.
-let isCodeGenOnly = 1 in
 def ADD8TLS  : XOForm_1<31, 266, 0, (outs g8rc:$rT), (ins g8rc:$rA, tlsreg:$rB),
-                        "add $rT, $rA, $rB@tls", IntSimple,
+                        "add $rT, $rA, $rB", IntSimple,
                         [(set i64:$rT, (add i64:$rA, tglobaltlsaddr:$rB))]>;
                      
 defm ADDC8 : XOForm_1rc<31, 10, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
@@ -498,6 +510,14 @@ defm EXTSH8 : XForm_11r<31, 922, (outs g8rc:$rA), (ins g8rc:$rS),
                         [(set i64:$rA, (sext_inreg i64:$rS, i16))]>;
 } // Interpretation64Bit
 
+// For fast-isel:
+let isCodeGenOnly = 1 in {
+def EXTSB8_32_64 : XForm_11<31, 954, (outs g8rc:$rA), (ins gprc:$rS),
+                           "extsb $rA, $rS", IntSimple, []>, isPPC64;
+def EXTSH8_32_64 : XForm_11<31, 922, (outs g8rc:$rA), (ins gprc:$rS),
+                           "extsh $rA, $rS", IntSimple, []>, isPPC64;
+} // isCodeGenOnly for fast-isel
+
 defm EXTSW  : XForm_11r<31, 986, (outs g8rc:$rA), (ins g8rc:$rS),
                         "extsw", "$rA, $rS", IntSimple,
                         [(set i64:$rA, (sext_inreg i64:$rS, i32))]>, isPPC64;
@@ -534,6 +554,9 @@ defm DIVDU : XOForm_1r<31, 457, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
 defm MULLD : XOForm_1r<31, 233, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                        "mulld", "$rT, $rA, $rB", IntMulHD,
                        [(set i64:$rT, (mul i64:$rA, i64:$rB))]>, isPPC64;
+def MULLI8 : DForm_2<7, (outs g8rc:$rD), (ins g8rc:$rA, s16imm64:$imm),
+                       "mulli $rD, $rA, $imm", IntMulLI,
+                       [(set i64:$rD, (mul i64:$rA, imm64SExt16:$imm))]>;
 }
 
 let neverHasSideEffects = 1 in {
@@ -558,6 +581,14 @@ defm RLDICL : MDForm_1r<30, 0,
                         (outs g8rc:$rA), (ins g8rc:$rS, u6imm:$SH, u6imm:$MBE),
                         "rldicl", "$rA, $rS, $SH, $MBE", IntRotateDI,
                         []>, isPPC64;
+// For fast-isel:
+let isCodeGenOnly = 1 in
+def RLDICL_32_64 : MDForm_1<30, 0,
+                           (outs g8rc:$rA),
+                           (ins gprc:$rS, u6imm:$SH, u6imm:$MBE),
+                           "rldicl $rA, $rS, $SH, $MBE", IntRotateDI,
+                           []>, isPPC64;
+// End fast-isel.
 defm RLDICR : MDForm_1r<30, 1,
                         (outs g8rc:$rA), (ins g8rc:$rS, u6imm:$SH, u6imm:$MBE),
                         "rldicr", "$rA, $rS, $SH, $MBE", IntRotateDI,
@@ -609,6 +640,15 @@ def LWAX : XForm_1<31, 341, (outs g8rc:$rD), (ins memrr:$src),
                    "lwax $rD, $src", LdStLHA,
                    [(set i64:$rD, (sextloadi32 xaddr:$src))]>, isPPC64,
                    PPC970_DGroup_Cracked;
+// For fast-isel:
+let isCodeGenOnly = 1, mayLoad = 1 in {
+def LWA_32  : DSForm_1<58, 2, (outs gprc:$rD), (ins memrix:$src),
+                      "lwa $rD, $src", LdStLWA, []>, isPPC64,
+                      PPC970_DGroup_Cracked;
+def LWAX_32 : XForm_1<31, 341, (outs gprc:$rD), (ins memrr:$src),
+                     "lwax $rD, $src", LdStLHA, []>, isPPC64,
+                     PPC970_DGroup_Cracked;
+} // end fast-isel isCodeGenOnly
 
 // Update forms.
 let mayLoad = 1, neverHasSideEffects = 1 in {
@@ -931,6 +971,9 @@ let PPC970_Unit = 3, neverHasSideEffects = 1,
 defm FCFID  : XForm_26r<63, 846, (outs f8rc:$frD), (ins f8rc:$frB),
                         "fcfid", "$frD, $frB", FPGeneral,
                         [(set f64:$frD, (PPCfcfid f64:$frB))]>, isPPC64;
+defm FCTID  : XForm_26r<63, 814, (outs f8rc:$frD), (ins f8rc:$frB),
+                        "fctid", "$frD, $frB", FPGeneral,
+                        []>, isPPC64;
 defm FCTIDZ : XForm_26r<63, 815, (outs f8rc:$frD), (ins f8rc:$frB),
                         "fctidz", "$frD, $frB", FPGeneral,
                         [(set f64:$frD, (PPCfctidz f64:$frB))]>, isPPC64;

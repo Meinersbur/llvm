@@ -504,6 +504,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(zeroinitializer);
   KEYWORD(undef);
   KEYWORD(null);
+  KEYWORD(notaddrtaken);
   KEYWORD(to);
   KEYWORD(tail);
   KEYWORD(target);
@@ -540,6 +541,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(alignstack);
   KEYWORD(inteldialect);
   KEYWORD(gc);
+  KEYWORD(prefix);
 
   KEYWORD(ccc);
   KEYWORD(fastcc);
@@ -556,6 +558,8 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(spir_kernel);
   KEYWORD(spir_func);
   KEYWORD(intel_ocl_bicc);
+  KEYWORD(x86_64_sysvcc);
+  KEYWORD(x86_64_win64cc);
 
   KEYWORD(cc);
   KEYWORD(c);
@@ -581,6 +585,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(noredzone);
   KEYWORD(noreturn);
   KEYWORD(nounwind);
+  KEYWORD(optnone);
   KEYWORD(optsize);
   KEYWORD(readnone);
   KEYWORD(readonly);

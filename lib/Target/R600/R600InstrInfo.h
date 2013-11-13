@@ -66,8 +66,15 @@ namespace llvm {
   bool hasInstrModifiers(unsigned Opcode) const;
   bool isLDSInstr(unsigned Opcode) const;
 
+  /// \returns true if this \p Opcode represents an ALU instruction or an
+  /// instruction that will be lowered in ExpandSpecialInstrs Pass.
+  bool canBeConsideredALU(const MachineInstr *MI) const;
+
   bool isTransOnly(unsigned Opcode) const;
   bool isTransOnly(const MachineInstr *MI) const;
+  bool isVectorOnly(unsigned Opcode) const;
+  bool isVectorOnly(const MachineInstr *MI) const;
+  bool isExport(unsigned Opcode) const;
 
   bool usesVertexCache(unsigned Opcode) const;
   bool usesVertexCache(const MachineInstr *MI) const;
@@ -75,6 +82,16 @@ namespace llvm {
   bool usesTextureCache(const MachineInstr *MI) const;
 
   bool mustBeLastInClause(unsigned Opcode) const;
+  bool usesAddressRegister(MachineInstr *MI) const;
+  bool definesAddressRegister(MachineInstr *MI) const;
+  bool readsLDSSrcReg(const MachineInstr *MI) const;
+
+  /// \returns The operand index for the given source number.  Legal values
+  /// for SrcNum are 0, 1, and 2.
+  int getSrcIdx(unsigned Opcode, unsigned SrcNum) const;
+  /// \returns The operand Index for the Sel operand given an index to one
+  /// of the instruction's src operands.
+  int getSelIdx(unsigned Opcode, unsigned SrcIdx) const;
 
   /// \returns a pair for each src of an ALU instructions.
   /// The first member of a pair is the register id.
@@ -120,9 +137,6 @@ namespace llvm {
   /// \breif Vector instructions are instructions that must fill all
   /// instruction slots within an instruction group.
   bool isVector(const MachineInstr &MI) const;
-
-  virtual MachineInstr * getMovImmInstr(MachineFunction *MF, unsigned DstReg,
-                                        int64_t Imm) const;
 
   virtual unsigned getIEQOpcode() const;
   virtual bool isMov(unsigned Opcode) const;
@@ -170,6 +184,8 @@ namespace llvm {
   bool PredicateInstruction(MachineInstr *MI,
                         const SmallVectorImpl<MachineOperand> &Pred) const;
 
+  unsigned int getPredicationCost(const MachineInstr *) const;
+
   unsigned int getInstrLatency(const InstrItineraryData *ItinData,
                                const MachineInstr *MI,
                                unsigned *PredCost = 0) const;
@@ -189,10 +205,7 @@ namespace llvm {
   virtual unsigned calculateIndirectAddress(unsigned RegIndex,
                                             unsigned Channel) const;
 
-  virtual const TargetRegisterClass *getIndirectAddrStoreRegClass(
-                                                      unsigned SourceReg) const;
-
-  virtual const TargetRegisterClass *getIndirectAddrLoadRegClass() const;
+  virtual const TargetRegisterClass *getIndirectAddrRegClass() const;
 
   virtual MachineInstrBuilder buildIndirectWrite(MachineBasicBlock *MBB,
                                   MachineBasicBlock::iterator I,
@@ -203,8 +216,6 @@ namespace llvm {
                                   MachineBasicBlock::iterator I,
                                   unsigned ValueReg, unsigned Address,
                                   unsigned OffsetReg) const;
-
-  virtual const TargetRegisterClass *getSuperIndirectRegClass() const;
 
   unsigned getMaxAlusPerClause() const;
 
@@ -231,6 +242,10 @@ namespace llvm {
                                   MachineBasicBlock::iterator I,
                                   unsigned DstReg,
                                   uint64_t Imm) const;
+
+  MachineInstr *buildMovInstr(MachineBasicBlock *MBB,
+                              MachineBasicBlock::iterator I,
+                              unsigned DstReg, unsigned SrcReg) const;
 
   /// \brief Get the index of Op in the MachineInstr.
   ///
@@ -264,6 +279,12 @@ namespace llvm {
   /// \brief Clear the specified flag on the instruction.
   void clearFlag(MachineInstr *MI, unsigned Operand, unsigned Flag) const;
 };
+
+namespace AMDGPU {
+
+int getLDSNoRetOp(uint16_t Opcode);
+
+} //End namespace AMDGPU
 
 } // End llvm namespace
 

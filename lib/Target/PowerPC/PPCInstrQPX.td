@@ -19,7 +19,12 @@
 // QPXA1_Int - A AForm_1 intrinsic definition.
 class QPXA1_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
   : AForm_1<opcode, xo, (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-              !strconcat(opc, " $FRT, $FRA, $FRC, $FRB"), FPGeneral,
+              !strconcat(opc, " $FRT, $FRA, $FRC, $FRB"), FPFused,
+                       [(set QFRC:$FRT, (IntID QFRC:$FRA, QFRC:$FRB, QFRC:$FRC))]>;
+// QPXA1s_Int - A AForm_1 intrinsic definition (simple instructions).
+class QPXA1s_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
+  : AForm_1<opcode, xo, (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
+              !strconcat(opc, " $FRT, $FRA, $FRC, $FRB"), VecPerm,
                        [(set QFRC:$FRT, (IntID QFRC:$FRA, QFRC:$FRB, QFRC:$FRC))]>;
 // QPXA2_Int - A AForm_2 intrinsic definition.
 class QPXA2_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
@@ -73,6 +78,17 @@ def vector_shuffle_0_1 : PatFrag<(ops node:$lhs, node:$rhs),
   return SV->getValueType(0).getVectorNumElements() == 2 &&
          SV->getMaskElt(0) == 0 && SV->getMaskElt(1) == 1;
 }]>;
+
+def fround_inexact : PatFrag<(ops node:$val), (fround node:$val), [{
+  return cast<ConstantSDNode>(N->getOperand(1))->getZExtValue() == 0;
+}]>;
+
+def fround_exact : PatFrag<(ops node:$val), (fround node:$val), [{
+  return cast<ConstantSDNode>(N->getOperand(1))->getZExtValue() == 1;
+}]>;
+
+let FastIselShouldIgnore = 1 in // FastIsel should ignore all u12 instrs.
+  def u12 : ImmLeaf<i32, [{ return (Imm & 0xFFF) == Imm; }]>;
 
 //===----------------------------------------------------------------------===//
 // Instruction Definitions.
@@ -143,48 +159,48 @@ let Uses = [RM] in {
   // Multiply-add instructions
   def QVFMADD : AForm_1<4, 29,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                      "qvfmadd $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfmadd $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QFRC:$FRT, (fma QFRC:$FRA, QFRC:$FRC, QFRC:$FRB))]>;
   let isCodeGenOnly = 1 in
     def QVFMADDS : QPXA1_Int<0, 29, "qvfmadds", int_ppc_qpx_qvfmadds>;
   def QVFMADDSs : AForm_1<0, 29,
                         (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, QSRC:$FRC),
-                        "qvfmadds $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                        "qvfmadds $FRT, $FRA, $FRC, $FRB", FPFused,
                         [(set QSRC:$FRT, (fma QSRC:$FRA, QSRC:$FRC, QSRC:$FRB))]>;
   def QVFNMADD : AForm_1<4, 31,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                      "qvfnmadd $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfnmadd $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QFRC:$FRT, (fneg (fma QFRC:$FRA, QFRC:$FRC,
                                              QFRC:$FRB)))]>;
   let isCodeGenOnly = 1 in
     def QVFNMADDS : QPXA1_Int<0, 31, "qvfnmadds", int_ppc_qpx_qvfnmadds>;
   def QVFNMADDSs : AForm_1<0, 31,
                         (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, QSRC:$FRC),
-                        "qvfnmadds $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                        "qvfnmadds $FRT, $FRA, $FRC, $FRB", FPFused,
                         [(set QSRC:$FRT, (fneg (fma QSRC:$FRA, QSRC:$FRC,
                                                QSRC:$FRB)))]>;
   def QVFMSUB : AForm_1<4, 28,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                      "qvfmsub $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfmsub $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QFRC:$FRT, (fma QFRC:$FRA, QFRC:$FRC,
                                              (fneg QFRC:$FRB)))]>;
   let isCodeGenOnly = 1 in
     def QVFMSUBS : QPXA1_Int<0, 28, "qvfmsubs", int_ppc_qpx_qvfmsubs>;
   def QVFMSUBSs : AForm_1<0, 28,
                       (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, QSRC:$FRC),
-                      "qvfmsubs $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfmsubs $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QSRC:$FRT, (fma QSRC:$FRA, QSRC:$FRC,
                                              (fneg QSRC:$FRB)))]>;
   def QVFNMSUB : AForm_1<4, 30,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                      "qvfnmsub $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfnmsub $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QFRC:$FRT, (fneg (fma QFRC:$FRA, QFRC:$FRC,
                                              (fneg QFRC:$FRB))))]>;
   let isCodeGenOnly = 1 in
     def QVFNMSUBS : QPXA1_Int<0, 30, "qvfnmsubs", int_ppc_qpx_qvfnmsubs>;
   def QVFNMSUBSs : AForm_1<0, 30,
                       (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, QSRC:$FRC),
-                      "qvfnmsubs $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                      "qvfnmsubs $FRT, $FRA, $FRC, $FRB", FPFused,
                       [(set QSRC:$FRT, (fneg (fma QSRC:$FRA, QSRC:$FRC,
                                              (fneg QSRC:$FRB))))]>;
   def QVFXMADD : QPXA1_Int<4, 9, "qvfxmadd", int_ppc_qpx_qvfxmadd>;
@@ -198,22 +214,22 @@ let Uses = [RM] in {
 
   // Select Instruction
   let isCodeGenOnly = 1 in
-    def QVFSEL : QPXA1_Int<4, 23, "qvfsel", int_ppc_qpx_qvfsel>;
+    def QVFSEL : QPXA1s_Int<4, 23, "qvfsel", int_ppc_qpx_qvfsel>;
   def QVFSELb : AForm_1<4, 23, (outs QFRC:$FRT),
                         (ins QBRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                        "qvfsel $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                        "qvfsel $FRT, $FRA, $FRC, $FRB", VecPerm,
                         [(set QFRC:$FRT, (vselect QBRC:$FRA,
                                                   QFRC:$FRC, QFRC:$FRB))]>;
   let isCodeGenOnly = 1 in
   def QVFSELbs : AForm_1<4, 23, (outs QSRC:$FRT),
                         (ins QBRC:$FRA, QSRC:$FRB, QSRC:$FRC),
-                        "qvfsel $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                        "qvfsel $FRT, $FRA, $FRC, $FRB", VecPerm,
                         [(set QSRC:$FRT, (vselect QBRC:$FRA,
                                                   QSRC:$FRC, QSRC:$FRB))]>;
   let isCodeGenOnly = 1 in
   def QVFSELbb: AForm_1<4, 23, (outs QBRC:$FRT),
                         (ins QBRC:$FRA, QBRC:$FRB, QBRC:$FRC),
-                        "qvfsel $FRT, $FRA, $FRC, $FRB", FPGeneral,
+                        "qvfsel $FRT, $FRA, $FRC, $FRB", VecPerm,
                         [(set QBRC:$FRT, (vselect QBRC:$FRA,
                                                   QBRC:$FRC, QBRC:$FRB))]>;
 
@@ -242,7 +258,7 @@ let Uses = [RM] in {
   def QVFRSPs : XForm_19<4, 12,
                       (outs QSRC:$FRT), (ins QFRC:$FRB),
                       "qvfrsp $FRT, $FRB", FPGeneral,
-                      [(set QSRC:$FRT, (fround QFRC:$FRB))]>;
+                      [(set QSRC:$FRT, (fround_inexact QFRC:$FRB))]>;
 
   def QVFRIZ : XForm_19<4, 424, (outs QFRC:$FRT), (ins QFRC:$FRB),
                         "qvfriz $FRT, $FRB", FPGeneral,
@@ -254,11 +270,11 @@ let Uses = [RM] in {
 
   def QVFRIN : XForm_19<4, 392, (outs QFRC:$FRT), (ins QFRC:$FRB),
                         "qvfrin $FRT, $FRB", FPGeneral,
-                        [(set v4f64:$FRT, (fnearbyint v4f64:$FRB))]>;
+                        [(set v4f64:$FRT, (frnd v4f64:$FRB))]>;
   let isCodeGenOnly = 1 in
     def QVFRINs : XForm_19<4, 392, (outs QSRC:$FRT), (ins QSRC:$FRB),
                            "qvfrin $FRT, $FRB", FPGeneral,
-                           [(set v4f32:$FRT, (fnearbyint v4f32:$FRB))]>;
+                           [(set v4f32:$FRT, (frnd v4f32:$FRB))]>;
 
   def QVFRIP : XForm_19<4, 456, (outs QFRC:$FRT), (ins QFRC:$FRB),
                         "qvfrip $FRT, $FRB", FPGeneral,
@@ -279,102 +295,108 @@ let Uses = [RM] in {
   // Move Instructions
   def QVFMR : XForm_19<4, 74,
                       (outs QFRC:$FRT), (ins QFRC:$FRB),
-                      "qvfmr $FRT, $FRB", FPGeneral,
+                      "qvfmr $FRT, $FRB", VecPerm,
                       [/* (set QFRC:$FRT, QFRC:$FRB) */]>;
   let isCodeGenOnly = 1 in {
     def QVFMRs : XForm_19<4, 74,
                          (outs QSRC:$FRT), (ins QSRC:$FRB),
-                         "qvfmr $FRT, $FRB", FPGeneral,
+                         "qvfmr $FRT, $FRB", VecPerm,
                          [/* (set QSRC:$FRT, QSRC:$FRB) */]>;
     def QVFMRb : XForm_19<4, 74,
                          (outs QBRC:$FRT), (ins QBRC:$FRB),
-                         "qvfmr $FRT, $FRB", FPGeneral,
+                         "qvfmr $FRT, $FRB", VecPerm,
                          [/* (set QBRC:$FRT, QBRC:$FRB) */]>;
   }
   def QVFNEG : XForm_19<4, 40,
                       (outs QFRC:$FRT), (ins QFRC:$FRB),
-                      "qvfneg $FRT, $FRB", FPGeneral,
+                      "qvfneg $FRT, $FRB", VecPerm,
                       [(set QFRC:$FRT, (fneg QFRC:$FRB))]>;
   let isCodeGenOnly = 1 in
     def QVFNEGs : XForm_19<4, 40,
                          (outs QSRC:$FRT), (ins QSRC:$FRB),
-                         "qvfneg $FRT, $FRB", FPGeneral,
+                         "qvfneg $FRT, $FRB", VecPerm,
                          [(set QSRC:$FRT, (fneg QSRC:$FRB))]>;
   def QVFABS : XForm_19<4, 264,
                       (outs QFRC:$FRT), (ins QFRC:$FRB),
-                      "qvfabs $FRT, $FRB", FPGeneral,
+                      "qvfabs $FRT, $FRB", VecPerm,
                       [(set QFRC:$FRT, (fabs QFRC:$FRB))]>;
   let isCodeGenOnly = 1 in
     def QVFABSs : XForm_19<4, 264,
                          (outs QSRC:$FRT), (ins QSRC:$FRB),
-                         "qvfabs $FRT, $FRB", FPGeneral,
+                         "qvfabs $FRT, $FRB", VecPerm,
                          [(set QSRC:$FRT, (fabs QSRC:$FRB))]>;
   def QVFNABS : XForm_19<4, 136,
                       (outs QFRC:$FRT), (ins QFRC:$FRB),
-                      "qvfnabs $FRT, $FRB", FPGeneral,
+                      "qvfnabs $FRT, $FRB", VecPerm,
                       [(set QFRC:$FRT, (fneg (fabs QFRC:$FRB)))]>;
   let isCodeGenOnly = 1 in
     def QVFNABSs : XForm_19<4, 136,
                          (outs QSRC:$FRT), (ins QSRC:$FRB),
-                         "qvfnabs $FRT, $FRB", FPGeneral,
+                         "qvfnabs $FRT, $FRB", VecPerm,
                          [(set QSRC:$FRT, (fneg (fabs QSRC:$FRB)))]>;
   def QVFCPSGN : XForm_18<4, 74,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB),
-                      "qvfcpsgn $FRT, $FRA, $FRB", FPGeneral, []>;
+                      "qvfcpsgn $FRT, $FRA, $FRB", VecPerm,
+                      [(set QFRC:$FRT, (fcopysign QFRC:$FRB, QFRC:$FRA))]>;
+  let isCodeGenOnly = 1 in
+    def QVFCPSGNs : XForm_18<4, 74,
+                         (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB),
+                         "qvfcpsgn $FRT, $FRA, $FRB", VecPerm,
+                         [(set QSRC:$FRT, (fcopysign QSRC:$FRB, QSRC:$FRA))]>;
 
   def QVALIGNI : Z23Form_1<4, 5,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, u2imm:$idx),
-                      "qvaligni $FRT, $FRA, $FRB, $idx", FPGeneral,
+                      "qvaligni $FRT, $FRA, $FRB, $idx", VecPerm,
                       [(set QFRC:$FRT,
                           (PPCqvaligni QFRC:$FRA, QFRC:$FRB, (i32 imm:$idx)))]>;
   let isCodeGenOnly = 1 in
      def QVALIGNIs : Z23Form_1<4, 5,
                          (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, u2imm:$idx),
-                         "qvaligni $FRT, $FRA, $FRB, $idx", FPGeneral,
+                         "qvaligni $FRT, $FRA, $FRB, $idx", VecPerm,
                          [(set QSRC:$FRT,
                              (PPCqvaligni QSRC:$FRA, QSRC:$FRB, (i32 imm:$idx)))]>;
   let isCodeGenOnly = 1 in
      def QVALIGNIb : Z23Form_1<4, 5,
                          (outs QBRC:$FRT), (ins QBRC:$FRA, QBRC:$FRB, u2imm:$idx),
-                         "qvaligni $FRT, $FRA, $FRB, $idx", FPGeneral,
+                         "qvaligni $FRT, $FRA, $FRB, $idx", VecPerm,
                          [(set QBRC:$FRT,
                              (PPCqvaligni QBRC:$FRA, QBRC:$FRB, (i32 imm:$idx)))]>;
 
   def QVESPLATI : Z23Form_2<4, 37,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, u2imm:$idx),
-                      "qvesplati $FRT, $FRA, $idx", FPGeneral,
+                      "qvesplati $FRT, $FRA, $idx", VecPerm,
                       [(set QFRC:$FRT,
                           (PPCqvesplati QFRC:$FRA, (i32 imm:$idx)))]>;
   let isCodeGenOnly = 1 in
      def QVESPLATIs : Z23Form_2<4, 37,
                          (outs QSRC:$FRT), (ins QSRC:$FRA, u2imm:$idx),
-                         "qvesplati $FRT, $FRA, $idx", FPGeneral,
+                         "qvesplati $FRT, $FRA, $idx", VecPerm,
                          [(set QSRC:$FRT,
                              (PPCqvesplati QSRC:$FRA, (i32 imm:$idx)))]>;
   let isCodeGenOnly = 1 in
      def QVESPLATIb : Z23Form_2<4, 37,
                          (outs QBRC:$FRT), (ins QBRC:$FRA, u2imm:$idx),
-                         "qvesplati $FRT, $FRA, $idx", FPGeneral,
+                         "qvesplati $FRT, $FRA, $idx", VecPerm,
                          [(set QBRC:$FRT,
                              (PPCqvesplati QBRC:$FRA, (i32 imm:$idx)))]>;
 
   def QVFPERM : AForm_1<4, 6,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, QFRC:$FRC),
-                      "qvfperm $FRT, $FRA, $FRB, $FRC", FPGeneral,
+                      "qvfperm $FRT, $FRA, $FRB, $FRC", VecPerm,
                       [(set QFRC:$FRT,
                           (PPCqvfperm QFRC:$FRA, QFRC:$FRB, QFRC:$FRC))]>;
   let isCodeGenOnly = 1 in
      def QVFPERMs : AForm_1<4, 6,
                          (outs QSRC:$FRT), (ins QSRC:$FRA, QSRC:$FRB, QFRC:$FRC),
-                         "qvfperm $FRT, $FRA, $FRB, $FRC", FPGeneral,
+                         "qvfperm $FRT, $FRA, $FRB, $FRC", VecPerm,
                          [(set QSRC:$FRT,
                              (PPCqvfperm QSRC:$FRA, QSRC:$FRB, QFRC:$FRC))]>;
 
   let isReMaterializable = 1, isAsCheapAsAMove = 1 in
   def QVGPCI : Z23Form_3<4, 133,
                       (outs QFRC:$FRT), (ins u12imm:$idx),
-                      "qvgpci $FRT, $idx", FPGeneral,
-                      [(set QFRC:$FRT, (PPCqvgpci (i32 imm:$idx)))]>;
+                      "qvgpci $FRT, $idx", VecPerm,
+                      [(set QFRC:$FRT, (PPCqvgpci (u12:$idx)))]>;
 
   // Compare Instruction
   let isCodeGenOnly = 1 in
@@ -425,311 +447,312 @@ let Uses = [RM] in {
   let isCodeGenOnly = 1 in
   def QVFLOGICAL : XForm_20<4, 4,
                       (outs QFRC:$FRT), (ins QFRC:$FRA, QFRC:$FRB, u12imm:$tttt),
-                      "qvflogical $FRT, $FRA, $FRB, $tttt", FPCompare, []>;
+                      "qvflogical $FRT, $FRA, $FRB, $tttt", VecPerm, []>;
   def QVFLOGICALb : XForm_20<4, 4,
                       (outs QBRC:$FRT), (ins QBRC:$FRA, QBRC:$FRB, u12imm:$tttt),
-                      "qvflogical $FRT, $FRA, $FRB, $tttt", FPCompare, []>;
+                      "qvflogical $FRT, $FRA, $FRB, $tttt", VecPerm, []>;
   let isCodeGenOnly = 1 in
   def QVFLOGICALs : XForm_20<4, 4,
                       (outs QBRC:$FRT), (ins QBRC:$FRA, QBRC:$FRB, u12imm:$tttt),
-                      "qvflogical $FRT, $FRA, $FRB, $tttt", FPCompare, []>;
+                      "qvflogical $FRT, $FRA, $FRB, $tttt", VecPerm, []>;
 
   // Load indexed instructions
   let mayLoad = 1, canFoldAsLoad = 1 in {
     def QVLFDX : XForm_1<31, 583,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfdx $FRT, $src", LdStLoad,
+                        "qvlfdx $FRT, $src", LdStLFD,
                         [(set QFRC:$FRT, (load xoaddr:$src))]>;
     def QVLFDXb : XForm_1<31, 583,
                         (outs QBRC:$FRT), (ins memrr:$src),
-                        "qvlfdx $FRT, $src", LdStLoad, []>;
+                        "qvlfdx $FRT, $src", LdStLFD, []>;
 
     let RC = 1 in
     def QVLFDXA : XForm_1<31, 583,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfdxa $FRT, $src", LdStLoad, []>;
+                        "qvlfdxa $FRT, $src", LdStLFD, []>;
 
     def QVLFDUX : XForm_1<31, 494,
                         (outs QFRC:$FRT, ptr_rc_nor0:$ea_result),
                         (ins memrr:$src),
-                        "qvlfdux $FRT, $src", LdStLoad, []>,
+                        "qvlfdux $FRT, $src", LdStLFDU, []>,
                         RegConstraint<"$src.ptrreg = $ea_result">,
                         NoEncode<"$ea_result">;
     let RC = 1 in
     def QVLFDUXA : XForm_1<31, 494,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfduxa $FRT, $src", LdStLoad, []>;
+                        "qvlfduxa $FRT, $src", LdStLFD, []>;
 
     def QVLFSX : XForm_1<31, 519,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfsx $FRT, $src", LdStLoad,
+                        "qvlfsx $FRT, $src", LdStLFD,
                         [(set QFRC:$FRT, (extloadv4f32 xoaddr:$src))]>;
 
     let isCodeGenOnly = 1 in
     def QVLFSXb : XForm_1<31, 519,
                         (outs QBRC:$FRT), (ins memrr:$src),
-                        "qvlfsx $FRT, $src", LdStLoad,
+                        "qvlfsx $FRT, $src", LdStLFD,
                         [(set QBRC:$FRT, (PPCqvlfsb xoaddr:$src))]>;
     let isCodeGenOnly = 1 in
     def QVLFSXs : XForm_1<31, 519,
                         (outs QSRC:$FRT), (ins memrr:$src),
-                        "qvlfsx $FRT, $src", LdStLoad,
+                        "qvlfsx $FRT, $src", LdStLFD,
                         [(set QSRC:$FRT, (load xoaddr:$src))]>;
 
     let RC = 1 in
     def QVLFSXA : XForm_1<31, 519,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfsxa $FRT, $src", LdStLoad, []>;
+                        "qvlfsxa $FRT, $src", LdStLFD, []>;
 
     def QVLFSUX : XForm_1<31, 615,
                         (outs QSRC:$FRT, ptr_rc_nor0:$ea_result),
                         (ins memrr:$src),
-                        "qvlfsux $FRT, $src", LdStLoad, []>,
+                        "qvlfsux $FRT, $src", LdStLFDU, []>,
                         RegConstraint<"$src.ptrreg = $ea_result">,
                         NoEncode<"$ea_result">;
 
     let RC = 1 in
     def QVLFSUXA : XForm_1<31, 615,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfsuxa $FRT, $src", LdStLoad, []>;
+                        "qvlfsuxa $FRT, $src", LdStLFD, []>;
 
     def QVLFCDX : XForm_1<31, 71,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcdx $FRT, $src", LdStLoad,
+                        "qvlfcdx $FRT, $src", LdStLFD,
                         [(set QFRC:$FRT, (vector_shuffle_0_1_0_1 (load xoaddr:$src), undef))]>;
     let RC = 1 in
     def QVLFCDXA : XForm_1<31, 71,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcdxa $FRT, $src", LdStLoad, []>;
+                        "qvlfcdxa $FRT, $src", LdStLFD, []>;
 
     def QVLFCDUX : XForm_1<31, 103,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcdux $FRT, $src", LdStLoad, []>;
+                        "qvlfcdux $FRT, $src", LdStLFD, []>;
     let RC = 1 in
     def QVLFCDUXA : XForm_1<31, 103,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcduxa $FRT, $src", LdStLoad, []>;
+                        "qvlfcduxa $FRT, $src", LdStLFD, []>;
 
     def QVLFCSX : XForm_1<31, 7,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcsx $FRT, $src", LdStLoad,
+                        "qvlfcsx $FRT, $src", LdStLFD,
                         [(set QFRC:$FRT, (vector_shuffle_0_1_0_1 (extloadv2f32 xoaddr:$src), undef))]>;
     let isCodeGenOnly = 1 in
     def QVLFCSXs : XForm_1<31, 7,
                          (outs QSRC:$FRT), (ins memrr:$src),
-                         "qvlfcsx $FRT, $src", LdStLoad,
+                         "qvlfcsx $FRT, $src", LdStLFD,
                          [(set QSRC:$FRT, (vector_shuffle_0_1_0_1 (load xoaddr:$src), undef))]>;
 
     let RC = 1 in
     def QVLFCSXA : XForm_1<31, 7,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcsxa $FRT, $src", LdStLoad, []>;
+                        "qvlfcsxa $FRT, $src", LdStLFD, []>;
 
     def QVLFCSUX : XForm_1<31, 39,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcsux $FRT, $src", LdStLoad, []>;
+                        "qvlfcsux $FRT, $src", LdStLFD, []>;
     let RC = 1 in
     def QVLFCSUXA : XForm_1<31, 39,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfcsuxa $FRT, $src", LdStLoad, []>;
+                        "qvlfcsuxa $FRT, $src", LdStLFD, []>;
 
     def QVLFIWAX : XForm_1<31, 871,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfiwax $FRT, $src", LdStLoad, []>;
+                        "qvlfiwax $FRT, $src", LdStLFD, []>;
     let RC = 1 in
     def QVLFIWAXA : XForm_1<31, 871,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfiwaxa $FRT, $src", LdStLoad, []>;
+                        "qvlfiwaxa $FRT, $src", LdStLFD, []>;
 
     def QVLFIWZX : XForm_1<31, 839,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfiwzx $FRT, $src", LdStLoad, []>;
+                        "qvlfiwzx $FRT, $src", LdStLFD, []>;
     let RC = 1 in
     def QVLFIWZXA : XForm_1<31, 839,
                         (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlfiwzxa $FRT, $src", LdStLoad, []>;
-
-    def QVLPCLDX : XForm_1<31, 582,
-                        (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlpcldx $FRT, $src", LdStLoad, []>;
-    def QVLPCLSX : XForm_1<31, 518,
-                        (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlpclsx $FRT, $src", LdStLoad, []>;
-    let isCodeGenOnly = 1 in
-      def QVLPCLSXint : XForm_11<31, 518,
-                                (outs QFRC:$FRT), (ins G8RC:$src),
-                                "qvlpclsx $FRT, 0, $src", LdStLoad, []>;
-    def QVLPCRDX : XForm_1<31, 70,
-                        (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlpcrdx $FRT, $src", LdStLoad, []>;
-    def QVLPCRSX : XForm_1<31, 6,
-                        (outs QFRC:$FRT), (ins memrr:$src),
-                        "qvlpcrsx $FRT, $src", LdStLoad, []>;
+                        "qvlfiwzxa $FRT, $src", LdStLFD, []>;
   }
+
+
+  def QVLPCLDX : XForm_1<31, 582,
+                      (outs QFRC:$FRT), (ins memrr:$src),
+                      "qvlpcldx $FRT, $src", LdStLFD, []>;
+  def QVLPCLSX : XForm_1<31, 518,
+                      (outs QFRC:$FRT), (ins memrr:$src),
+                      "qvlpclsx $FRT, $src", LdStLFD, []>;
+  let isCodeGenOnly = 1 in
+    def QVLPCLSXint : XForm_11<31, 518,
+                              (outs QFRC:$FRT), (ins G8RC:$src),
+                              "qvlpclsx $FRT, 0, $src", LdStLFD, []>;
+  def QVLPCRDX : XForm_1<31, 70,
+                      (outs QFRC:$FRT), (ins memrr:$src),
+                      "qvlpcrdx $FRT, $src", LdStLFD, []>;
+  def QVLPCRSX : XForm_1<31, 6,
+                      (outs QFRC:$FRT), (ins memrr:$src),
+                      "qvlpcrsx $FRT, $src", LdStLFD, []>;
 
   // Store indexed instructions
   let mayStore = 1 in {
     def QVSTFDX : XForm_8<31, 711,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfdx $FRT, $dst", LdStStore,
+                        "qvstfdx $FRT, $dst", LdStSTFD,
                         [(store QFRC:$FRT, xoaddr:$dst)]>;
     def QVSTFDXb : XForm_8<31, 711,
                         (outs), (ins QBRC:$FRT, memrr:$dst),
-                        "qvstfdx $FRT, $dst", LdStStore, []>;
+                        "qvstfdx $FRT, $dst", LdStSTFD, []>;
 
     let RC = 1 in
     def QVSTFDXA : XForm_8<31, 711,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfdxa $FRT, $dst", LdStStore, []>;
+                        "qvstfdxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFDUX : XForm_8<31, 743, (outs ptr_rc_nor0:$ea_res),
                            (ins QFRC:$FRT, memrr:$dst),
-                           "qvstfdux $FRT, $dst", LdStStore, []>,
+                           "qvstfdux $FRT, $dst", LdStSTFDU, []>,
                            RegConstraint<"$dst.ptrreg = $ea_res">,
                            NoEncode<"$ea_res">;
 
     let RC = 1 in
     def QVSTFDUXA : XForm_8<31, 743,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfduxa $FRT, $dst", LdStStore, []>;
+                        "qvstfduxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFDXI : XForm_8<31, 709,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfdxi $FRT, $dst", LdStStore, []>;
+                        "qvstfdxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFDXIA : XForm_8<31, 709,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfdxia $FRT, $dst", LdStStore, []>;
+                        "qvstfdxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFDUXI : XForm_8<31, 741,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfduxi $FRT, $dst", LdStStore, []>;
+                        "qvstfduxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFDUXIA : XForm_8<31, 741,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfduxia $FRT, $dst", LdStStore, []>;
+                        "qvstfduxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFSX : XForm_8<31, 647,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsx $FRT, $dst", LdStStore,
+                        "qvstfsx $FRT, $dst", LdStSTFD,
                         [(truncstorev4f32 QFRC:$FRT, xoaddr:$dst)]>;
     let isCodeGenOnly = 1 in
     def QVSTFSXs : XForm_8<31, 647,
                          (outs), (ins QSRC:$FRT, memrr:$dst),
-                         "qvstfsx $FRT, $dst", LdStStore,
+                         "qvstfsx $FRT, $dst", LdStSTFD,
                          [(store QSRC:$FRT, xoaddr:$dst)]>;
 
     let RC = 1 in
     def QVSTFSXA : XForm_8<31, 647,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsxa $FRT, $dst", LdStStore, []>;
+                        "qvstfsxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFSUX : XForm_8<31, 679, (outs ptr_rc_nor0:$ea_res),
                            (ins QSRC:$FRT, memrr:$dst),
-                           "qvstfsux $FRT, $dst", LdStStore, []>,
+                           "qvstfsux $FRT, $dst", LdStSTFDU, []>,
                            RegConstraint<"$dst.ptrreg = $ea_res">,
                            NoEncode<"$ea_res">;
 
     let RC = 1 in
     def QVSTFSUXA : XForm_8<31, 679,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsuxa $FRT, $dst", LdStStore, []>;
+                        "qvstfsuxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFSXI : XForm_8<31, 645,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsxi $FRT, $dst", LdStStore, []>;
+                        "qvstfsxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFSXIA : XForm_8<31, 645,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsxia $FRT, $dst", LdStStore, []>;
+                        "qvstfsxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFSUXI : XForm_8<31, 677,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsuxi $FRT, $dst", LdStStore, []>;
+                        "qvstfsuxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFSUXIA : XForm_8<31, 677,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfsuxia $FRT, $dst", LdStStore, []>;
+                        "qvstfsuxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCDX : XForm_8<31, 199,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcdx $FRT, $dst", LdStStore,
+                        "qvstfcdx $FRT, $dst", LdStSTFD,
                         [(store (vector_shuffle_0_1 QFRC:$FRT, undef), xoaddr:$dst)]>;
     let RC = 1 in
     def QVSTFCDXA : XForm_8<31, 199,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcdxa $FRT, $dst", LdStStore, []>;
+                        "qvstfcdxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCSX : XForm_8<31, 135,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsx $FRT, $dst", LdStStore,
+                        "qvstfcsx $FRT, $dst", LdStSTFD,
                         [(truncstorev2f32 (vector_shuffle_0_1 QFRC:$FRT, undef), xoaddr:$dst)]>;
     let isCodeGenOnly = 1 in
     def QVSTFCSXs : XForm_8<31, 135,
                          (outs), (ins QSRC:$FRT, memrr:$dst),
-                         "qvstfcsx $FRT, $dst", LdStStore,
+                         "qvstfcsx $FRT, $dst", LdStSTFD,
                          [(store (vector_shuffle_0_1 QSRC:$FRT, undef), xoaddr:$dst)]>;
 
     let RC = 1 in
     def QVSTFCSXA : XForm_8<31, 135,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsxa $FRT, $dst", LdStStore, []>;
+                        "qvstfcsxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCDUX : XForm_8<31, 231,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcdux $FRT, $dst", LdStStore, []>;
+                        "qvstfcdux $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCDUXA : XForm_8<31, 231,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcduxa $FRT, $dst", LdStStore, []>;
+                        "qvstfcduxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCSUX : XForm_8<31, 167,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsux $FRT, $dst", LdStStore, []>;
+                        "qvstfcsux $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCSUXA : XForm_8<31, 167,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsuxa $FRT, $dst", LdStStore, []>;
+                        "qvstfcsuxa $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCDXI : XForm_8<31, 197,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcdxi $FRT, $dst", LdStStore, []>;
+                        "qvstfcdxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCDXIA : XForm_8<31, 197,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcdxia $FRT, $dst", LdStStore, []>;
+                        "qvstfcdxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCSXI : XForm_8<31, 133,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsxi $FRT, $dst", LdStStore, []>;
+                        "qvstfcsxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCSXIA : XForm_8<31, 133,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsxia $FRT, $dst", LdStStore, []>;
+                        "qvstfcsxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCDUXI : XForm_8<31, 229,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcduxi $FRT, $dst", LdStStore, []>;
+                        "qvstfcduxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCDUXIA : XForm_8<31, 229,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcduxia $FRT, $dst", LdStStore, []>;
+                        "qvstfcduxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFCSUXI : XForm_8<31, 165,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsuxi $FRT, $dst", LdStStore, []>;
+                        "qvstfcsuxi $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFCSUXIA : XForm_8<31, 165,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfcsuxia $FRT, $dst", LdStStore, []>;
+                        "qvstfcsuxia $FRT, $dst", LdStSTFD, []>;
 
     def QVSTFIWX : XForm_8<31, 977,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfiwx $FRT, $dst", LdStStore, []>;
+                        "qvstfiwx $FRT, $dst", LdStSTFD, []>;
     let RC = 1 in
     def QVSTFIWXA : XForm_8<31, 977,
                         (outs), (ins QFRC:$FRT, memrr:$dst),
-                        "qvstfiwxa $FRT, $dst", LdStStore, []>;
+                        "qvstfiwxa $FRT, $dst", LdStSTFD, []>;
   }
 }
 
@@ -765,13 +788,13 @@ def : Pat<(f32 (vector_extract QSRC:$S, 3)),
 
 def : Pat<(f64 (vector_extract QFRC:$S, G8RC:$F)),
           (EXTRACT_SUBREG (QVFPERM QFRC:$S, QFRC:$S,
-                                   (QVLPCLSXint (RLDICR G8RC:$F, 5,
-                                                        /* 63-5 = */ 58))),
+                                   (QVLPCLSXint (RLDICR G8RC:$F, 2,
+                                                        /* 63-2 = */ 61))),
                           sub_64)>;
 def : Pat<(f32 (vector_extract QSRC:$S, G8RC:$F)),
           (EXTRACT_SUBREG (QVFPERMs QSRC:$S, QSRC:$S,
-                                    (QVLPCLSXint (RLDICR G8RC:$F, 5,
-                                                         /* 63-5 = */ 58))),
+                                    (QVLPCLSXint (RLDICR G8RC:$F, 2,
+                                                         /* 63-2 = */ 61))),
                           sub_64)>;
 
 def : Pat<(int_ppc_qpx_qvfperm QFRC:$A, QFRC:$B, QFRC:$C),
@@ -779,6 +802,12 @@ def : Pat<(int_ppc_qpx_qvfperm QFRC:$A, QFRC:$B, QFRC:$C),
 
 def : Pat<(int_ppc_qpx_qvfcpsgn QFRC:$A, QFRC:$B),
           (QVFCPSGN QFRC:$A, QFRC:$B)>;
+
+// FCOPYSIGN's operand types need not agree.
+def : Pat<(fcopysign QFRC:$frB, QSRC:$frA),
+          (QVFCPSGN (COPY_TO_REGCLASS $frA, QFRC), $frB)>;
+def : Pat<(fcopysign QSRC:$frB, QFRC:$frA),
+          (QVFCPSGNs (COPY_TO_REGCLASS $frA, QSRC), $frB)>;
 
 def : Pat<(int_ppc_qpx_qvfneg QFRC:$A), (QVFNEG QFRC:$A)>;
 def : Pat<(int_ppc_qpx_qvfabs QFRC:$A), (QVFABS QFRC:$A)>;
@@ -883,7 +912,7 @@ def : Pat<(pre_store v4f32:$rS, iPTR:$ptrreg, iPTR:$ptroff),
 
 def : Pat<(int_ppc_qpx_qvflogical  QFRC:$A, QFRC:$B, (i32 imm:$idx)),
           (QVFLOGICAL QFRC:$A, QFRC:$B, imm:$idx)>;
-def : Pat<(int_ppc_qpx_qvgpci (i32 imm:$idx)),
+def : Pat<(int_ppc_qpx_qvgpci (u12:$idx)),
           (QVGPCI imm:$idx)>;
 
 def : Pat<(setcc QFRC:$FRA, QFRC:$FRB, SETOGE),
@@ -1002,6 +1031,9 @@ def : Pat<(not QBRC:$FRA),
 
 def : Pat<(v4f64 (fextend QSRC:$src)),
           (COPY_TO_REGCLASS QSRC:$src, QFRC)>;
+
+def : Pat<(v4f32 (fround_exact QFRC:$src)),
+          (COPY_TO_REGCLASS QFRC:$src, QSRC)>;
 
 // Extract the underlying floating-point values from the
 // QPX (-1.0, 1.0) boolean representation.

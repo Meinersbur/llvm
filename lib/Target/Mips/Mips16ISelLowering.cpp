@@ -37,6 +37,18 @@ struct Mips16Libcall {
     return std::strcmp(Name, RHS.Name) < 0;
   }
 };
+
+struct Mips16IntrinsicHelperType{
+  const char* Name;
+  const char* Helper;
+
+  bool operator<(const Mips16IntrinsicHelperType &RHS) const {
+    return std::strcmp(Name, RHS.Name) < 0;
+  }
+  bool operator==(const Mips16IntrinsicHelperType &RHS) const {
+    return std::strcmp(Name, RHS.Name) == 0;
+  }
+};
 }
 
 // Libcalls for which no helper is generated. Sorted by name for binary search.
@@ -77,12 +89,38 @@ static const Mips16Libcall HardFloatLibCalls[] = {
   { RTLIB::UO_F32, "__mips16_unordsf2" }
 };
 
+static const Mips16IntrinsicHelperType Mips16IntrinsicHelper[] = {
+  {"__fixunsdfsi", "__mips16_call_stub_2" },
+  {"ceil",  "__mips16_call_stub_df_2"},
+  {"ceilf", "__mips16_call_stub_sf_1"},
+  {"copysign",  "__mips16_call_stub_df_10"},
+  {"copysignf", "__mips16_call_stub_sf_5"},
+  {"cos",  "__mips16_call_stub_df_2"},
+  {"cosf", "__mips16_call_stub_sf_1"},
+  {"exp2",  "__mips16_call_stub_df_2"},
+  {"exp2f", "__mips16_call_stub_sf_1"},
+  {"floor",  "__mips16_call_stub_df_2"},
+  {"floorf", "__mips16_call_stub_sf_1"},
+  {"log2",  "__mips16_call_stub_df_2"},
+  {"log2f", "__mips16_call_stub_sf_1"},
+  {"nearbyint",  "__mips16_call_stub_df_2"},
+  {"nearbyintf", "__mips16_call_stub_sf_1"},
+  {"rint",  "__mips16_call_stub_df_2"},
+  {"rintf", "__mips16_call_stub_sf_1"},
+  {"sin",  "__mips16_call_stub_df_2"},
+  {"sinf", "__mips16_call_stub_sf_1"},
+  {"sqrt",  "__mips16_call_stub_df_2"},
+  {"sqrtf", "__mips16_call_stub_sf_1"},
+  {"trunc",  "__mips16_call_stub_df_2"},
+  {"truncf", "__mips16_call_stub_sf_1"},
+};
+
 Mips16TargetLowering::Mips16TargetLowering(MipsTargetMachine &TM)
   : MipsTargetLowering(TM) {
   //
   // set up as if mips32 and then revert so we can test the mechanism
   // for switching
-  addRegisterClass(MVT::i32, &Mips::CPURegsRegClass);
+  addRegisterClass(MVT::i32, &Mips::GPR32RegClass);
   addRegisterClass(MVT::f32, &Mips::FGR32RegClass);
   computeRegisterProperties();
   clearRegisterClasses();
@@ -106,6 +144,11 @@ Mips16TargetLowering::Mips16TargetLowering(MipsTargetMachine &TM)
   setOperationAction(ISD::ATOMIC_LOAD_MAX,    MVT::i32,   Expand);
   setOperationAction(ISD::ATOMIC_LOAD_UMIN,   MVT::i32,   Expand);
   setOperationAction(ISD::ATOMIC_LOAD_UMAX,   MVT::i32,   Expand);
+
+  setOperationAction(ISD::ROTR, MVT::i32,  Expand);
+  setOperationAction(ISD::ROTR, MVT::i64,  Expand);
+  setOperationAction(ISD::BSWAP, MVT::i32, Expand);
+  setOperationAction(ISD::BSWAP, MVT::i64, Expand);
 
   computeRegisterProperties();
 }
@@ -381,6 +424,8 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
             bool IsPICCall, bool GlobalOrExternal, bool InternalLinkage,
             CallLoweringInfo &CLI, SDValue Callee, SDValue Chain) const {
   SelectionDAG &DAG = CLI.DAG;
+  MachineFunction &MF = DAG.getMachineFunction();
+  MipsFunctionInfo *FuncInfo = MF.getInfo<MipsFunctionInfo>();
   const char* Mips16HelperFunction = 0;
   bool NeedMips16Helper = false;
 
@@ -398,6 +443,21 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
       if (std::binary_search(HardFloatLibCalls, array_endof(HardFloatLibCalls),
                              Find))
         LookupHelper = false;
+      else {
+        Mips16IntrinsicHelperType IntrinsicFind = {S->getSymbol(), ""};
+        // one more look at list of intrinsics
+        if (std::binary_search(Mips16IntrinsicHelper,
+            array_endof(Mips16IntrinsicHelper),
+                                     IntrinsicFind)) {
+          const Mips16IntrinsicHelperType *h =(std::find(Mips16IntrinsicHelper,
+              array_endof(Mips16IntrinsicHelper),
+                                       IntrinsicFind));
+          Mips16HelperFunction = h->Helper;
+          NeedMips16Helper = true;
+          LookupHelper = false;
+        }
+
+      }
     } else if (GlobalAddressSDNode *G =
                    dyn_cast<GlobalAddressSDNode>(CLI.Callee)) {
       Mips16Libcall Find = { RTLIB::UNKNOWN_LIBCALL,
@@ -421,7 +481,10 @@ getOpndList(SmallVectorImpl<SDValue> &Ops,
     if (NeedMips16Helper) {
       RegsToPass.push_front(std::make_pair(V0Reg, Callee));
       JumpTarget = DAG.getExternalSymbol(Mips16HelperFunction, getPointerTy());
-      JumpTarget = getAddrGlobal(JumpTarget, DAG, MipsII::MO_GOT);
+      ExternalSymbolSDNode *S = cast<ExternalSymbolSDNode>(JumpTarget);
+      JumpTarget = getAddrGlobal(S, JumpTarget.getValueType(), DAG,
+                                 MipsII::MO_GOT, Chain,
+                                 FuncInfo->callPtrInfo(S->getSymbol()));
     } else
       RegsToPass.push_front(std::make_pair((unsigned)Mips::T9, Callee));
   }

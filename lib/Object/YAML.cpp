@@ -13,7 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/YAML.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cctype>
 
 using namespace llvm;
 using namespace object::yaml;
@@ -49,6 +51,10 @@ void BinaryRef::writeAsBinary(raw_ostream &OS) const {
 }
 
 void BinaryRef::writeAsHex(raw_ostream &OS) const {
+  if (binary_size() == 0) {
+    OS << "\"\"";
+    return;
+  }
   if (DataIsHexString) {
     OS.write((const char *)Data.data(), Data.size());
     return;

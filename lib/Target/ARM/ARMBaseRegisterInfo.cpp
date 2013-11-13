@@ -51,22 +51,41 @@ ARMBaseRegisterInfo::ARMBaseRegisterInfo(const ARMSubtarget &sti)
 
 const uint16_t*
 ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  bool ghcCall = false;
- 
-  if (MF) {
-    const Function *F = MF->getFunction();
-    ghcCall = (F ? F->getCallingConv() == CallingConv::GHC : false);
+  const uint16_t *RegList = (STI.isTargetIOS() && !STI.isAAPCS_ABI())
+                                ? CSR_iOS_SaveList
+                                : CSR_AAPCS_SaveList;
+
+  if (!MF) return RegList;
+
+  const Function *F = MF->getFunction();
+  if (F->getCallingConv() == CallingConv::GHC) {
+    // GHC set of callee saved regs is empty as all those regs are
+    // used for passing STG regs around
+    return CSR_NoRegs_SaveList;
+  } else if (F->hasFnAttribute("interrupt")) {
+    if (STI.isMClass()) {
+      // M-class CPUs have hardware which saves the registers needed to allow a
+      // function conforming to the AAPCS to function as a handler.
+      return CSR_AAPCS_SaveList;
+    } else if (F->getFnAttribute("interrupt").getValueAsString() == "FIQ") {
+      // Fast interrupt mode gives the handler a private copy of R8-R14, so less
+      // need to be saved to restore user-mode state.
+      return CSR_FIQ_SaveList;
+    } else {
+      // Generally only R13-R14 (i.e. SP, LR) are automatically preserved by
+      // exception handling.
+      return CSR_GenericInt_SaveList;
+    }
   }
- 
-  if (ghcCall)
-    return CSR_GHC_SaveList;
-  else
-    return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
-      ? CSR_iOS_SaveList : CSR_AAPCS_SaveList;
+
+  return RegList;
 }
 
 const uint32_t*
-ARMBaseRegisterInfo::getCallPreservedMask(CallingConv::ID) const {
+ARMBaseRegisterInfo::getCallPreservedMask(CallingConv::ID CC) const {
+  if (CC == CallingConv::GHC)
+    // This is academic becase all GHC calls are (supposed to be) tail calls
+    return CSR_NoRegs_RegMask;
   return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
     ? CSR_iOS_RegMask : CSR_AAPCS_RegMask;
 }
@@ -77,14 +96,18 @@ ARMBaseRegisterInfo::getNoPreservedMask() const {
 }
 
 const uint32_t*
-ARMBaseRegisterInfo::getThisReturnPreservedMask(CallingConv::ID) const {
+ARMBaseRegisterInfo::getThisReturnPreservedMask(CallingConv::ID CC) const {
   // This should return a register mask that is the same as that returned by
   // getCallPreservedMask but that additionally preserves the register used for
   // the first i32 argument (which must also be the register used to return a
   // single i32 return value)
   //
   // In case that the calling convention does not use the same register for
-  // both, the function should return NULL (does not currently apply)
+  // both or otherwise does not want to enable this optimization, the function
+  // should return NULL
+  if (CC == CallingConv::GHC)
+    // This is academic becase all GHC calls are (supposed to be) tail calls
+    return NULL;
   return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
     ? CSR_iOS_ThisReturn_RegMask : CSR_AAPCS_ThisReturn_RegMask;
 }
@@ -314,7 +337,7 @@ bool ARMBaseRegisterInfo::canRealignStack(const MachineFunction &MF) const {
   // 1. Dynamic stack realignment is explicitly disabled,
   // 2. This is a Thumb1 function (it's not useful, so we don't bother), or
   // 3. There are VLAs in the function and the base pointer is disabled.
-  if (!MF.getTarget().Options.RealignStack)
+  if (MF.getFunction()->hasFnAttribute("no-realign-stack"))
     return false;
   if (AFI->isThumb1OnlyFunction())
     return false;
@@ -360,14 +383,6 @@ ARMBaseRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
   if (TFI->hasFP(MF))
     return FramePtr;
   return ARM::SP;
-}
-
-unsigned ARMBaseRegisterInfo::getEHExceptionRegister() const {
-  llvm_unreachable("What is the exception register");
-}
-
-unsigned ARMBaseRegisterInfo::getEHHandlerRegister() const {
-  llvm_unreachable("What is the exception handler register");
 }
 
 /// emitLoadConstPool - Emits a load from constpool to materialize the

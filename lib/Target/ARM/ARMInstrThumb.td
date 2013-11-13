@@ -69,11 +69,6 @@ def thumb_immshifted_shamt : SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant(V, MVT::i32);
 }]>;
 
-// ADR instruction labels.
-def t_adrlabel : Operand<i32> {
-  let EncoderMethod = "getThumbAdrLabelOpValue";
-}
-
 // Scaled 4 immediate.
 def t_imm0_1020s4_asmoperand: AsmOperandClass { let Name = "Imm0_1020s4"; }
 def t_imm0_1020s4 : Operand<i32> {
@@ -97,10 +92,32 @@ def t_imm0_508s4_neg : Operand<i32> {
 
 // Define Thumb specific addressing modes.
 
+// unsigned 8-bit, 2-scaled memory offset
+class OperandUnsignedOffset_b8s2 : AsmOperandClass {
+  let Name = "UnsignedOffset_b8s2";
+  let PredicateMethod = "isUnsignedOffset<8, 2>";
+}
+
+def UnsignedOffset_b8s2 : OperandUnsignedOffset_b8s2;
+
+// thumb style PC relative operand. signed, 8 bits magnitude,
+// two bits shift. can be represented as either [pc, #imm], #imm,
+// or relocatable expression...
+def ThumbMemPC : AsmOperandClass {
+  let Name = "ThumbMemPC";
+}
+
 let OperandType = "OPERAND_PCREL" in {
 def t_brtarget : Operand<OtherVT> {
   let EncoderMethod = "getThumbBRTargetOpValue";
   let DecoderMethod = "DecodeThumbBROperand";
+}
+
+// ADR instruction labels.
+def t_adrlabel : Operand<i32> {
+  let EncoderMethod = "getThumbAdrLabelOpValue";
+  let PrintMethod = "printAdrLabelOperand<2>";
+  let ParserMatchClass = UnsignedOffset_b8s2;
 }
 
 def t_bcctarget : Operand<i32> {
@@ -121,6 +138,15 @@ def t_bltarget : Operand<i32> {
 def t_blxtarget : Operand<i32> {
   let EncoderMethod = "getThumbBLXTargetOpValue";
   let DecoderMethod = "DecodeThumbBLXOffset";
+}
+
+// t_addrmode_pc := <label> => pc + imm8 * 4
+//
+def t_addrmode_pc : Operand<i32> {
+  let EncoderMethod = "getAddrModePCOpValue";
+  let DecoderMethod = "DecodeThumbAddrModePC";
+  let PrintMethod = "printThumbLdrLabelOperand";
+  let ParserMatchClass = ThumbMemPC;
 }
 }
 
@@ -218,14 +244,6 @@ def t_addrmode_sp : Operand<i32>,
   let MIOperandInfo = (ops GPR:$base, i32imm:$offsimm);
 }
 
-// t_addrmode_pc := <label> => pc + imm8 * 4
-//
-def t_addrmode_pc : Operand<i32> {
-  let EncoderMethod = "getAddrModePCOpValue";
-  let DecoderMethod = "DecodeThumbAddrModePC";
-  let PrintMethod = "printThumbLdrLabelOperand";
-}
-
 //===----------------------------------------------------------------------===//
 //  Miscellaneous Instructions.
 //
@@ -251,25 +269,26 @@ class T1SystemEncoding<bits<8> opc>
   let Inst{7-0} = opc;
 }
 
-def tNOP : T1pI<(outs), (ins), NoItinerary, "nop", "", []>,
-           T1SystemEncoding<0x00>, // A8.6.110
-        Requires<[IsThumb2]>;
+def tHINT : T1pI<(outs), (ins imm0_15:$imm), NoItinerary, "hint", "\t$imm", []>,
+            T1SystemEncoding<0x00>,
+            Requires<[IsThumb, HasV6M]> {
+  bits<4> imm;
+  let Inst{7-4} = imm;
+}
 
-def tYIELD : T1pI<(outs), (ins), NoItinerary, "yield", "", []>,
-           T1SystemEncoding<0x10>, // A8.6.410
-           Requires<[IsThumb2]>;
+class tHintAlias<string Asm, dag Result> : tInstAlias<Asm, Result> {
+  let Predicates = [IsThumb, HasV6M];
+}
 
-def tWFE : T1pI<(outs), (ins), NoItinerary, "wfe", "", []>,
-           T1SystemEncoding<0x20>, // A8.6.408
-           Requires<[IsThumb2]>;
-
-def tWFI : T1pI<(outs), (ins), NoItinerary, "wfi", "", []>,
-           T1SystemEncoding<0x30>, // A8.6.409
-           Requires<[IsThumb2]>;
-
-def tSEV : T1pI<(outs), (ins), NoItinerary, "sev", "", []>,
-           T1SystemEncoding<0x40>, // A8.6.157
-           Requires<[IsThumb2]>;
+def : tHintAlias<"nop$p", (tHINT 0, pred:$p)>; // A8.6.110
+def : tHintAlias<"yield$p", (tHINT 1, pred:$p)>; // A8.6.410
+def : tHintAlias<"wfe$p", (tHINT 2, pred:$p)>; // A8.6.408
+def : tHintAlias<"wfi$p", (tHINT 3, pred:$p)>; // A8.6.409
+def : tHintAlias<"sev$p", (tHINT 4, pred:$p)>; // A8.6.157
+def : tInstAlias<"sevl$p", (tHINT 5, pred:$p)> {
+  let Predicates = [IsThumb2, HasV8];
+}
+def : T2Pat<(int_arm_sevl), (tHINT 5)>;
 
 // The imm operand $val can be used by a debugger to store more information
 // about the breakpoint.
@@ -282,8 +301,15 @@ def tBKPT : T1I<(outs), (ins imm0_255:$val), NoItinerary, "bkpt\t$val",
   let Inst{7-0} = val;
 }
 
+def tHLT : T1I<(outs), (ins imm0_63:$val), NoItinerary, "hlt\t$val",
+                []>, T1Encoding<0b101110>, Requires<[IsThumb, HasV8]> {
+  let Inst{9-6} = 0b1010;
+  bits<6> val;
+  let Inst{5-0} = val;
+}
+
 def tSETEND : T1I<(outs), (ins setend_op:$end), NoItinerary, "setend\t$end",
-                  []>, T1Encoding<0b101101> {
+                  []>, T1Encoding<0b101101>, Deprecated<HasV8Ops> {
   bits<1> end;
   // A8.6.156
   let Inst{9-5} = 0b10010;
@@ -473,7 +499,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
              T1Encoding<{1,1,1,0,0,?}>, Sched<[WriteBr]> {
     bits<11> target;
     let Inst{10-0} = target;
-  }
+    let AsmMatchConverter = "cvtThumbBranches";
+ }
 
   // Far jump
   // Just a pseudo for a tBL instruction. Needed to let regalloc know about
@@ -503,7 +530,9 @@ let isBranch = 1, isTerminator = 1 in
   bits<8> target;
   let Inst{11-8} = p;
   let Inst{7-0} = target;
+  let AsmMatchConverter = "cvtThumbBranches";
 }
+
 
 // Tail calls
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in {
@@ -629,25 +658,11 @@ def tLDRspi : T1pIs<(outs tGPR:$Rt), (ins t_addrmode_sp:$addr), IIC_iLoad_i,
   let Inst{7-0} = addr;
 }
 
-// Load tconstpool
-// FIXME: Use ldr.n to work around a darwin assembler bug.
-let canFoldAsLoad = 1, isReMaterializable = 1, isCodeGenOnly = 1 in
+let canFoldAsLoad = 1, isReMaterializable = 1 in
 def tLDRpci : T1pIs<(outs tGPR:$Rt), (ins t_addrmode_pc:$addr), IIC_iLoad_i,
-                  "ldr", ".n\t$Rt, $addr",
+                  "ldr", "\t$Rt, $addr",
                   [(set tGPR:$Rt, (load (ARMWrapper tconstpool:$addr)))]>,
               T1Encoding<{0,1,0,0,1,?}> {
-  // A6.2 & A8.6.59
-  bits<3> Rt;
-  bits<8> addr;
-  let Inst{10-8} = Rt;
-  let Inst{7-0}  = addr;
-}
-
-// FIXME: Remove this entry when the above ldr.n workaround is fixed.
-// For assembly/disassembly use only.
-def tLDRpciASM : T1pIs<(outs tGPR:$Rt), (ins t_addrmode_pc:$addr), IIC_iLoad_i,
-                       "ldr", "\t$Rt, $addr", []>,
-                 T1Encoding<{0,1,0,0,1,?}> {
   // A6.2 & A8.6.59
   bits<3> Rt;
   bits<8> addr;
@@ -1197,9 +1212,9 @@ def tUXTH :                     // A8.6.264
 // Expanded after instruction selection into a branch sequence.
 let usesCustomInserter = 1 in  // Expanded after instruction selection.
   def tMOVCCr_pseudo :
-  PseudoInst<(outs tGPR:$dst), (ins tGPR:$false, tGPR:$true, pred:$cc),
-              NoItinerary,
-             [/*(set tGPR:$dst, (ARMcmov tGPR:$false, tGPR:$true, imm:$cc))*/]>;
+  PseudoInst<(outs tGPR:$dst), (ins tGPR:$false, tGPR:$true, cmovpred:$p),
+             NoItinerary,
+             [(set tGPR:$dst, (ARMcmov tGPR:$false, tGPR:$true, cmovpred:$p))]>;
 
 // tLEApcrel - Load a pc-relative address into a register without offending the
 // assembler.

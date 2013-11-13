@@ -305,9 +305,6 @@ declarations), they are accessible outside of the current module.
 It is illegal for a function *declaration* to have any linkage type
 other than ``external``, ``dllimport`` or ``extern_weak``.
 
-Aliases can have only ``external``, ``internal``, ``weak`` or
-``weak_odr`` linkages.
-
 .. _callingconv:
 
 Calling Conventions
@@ -514,6 +511,9 @@ module, including those with external linkage or appearing in
 ``@llvm.used``. This assumption may be suppressed by marking the
 variable with ``externally_initialized``.
 
+If a global variable dose not have its address taken, it will be optionally
+flagged ``notaddrtaken``.
+
 An explicit alignment may be specified for a global, which must be a
 power of 2. If not present, or if the alignment is set to zero, the
 alignment of the global is set by the target to whatever it feels
@@ -552,16 +552,16 @@ an optional ``unnamed_addr`` attribute, a return type, an optional
 name, a (possibly empty) argument list (each with optional :ref:`parameter
 attributes <paramattrs>`), optional :ref:`function attributes <fnattrs>`,
 an optional section, an optional alignment, an optional :ref:`garbage
-collector name <gc>`, an opening curly brace, a list of basic blocks,
-and a closing curly brace.
+collector name <gc>`, an optional :ref:`prefix <prefixdata>`, an opening
+curly brace, a list of basic blocks, and a closing curly brace.
 
 LLVM function declarations consist of the "``declare``" keyword, an
 optional :ref:`linkage type <linkage>`, an optional :ref:`visibility
 style <visibility>`, an optional :ref:`calling convention <callingconv>`,
 an optional ``unnamed_addr`` attribute, a return type, an optional
 :ref:`parameter attribute <paramattrs>` for the return type, a function
-name, a possibly empty list of arguments, an optional alignment, and an
-optional :ref:`garbage collector name <gc>`.
+name, a possibly empty list of arguments, an optional alignment, an optional
+:ref:`garbage collector name <gc>` and an optional :ref:`prefix <prefixdata>`.
 
 A function definition contains a list of basic blocks, forming the CFG
 (Control Flow Graph) for the function. Each basic block may optionally
@@ -598,7 +598,7 @@ Syntax::
            [cconv] [ret attrs]
            <ResultType> @<FunctionName> ([argument list])
            [fn Attrs] [section "name"] [align N]
-           [gc] { ... }
+           [gc] [prefix Constant] { ... }
 
 .. _langref_aliases:
 
@@ -613,6 +613,12 @@ Aliases may have an optional :ref:`linkage type <linkage>`, and an optional
 Syntax::
 
     @<Name> = alias [Linkage] [Visibility] <AliaseeTy> @<Aliasee>
+
+The linkage must be one of ``private``, ``linker_private``,
+``linker_private_weak``, ``internal``, ``linkonce``, ``weak``,
+``linkonce_odr``, ``weak_odr``, ``linkonce_odr_auto_hide``, ``external``. Note
+that some system linkers might not correctly handle dropping a weak symbol that
+is aliased by a non weak alias.
 
 .. _namedmetadatastructure:
 
@@ -757,6 +763,55 @@ The compiler declares the supported values of *name*. Specifying a
 collector which will cause the compiler to alter its output in order to
 support the named garbage collection algorithm.
 
+.. _prefixdata:
+
+Prefix Data
+-----------
+
+Prefix data is data associated with a function which the code generator
+will emit immediately before the function body.  The purpose of this feature
+is to allow frontends to associate language-specific runtime metadata with
+specific functions and make it available through the function pointer while
+still allowing the function pointer to be called.  To access the data for a
+given function, a program may bitcast the function pointer to a pointer to
+the constant's type.  This implies that the IR symbol points to the start
+of the prefix data.
+
+To maintain the semantics of ordinary function calls, the prefix data must
+have a particular format.  Specifically, it must begin with a sequence of
+bytes which decode to a sequence of machine instructions, valid for the
+module's target, which transfer control to the point immediately succeeding
+the prefix data, without performing any other visible action.  This allows
+the inliner and other passes to reason about the semantics of the function
+definition without needing to reason about the prefix data.  Obviously this
+makes the format of the prefix data highly target dependent.
+
+Prefix data is laid out as if it were an initializer for a global variable
+of the prefix data's type.  No padding is automatically placed between the
+prefix data and the function body.  If padding is required, it must be part
+of the prefix data.
+
+A trivial example of valid prefix data for the x86 architecture is ``i8 144``,
+which encodes the ``nop`` instruction:
+
+.. code-block:: llvm
+
+    define void @f() prefix i8 144 { ... }
+
+Generally prefix data can be formed by encoding a relative branch instruction
+which skips the metadata, as in this example of valid prefix data for the
+x86_64 architecture, where the first two bytes encode ``jmp .+10``:
+
+.. code-block:: llvm
+
+    %0 = type <{ i8, i8, i8* }>
+
+    define void @f() prefix %0 <{ i8 235, i8 8, i8* @md}> { ... }
+
+A function may have prefix data but no body.  This has similar semantics
+to the ``available_externally`` linkage in that the data may be used by the
+optimizers but will not be emitted in the object file.
+
 .. _attrgrp:
 
 Attribute Groups
@@ -820,7 +875,7 @@ example:
 ``builtin``
     This indicates that the callee function at a call site should be
     recognized as a built-in function, even though the function's declaration
-    uses the ``nobuiltin'' attribute. This is only valid at call sites for
+    uses the ``nobuiltin`` attribute. This is only valid at call sites for
     direct calls to functions which are declared with the ``nobuiltin``
     attribute.
 ``cold``
@@ -828,15 +883,16 @@ example:
     computing edge weights, basic blocks post-dominated by a cold
     function call are also considered to be cold; and, thus, given low
     weight.
-``nonlazybind``
-    This attribute suppresses lazy symbol binding for the function. This
-    may make calls to the function faster, at the cost of extra program
-    startup time if the function is not called during program startup.
 ``inlinehint``
     This attribute indicates that the source code contained a hint that
     inlining this function is desirable (such as the "inline" keyword in
     C/C++). It is just a hint; it imposes no requirements on the
     inliner.
+``minsize``
+    This attribute suggests that optimization passes and code generator
+    passes make choices that keep the code size of this function as small
+    as possible and perform optimizations that may sacrifice runtime 
+    performance in order to minimize the size of the generated code.
 ``naked``
     This attribute disables prologue / epilogue emission for the
     function. This can have very system-specific consequences.
@@ -863,6 +919,10 @@ example:
     This attribute indicates that the inliner should never inline this
     function in any situation. This attribute may not be used together
     with the ``alwaysinline`` attribute.
+``nonlazybind``
+    This attribute suppresses lazy symbol binding for the function. This
+    may make calls to the function faster, at the cost of extra program
+    startup time if the function is not called during program startup.
 ``noredzone``
     This attribute indicates that the code generator should not use a
     red zone, even if the target-specific ABI normally permits it.
@@ -874,22 +934,38 @@ example:
     This function attribute indicates that the function never returns
     with an unwind or exceptional control flow. If the function does
     unwind, its runtime behavior is undefined.
+``optnone``
+    This function attribute indicates that the function is not optimized
+    by any optimization or code generator passes with the 
+    exception of interprocedural optimization passes.
+    This attribute cannot be used together with the ``alwaysinline``
+    attribute; this attribute is also incompatible
+    with the ``minsize`` attribute and the ``optsize`` attribute.
+    
+    The inliner should never inline this function in any situation.
+    Only functions with the ``alwaysinline`` attribute are valid
+    candidates for inlining inside the body of this function.
 ``optsize``
     This attribute suggests that optimization passes and code generator
     passes make choices that keep the code size of this function low,
-    and otherwise do optimizations specifically to reduce code size.
+    and otherwise do optimizations specifically to reduce code size as
+    long as they do not significantly impact runtime performance.
 ``readnone``
-    This attribute indicates that the function computes its result (or
-    decides to unwind an exception) based strictly on its arguments,
+    On a function, this attribute indicates that the function computes its
+    result (or decides to unwind an exception) based strictly on its arguments,
     without dereferencing any pointer arguments or otherwise accessing
     any mutable state (e.g. memory, control registers, etc) visible to
     caller functions. It does not write through any pointer arguments
     (including ``byval`` arguments) and never changes any state visible
     to callers. This means that it cannot unwind exceptions by calling
     the ``C++`` exception throwing methods.
+    
+    On an argument, this attribute indicates that the function does not
+    dereference that pointer argument, even though it may read or write the
+    memory that the pointer points to if accessed through other pointers.
 ``readonly``
-    This attribute indicates that the function does not write through
-    any pointer arguments (including ``byval`` arguments) or otherwise
+    On a function, this attribute indicates that the function does not write
+    through any pointer arguments (including ``byval`` arguments) or otherwise
     modify any state (e.g. memory, control registers, etc) visible to
     caller functions. It may dereference pointer arguments and read
     state that may be set in the caller. A readonly function always
@@ -897,6 +973,10 @@ example:
     called with the same set of arguments and global state. It cannot
     unwind an exception by calling the ``C++`` exception throwing
     methods.
+    
+    On an argument, this attribute indicates that the function does not write
+    through this pointer argument, even though it may write to the memory that
+    the pointer points to.
 ``returns_twice``
     This attribute indicates that this function can return twice. The C
     ``setjmp`` is an example of such a function. The compiler disables
@@ -1053,7 +1133,9 @@ the specifications in the ``datalayout`` keyword. The default
 specifications are given in this list:
 
 -  ``E`` - big endian
--  ``p:64:64:64`` - 64-bit pointers with 64-bit alignment
+-  ``p:64:64:64`` - 64-bit pointers with 64-bit alignment.
+-  ``p[n]:64:64:64`` - Other address spaces are assumed to be the
+   same as the default address space.
 -  ``S0`` - natural stack alignment is unspecified
 -  ``i1:8:8`` - i1 is 8-bit (byte) aligned
 -  ``i8:8:8`` - i8 is 8-bit (byte) aligned
@@ -1098,6 +1180,30 @@ that does not embed this target-specific detail into the IR, then you
 don't have to specify the string. This will disable some optimizations
 that require precise layout information, but this also prevents those
 optimizations from introducing target specificity into the IR.
+
+.. _langref_triple:
+
+Target Triple
+-------------
+
+A module may specify a target triple string that describes the target
+host. The syntax for the target triple is simply:
+
+.. code-block:: llvm
+
+    target triple = "x86_64-apple-macosx10.7.0"
+
+The *target triple* string consists of a series of identifiers delimited
+by the minus sign character ('-'). The canonical forms are:
+
+::
+
+    ARCHITECTURE-VENDOR-OPERATING_SYSTEM
+    ARCHITECTURE-VENDOR-OPERATING_SYSTEM-ENVIRONMENT
+
+This information is passed along to the backend so that it generates
+code for the proper architecture. It's possible to override this on the
+command line with the ``-mtriple`` command line option.
 
 .. _pointeraliasing:
 
@@ -2575,7 +2681,7 @@ Examples:
 It is sometimes useful to attach information to loop constructs. Currently,
 loop metadata is implemented as metadata attached to the branch instruction
 in the loop latch block. This type of metadata refer to a metadata node that is
-guaranteed to be separate for each loop. The loop identifier metadata is 
+guaranteed to be separate for each loop. The loop identifier metadata is
 specified with the name ``llvm.loop``.
 
 The loop identifier metadata is implemented using a metadata that refers to
@@ -5605,24 +5711,24 @@ Arguments:
 
 The '``bitcast``' instruction takes a value to cast, which must be a
 non-aggregate first class value, and a type to cast it to, which must
-also be a non-aggregate :ref:`first class <t_firstclass>` type. The bit
-sizes of ``value`` and the destination type, ``ty2``, must be identical.
-If the source type is a pointer, the destination type must also be a
-pointer. This instruction supports bitwise conversion of vectors to
-integers and to vectors of other types (as long as they have the same
-size).
+also be a non-aggregate :ref:`first class <t_firstclass>` type. The
+bit sizes of ``value`` and the destination type, ``ty2``, must be
+identical.  If the source type is a pointer, the destination type must
+also be a pointer of the same size. This instruction supports bitwise
+conversion of vectors to integers and to vectors of other types (as
+long as they have the same size).
 
 Semantics:
 """"""""""
 
-The '``bitcast``' instruction converts ``value`` to type ``ty2``. It is
-always a *no-op cast* because no bits change with this conversion. The
-conversion is done as if the ``value`` had been stored to memory and
-read back as type ``ty2``. Pointer (or vector of pointers) types may
-only be converted to other pointer (or vector of pointers) types with
-this instruction. To convert pointers to other types, use the
-:ref:`inttoptr <i_inttoptr>` or :ref:`ptrtoint <i_ptrtoint>` instructions
-first.
+The '``bitcast``' instruction converts ``value`` to type ``ty2``. It
+is always a *no-op cast* because no bits change with this
+conversion. The conversion is done as if the ``value`` had been stored
+to memory and read back as type ``ty2``. Pointer (or vector of
+pointers) types may only be converted to other pointer (or vector of
+pointers) types with this instruction if the pointer sizes are
+equal. To convert pointers to other types, use the :ref:`inttoptr
+<i_inttoptr>` or :ref:`ptrtoint <i_ptrtoint>` instructions first.
 
 Example:
 """"""""
@@ -6283,7 +6389,7 @@ Syntax:
 
 ::
 
-      declare void %llvm.va_start(i8* <arglist>)
+      declare void @llvm.va_start(i8* <arglist>)
 
 Overview:
 """""""""
@@ -6795,7 +6901,7 @@ The '``llvm.memcpy.*``' intrinsics copy a block of memory from the
 source location to the destination location, which are not allowed to
 overlap. It copies "len" bytes of memory over. If the argument is known
 to be aligned to some boundary, this can be specified as the fourth
-argument, otherwise it should be set to 0 or 1.
+argument, otherwise it should be set to 0 or 1 (both meaning no alignment).
 
 '``llvm.memmove``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -6850,7 +6956,7 @@ The '``llvm.memmove.*``' intrinsics copy a block of memory from the
 source location to the destination location, which may overlap. It
 copies "len" bytes of memory over. If the argument is known to be
 aligned to some boundary, this can be specified as the fourth argument,
-otherwise it should be set to 0 or 1.
+otherwise it should be set to 0 or 1 (both meaning no alignment).
 
 '``llvm.memset.*``' Intrinsics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -6901,7 +7007,7 @@ Semantics:
 The '``llvm.memset.*``' intrinsics fill "len" bytes of memory starting
 at the destination location. If the argument is known to be aligned to
 some boundary, this can be specified as the fourth argument, otherwise
-it should be set to 0 or 1.
+it should be set to 0 or 1 (both meaning no alignment).
 
 '``llvm.sqrt.*``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -7337,6 +7443,42 @@ Semantics:
 This function returns the same values as the libm ``fabs`` functions
 would, and handles error conditions in the same way.
 
+'``llvm.copysign.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+This is an overloaded intrinsic. You can use ``llvm.copysign`` on any
+floating point or vector of floating point type. Not all targets support
+all types however.
+
+::
+
+      declare float     @llvm.copysign.f32(float  %Mag, float  %Sgn)
+      declare double    @llvm.copysign.f64(double %Mag, double %Sgn)
+      declare x86_fp80  @llvm.copysign.f80(x86_fp80  %Mag, x86_fp80  %Sgn)
+      declare fp128     @llvm.copysign.f128(fp128 %Mag, fp128 %Sgn)
+      declare ppc_fp128 @llvm.copysign.ppcf128(ppc_fp128  %Mag, ppc_fp128  %Sgn)
+
+Overview:
+"""""""""
+
+The '``llvm.copysign.*``' intrinsics return a value with the magnitude of the
+first operand and the sign of the second operand.
+
+Arguments:
+""""""""""
+
+The arguments and return value are floating point numbers of the same
+type.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``copysign``
+functions would, and handles error conditions in the same way.
+
 '``llvm.floor.*``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -7514,6 +7656,42 @@ Semantics:
 """"""""""
 
 This function returns the same values as the libm ``nearbyint``
+functions would, and handles error conditions in the same way.
+
+'``llvm.round.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+This is an overloaded intrinsic. You can use ``llvm.round`` on any
+floating point or vector of floating point type. Not all targets support
+all types however.
+
+::
+
+      declare float     @llvm.round.f32(float  %Val)
+      declare double    @llvm.round.f64(double %Val)
+      declare x86_fp80  @llvm.round.f80(x86_fp80  %Val)
+      declare fp128     @llvm.round.f128(fp128 %Val)
+      declare ppc_fp128 @llvm.round.ppcf128(ppc_fp128  %Val)
+
+Overview:
+"""""""""
+
+The '``llvm.round.*``' intrinsics returns the operand rounded to the
+nearest integer.
+
+Arguments:
+""""""""""
+
+The argument and return value are floating point numbers of the same
+type.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``round``
 functions would, and handles error conditions in the same way.
 
 Bit Manipulation Intrinsics
@@ -8589,13 +8767,51 @@ enough space to hold the value of the guard.
 Semantics:
 """"""""""
 
-This intrinsic causes the prologue/epilogue inserter to force the
-position of the ``AllocaInst`` stack slot to be before local variables
-on the stack. This is to ensure that if a local variable on the stack is
-overwritten, it will destroy the value of the guard. When the function
-exits, the guard on the stack is checked against the original guard. If
-they are different, then the program aborts by calling the
+This intrinsic causes the prologue/epilogue inserter to force the position of
+the ``AllocaInst`` stack slot to be before local variables on the stack. This is
+to ensure that if a local variable on the stack is overwritten, it will destroy
+the value of the guard. When the function exits, the guard on the stack is
+checked against the original guard by ``llvm.stackprotectorcheck``. If they are
+different, then ``llvm.stackprotectorcheck`` causes the program to abort by
+calling the ``__stack_chk_fail()`` function.
+
+'``llvm.stackprotectorcheck``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare void @llvm.stackprotectorcheck(i8** <guard>)
+
+Overview:
+"""""""""
+
+The ``llvm.stackprotectorcheck`` intrinsic compares ``guard`` against an already
+created stack protector and if they are not equal calls the
 ``__stack_chk_fail()`` function.
+
+Arguments:
+""""""""""
+
+The ``llvm.stackprotectorcheck`` intrinsic requires one pointer argument, the
+the variable ``@__stack_chk_guard``.
+
+Semantics:
+""""""""""
+
+This intrinsic is provided to perform the stack protector check by comparing
+``guard`` with the stack slot created by ``llvm.stackprotector`` and if the
+values do not match call the ``__stack_chk_fail()`` function.
+
+The reason to provide this as an IR level intrinsic instead of implementing it
+via other IR operations is that in order to perform this operation at the IR
+level without an intrinsic, one would need to create additional basic blocks to
+handle the success/failure cases. This makes it difficult to stop the stack
+protector check from disrupting sibling tail calls in Codegen. With this
+intrinsic, we are able to generate the stack protector basic blocks late in
+codegen after the tail call decision has occured.
 
 '``llvm.objectsize``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

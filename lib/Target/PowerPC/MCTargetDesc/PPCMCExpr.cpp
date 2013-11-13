@@ -17,9 +17,8 @@ using namespace llvm;
 
 const PPCMCExpr*
 PPCMCExpr::Create(VariantKind Kind, const MCExpr *Expr,
-                       MCContext &Ctx) {
-  int AssemblerDialect = Ctx.getAsmInfo()->getAssemblerDialect();
-  return new (Ctx) PPCMCExpr(Kind, Expr, AssemblerDialect);
+                  bool isDarwin, MCContext &Ctx) {
+  return new (Ctx) PPCMCExpr(Kind, Expr, isDarwin);
 }
 
 void PPCMCExpr::PrintImpl(raw_ostream &OS) const {
@@ -55,7 +54,7 @@ PPCMCExpr::EvaluateAsRelocatableImpl(MCValue &Res,
                                      const MCAsmLayout *Layout) const {
   MCValue Value;
 
-  if (!getSubExpr()->EvaluateAsRelocatable(Value, *Layout))
+  if (!Layout || !getSubExpr()->EvaluateAsRelocatable(Value, *Layout))
     return false;
 
   if (Value.isAbsolute()) {

@@ -323,8 +323,6 @@ static DecodeStatus DecodeVCVTD(MCInst &Inst, unsigned Insn,
                                 uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeVCVTQ(MCInst &Inst, unsigned Insn,
                                 uint64_t Address, const void *Decoder);
-static DecodeStatus DecodeImm0_4(MCInst &Inst, unsigned Insn, uint64_t Address,
-                                 const void *Decoder);
 
 
 static DecodeStatus DecodeThumbAddSpecialReg(MCInst &Inst, uint16_t Insn,
@@ -456,6 +454,13 @@ DecodeStatus ARMDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
   }
 
   MI.clear();
+  result = decodeInstruction(DecoderTableVFPV832, MI, insn, Address, this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
+
+  MI.clear();
   result = decodeInstruction(DecoderTableNEONData32, MI, insn, Address,
                              this, STI);
   if (result != MCDisassembler::Fail) {
@@ -492,7 +497,22 @@ DecodeStatus ARMDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
   }
 
   MI.clear();
+  result = decodeInstruction(DecoderTablev8NEON32, MI, insn, Address,
+                             this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
 
+  MI.clear();
+  result = decodeInstruction(DecoderTablev8Crypto32, MI, insn, Address,
+                             this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
+
+  MI.clear();
   Size = 0;
   return MCDisassembler::Fail;
 }
@@ -764,6 +784,13 @@ DecodeStatus ThumbDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
     }
   }
 
+  MI.clear();
+  result = decodeInstruction(DecoderTableVFPV832, MI, insn32, Address, this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
+
   if (fieldFromInstruction(insn32, 28, 4) == 0xE) {
     MI.clear();
     result = decodeInstruction(DecoderTableNEONDup32, MI, insn32, Address,
@@ -804,6 +831,29 @@ DecodeStatus ThumbDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
     }
   }
 
+  MI.clear();
+  uint32_t NEONCryptoInsn = insn32;
+  NEONCryptoInsn &= 0xF0FFFFFF; // Clear bits 27-24
+  NEONCryptoInsn |= (NEONCryptoInsn & 0x10000000) >> 4; // Move bit 28 to bit 24
+  NEONCryptoInsn |= 0x12000000; // Set bits 28 and 25
+  result = decodeInstruction(DecoderTablev8Crypto32, MI, NEONCryptoInsn,
+                             Address, this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
+
+  MI.clear();
+  uint32_t NEONv8Insn = insn32;
+  NEONv8Insn &= 0xF3FFFFFF; // Clear bits 27-26
+  result = decodeInstruction(DecoderTablev8NEON32, MI, NEONv8Insn, Address,
+                             this, STI);
+  if (result != MCDisassembler::Fail) {
+    Size = 4;
+    return result;
+  }
+
+  MI.clear();
   Size = 0;
   return MCDisassembler::Fail;
 }
@@ -1153,20 +1203,22 @@ static DecodeStatus DecodeRegListOperand(MCInst &Inst, unsigned Val,
                                  uint64_t Address, const void *Decoder) {
   DecodeStatus S = MCDisassembler::Success;
 
-  bool writebackLoad = false;
-  unsigned writebackReg = 0;
+  bool NeedDisjointWriteback = false;
+  unsigned WritebackReg = 0;
   switch (Inst.getOpcode()) {
-    default:
-      break;
-    case ARM::LDMIA_UPD:
-    case ARM::LDMDB_UPD:
-    case ARM::LDMIB_UPD:
-    case ARM::LDMDA_UPD:
-    case ARM::t2LDMIA_UPD:
-    case ARM::t2LDMDB_UPD:
-      writebackLoad = true;
-      writebackReg = Inst.getOperand(0).getReg();
-      break;
+  default:
+    break;
+  case ARM::LDMIA_UPD:
+  case ARM::LDMDB_UPD:
+  case ARM::LDMIB_UPD:
+  case ARM::LDMDA_UPD:
+  case ARM::t2LDMIA_UPD:
+  case ARM::t2LDMDB_UPD:
+  case ARM::t2STMIA_UPD:
+  case ARM::t2STMDB_UPD:
+    NeedDisjointWriteback = true;
+    WritebackReg = Inst.getOperand(0).getReg();
+    break;
   }
 
   // Empty register lists are not allowed.
@@ -1176,7 +1228,7 @@ static DecodeStatus DecodeRegListOperand(MCInst &Inst, unsigned Val,
       if (!Check(S, DecodeGPRRegisterClass(Inst, i, Address, Decoder)))
         return MCDisassembler::Fail;
       // Writeback not allowed if Rn is in the target list.
-      if (writebackLoad && writebackReg == Inst.end()[-1].getReg())
+      if (NeedDisjointWriteback && WritebackReg == Inst.end()[-1].getReg())
         Check(S, MCDisassembler::SoftFail);
     }
   }
@@ -3322,6 +3374,7 @@ static DecodeStatus DecodeT2LoadImm8(MCInst &Inst, unsigned Insn,
   switch (Inst.getOpcode()) {
   case ARM::t2PLDi8:
   case ARM::t2PLIi8:
+  case ARM::t2PLDWi8:
     break;
   default:
     if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
@@ -3385,6 +3438,7 @@ static DecodeStatus DecodeT2LoadImm12(MCInst &Inst, unsigned Insn,
 
   switch (Inst.getOpcode()) {
   case ARM::t2PLDi12:
+  case ARM::t2PLDWi12:
   case ARM::t2PLIi12:
     break;
   default:
@@ -4865,15 +4919,6 @@ static DecodeStatus DecodeVCVTQ(MCInst &Inst, unsigned Insn,
   Inst.addOperand(MCOperand::CreateImm(64 - imm));
 
   return S;
-}
-
-static DecodeStatus DecodeImm0_4(MCInst &Inst, unsigned Insn, uint64_t Address,
-                                 const void *Decoder)
-{
-  unsigned Imm = fieldFromInstruction(Insn, 0, 3);
-  if (Imm > 4) return MCDisassembler::Fail;
-  Inst.addOperand(MCOperand::CreateImm(Imm));
-  return MCDisassembler::Success;
 }
 
 static DecodeStatus DecodeLDR(MCInst &Inst, unsigned Val,

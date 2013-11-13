@@ -41,15 +41,10 @@ BitVector R600RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(AMDGPU::PRED_SEL_OFF);
   Reserved.set(AMDGPU::PRED_SEL_ZERO);
   Reserved.set(AMDGPU::PRED_SEL_ONE);
+  Reserved.set(AMDGPU::INDIRECT_BASE_ADDR);
 
   for (TargetRegisterClass::iterator I = AMDGPU::R600_AddrRegClass.begin(),
                         E = AMDGPU::R600_AddrRegClass.end(); I != E; ++I) {
-    Reserved.set(*I);
-  }
-
-  for (TargetRegisterClass::iterator I = AMDGPU::TRegMemRegClass.begin(),
-                                     E = AMDGPU::TRegMemRegClass.end();
-                                     I !=  E; ++I) {
     Reserved.set(*I);
   }
 
@@ -83,16 +78,6 @@ const TargetRegisterClass * R600RegisterInfo::getCFGStructurizerRegClass(
   switch(VT.SimpleTy) {
   default:
   case MVT::i32: return &AMDGPU::R600_TReg32RegClass;
-  }
-}
-
-unsigned R600RegisterInfo::getSubRegFromChannel(unsigned Channel) const {
-  switch (Channel) {
-    default: assert(!"Invalid channel index"); return 0;
-    case 0: return AMDGPU::sub0;
-    case 1: return AMDGPU::sub1;
-    case 2: return AMDGPU::sub2;
-    case 3: return AMDGPU::sub3;
   }
 }
 
