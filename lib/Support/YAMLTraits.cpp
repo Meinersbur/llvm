@@ -59,7 +59,14 @@ void Input::setDiagHandler(SourceMgr::DiagHandlerTy Handler, void *Ctxt) {
   SrcMgr.setDiagHandler(Handler, Ctxt);
 }
 
-bool Input::outputting() {
+/// pin the vtables to this file
+void Input::HNode::anchor() {}
+void Input::EmptyHNode::anchor() {}
+void Input::ScalarHNode::anchor() {}
+void Input::MapHNode::anchor() {}
+void Input::SequenceHNode::anchor() {}
+
+bool Input::outputting() const {
   return false;
 }
 
@@ -80,6 +87,16 @@ bool Input::setCurrentDocument() {
 
 void Input::nextDocument() {
   ++DocIterator;
+}
+
+bool Input::mapTag(StringRef Tag, bool Default) {
+  std::string foundTag = CurrentNode->_node->getVerbatimTag();
+  if (foundTag.empty()) {
+    // If no tag found and 'Tag' is the default, say it was found.
+    return Default;
+  }
+  // Return true iff found tag matches supplied tag.
+  return Tag.equals(foundTag);
 }
 
 void Input::beginMapping() {
@@ -372,13 +389,21 @@ Output::Output(raw_ostream &yout, void *context)
 Output::~Output() {
 }
 
-bool Output::outputting() {
+bool Output::outputting() const {
   return true;
 }
 
 void Output::beginMapping() {
   StateStack.push_back(inMapFirstKey);
   NeedsNewLine = true;
+}
+
+bool Output::mapTag(StringRef Tag, bool Use) {
+  if (Use) {
+    this->output(" ");
+    this->output(Tag);
+  }
+  return Use;
 }
 
 void Output::endMapping() {

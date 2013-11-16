@@ -37,7 +37,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 
-#define GET_INSTRINFO_CTOR
+#define GET_INSTRINFO_CTOR_DTOR
 #include "ARMGenInstrInfo.inc"
 
 using namespace llvm;
@@ -525,7 +525,7 @@ bool ARMBaseInstrInfo::isPredicable(MachineInstr *MI) const {
     MI->getParent()->getParent()->getInfo<ARMFunctionInfo>();
 
   if (AFI->isThumb2Function()) {
-    if (getSubtarget().hasV8Ops())
+    if (getSubtarget().restrictIT())
       return isV8EligibleForIT(MI);
   } else { // non-Thumb
     if ((MI->getDesc().TSFlags & ARMII::DomainMask) == ARMII::DomainNEON)

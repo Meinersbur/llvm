@@ -366,17 +366,15 @@ bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
 // Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
 // and DW_AT_high_pc attributes. If there are global variables in this
 // scope then create and insert DIEs for these variables.
-DIE *DwarfDebug::updateSubprogramScopeDIE(CompileUnit *SPCU,
-                                          const MDNode *SPNode) {
-  DIE *SPDie = SPCU->getDIE(SPNode);
+DIE *DwarfDebug::updateSubprogramScopeDIE(CompileUnit *SPCU, DISubprogram SP) {
+  DIE *SPDie = SPCU->getDIE(SP);
 
   assert(SPDie && "Unable to find subprogram DIE!");
-  DISubprogram SP(SPNode);
 
   // If we're updating an abstract DIE, then we will be adding the children and
   // object pointer later on. But what we don't want to do is process the
   // concrete DIE twice.
-  if (DIE *AbsSPDIE = AbstractSPDies.lookup(SPNode)) {
+  if (DIE *AbsSPDIE = AbstractSPDies.lookup(SP)) {
     // Pick up abstract subprogram DIE.
     SPDie = SPCU->createAndAddDIE(dwarf::DW_TAG_subprogram, *SPCU->getCUDie());
     SPCU->addDIEEntry(SPDie, dwarf::DW_AT_abstract_origin, AbsSPDIE);
@@ -578,7 +576,7 @@ DIE *DwarfDebug::createScopeChildrenDIE(CompileUnit *TheCU, LexicalScope *Scope,
     for (unsigned i = 0, N = CurrentFnArguments.size(); i < N; ++i)
       if (DbgVariable *ArgDV = CurrentFnArguments[i])
         if (DIE *Arg =
-            TheCU->constructVariableDIE(ArgDV, Scope->isAbstractScope())) {
+            TheCU->constructVariableDIE(*ArgDV, Scope->isAbstractScope())) {
           Children.push_back(Arg);
           if (ArgDV->isObjectPointer()) ObjectPointer = Arg;
         }
@@ -587,7 +585,7 @@ DIE *DwarfDebug::createScopeChildrenDIE(CompileUnit *TheCU, LexicalScope *Scope,
   const SmallVectorImpl<DbgVariable *> &Variables =ScopeVariables.lookup(Scope);
   for (unsigned i = 0, N = Variables.size(); i < N; ++i)
     if (DIE *Variable =
-        TheCU->constructVariableDIE(Variables[i], Scope->isAbstractScope())) {
+        TheCU->constructVariableDIE(*Variables[i], Scope->isAbstractScope())) {
       Children.push_back(Variable);
       if (Variables[i]->isObjectPointer()) ObjectPointer = Variable;
     }
@@ -624,7 +622,7 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
         AbstractSPDies.insert(std::make_pair(DS, ScopeDIE));
     }
     else
-      ScopeDIE = updateSubprogramScopeDIE(TheCU, DS);
+      ScopeDIE = updateSubprogramScopeDIE(TheCU, DISubprogram(DS));
   }
   else {
     // Early exit when we know the scope DIE is going to be null.
@@ -720,14 +718,13 @@ unsigned DwarfDebug::getOrCreateSourceID(StringRef FileName,
 
 // Create new CompileUnit for the given metadata node with tag
 // DW_TAG_compile_unit.
-CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
-  DICompileUnit DIUnit(N);
+CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
   StringRef FN = DIUnit.getFilename();
   CompilationDir = DIUnit.getDirectory();
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
-  CompileUnit *NewCU =
-      new CompileUnit(GlobalCUIndexCount++, Die, N, Asm, this, &InfoHolder);
+  CompileUnit *NewCU = new CompileUnit(GlobalCUIndexCount++, Die, DIUnit, Asm,
+                                       this, &InfoHolder);
 
   FileIDCUMap[NewCU->getUniqueID()] = 0;
   // Call this to emit a .file directive if it wasn't emitted for the source
@@ -820,7 +817,7 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
 
   InfoHolder.addUnit(NewCU);
 
-  CUMap.insert(std::make_pair(N, NewCU));
+  CUMap.insert(std::make_pair(DIUnit, NewCU));
   CUDieMap.insert(std::make_pair(Die, NewCU));
   return NewCU;
 }
@@ -999,7 +996,7 @@ void DwarfDebug::collectDeadVariables() {
             continue;
           DbgVariable NewVar(DV, NULL, this);
           if (DIE *VariableDIE =
-                  SPCU->constructVariableDIE(&NewVar, false))
+                  SPCU->constructVariableDIE(NewVar, false))
             SPDIE->addChild(VariableDIE);
         }
       }
@@ -2121,7 +2118,7 @@ void DwarfDebug::emitDIE(DIE *Die, ArrayRef<DIEAbbrev *> Abbrevs) {
     case dwarf::DW_AT_location: {
       if (DIELabel *L = dyn_cast<DIELabel>(Values[i])) {
         if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-          Asm->EmitLabelReference(L->getValue(), 4);
+          Asm->EmitSectionOffset(L->getValue(), DwarfDebugLocSectionSym);
         else
           Asm->EmitLabelDifference(L->getValue(), DwarfDebugLocSectionSym, 4);
       } else {
@@ -2957,7 +2954,7 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
                                        Asm, this, &SkeletonHolder);
 
   NewCU->addLocalString(Die, dwarf::DW_AT_GNU_dwo_name,
-                        DICompileUnit(CU->getNode()).getSplitDebugFilename());
+                        CU->getNode().getSplitDebugFilename());
 
   // Relocate to the beginning of the addr_base section, else 0 for the
   // beginning of the one for this compile unit.

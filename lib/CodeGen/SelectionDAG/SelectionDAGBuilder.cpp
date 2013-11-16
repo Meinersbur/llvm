@@ -2938,6 +2938,21 @@ void SelectionDAGBuilder::visitBitCast(const User &I) {
     setValue(&I, N);            // noop cast.
 }
 
+void SelectionDAGBuilder::visitAddrSpaceCast(const User &I) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  const Value *SV = I.getOperand(0);
+  SDValue N = getValue(SV);
+  EVT DestVT = TM.getTargetLowering()->getValueType(I.getType());
+
+  unsigned SrcAS = SV->getType()->getPointerAddressSpace();
+  unsigned DestAS = I.getType()->getPointerAddressSpace();
+
+  if (!TLI.isNoopAddrSpaceCast(SrcAS, DestAS))
+    N = DAG.getAddrSpaceCast(getCurSDLoc(), DestVT, N, SrcAS, DestAS);
+
+  setValue(&I, N);
+}
+
 void SelectionDAGBuilder::visitInsertElement(const User &I) {
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue InVec = getValue(I.getOperand(0));
@@ -6974,7 +6989,7 @@ void SelectionDAGBuilder::visitStackmap(const CallInst &CI) {
 /// \brief Lower llvm.experimental.patchpoint directly to its target opcode.
 void SelectionDAGBuilder::visitPatchpoint(const CallInst &CI) {
   // void|i64 @llvm.experimental.patchpoint.void|i64(i32 <id>,
-  //                                                 i32 <numNopBytes>,
+  //                                                 i32 <numBytes>,
   //                                                 i8* <target>,
   //                                                 i32 <numArgs>,
   //                                                 [Args...],

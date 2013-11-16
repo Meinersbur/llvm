@@ -63,7 +63,7 @@
 // prevent a user from accidentally including gtest-internal-inl.h in
 // his code.
 #define GTEST_IMPLEMENTATION_ 1
-#include "gtest/internal/gtest-internal-inl.h"
+#include "src/gtest-internal-inl.h"
 #undef GTEST_IMPLEMENTATION_
 
 namespace testing {
@@ -299,6 +299,8 @@ DeathTest::DeathTest() {
                    "TEST_F construct");
   }
 }
+
+DeathTest::~DeathTest() {}
 
 // Creates and returns a death test by dispatching to the current
 // death test factory.
@@ -1034,6 +1036,8 @@ DeathTest::TestRole ExecDeathTest::AssumeRole() {
 }
 
 # endif  // !GTEST_OS_WINDOWS
+
+DeathTestFactory::~DeathTestFactory() {}
 
 // Creates a concrete DeathTest-derived class that depends on the
 // --gtest_death_test_style flag, and sets the pointer pointed to

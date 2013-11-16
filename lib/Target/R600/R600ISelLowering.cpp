@@ -90,10 +90,16 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::LOAD, MVT::i32, Custom);
   setOperationAction(ISD::LOAD, MVT::v2i32, Custom);
   setOperationAction(ISD::LOAD, MVT::v4i32, Custom);
+
+  // EXTLOAD should be the same as ZEXTLOAD. It is legal for some address
+  // spaces, so it is custom lowered to handle those where it isn't.
   setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Custom);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i16, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i16, Custom);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i8, Custom);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i16, Custom);
+
   setOperationAction(ISD::STORE, MVT::i8, Custom);
   setOperationAction(ISD::STORE, MVT::i32, Custom);
   setOperationAction(ISD::STORE, MVT::v2i32, Custom);
@@ -128,21 +134,17 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
 
   switch (MI->getOpcode()) {
   default:
-    if (TII->isLDSInstr(MI->getOpcode()) &&
-        TII->getOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst) != -1) {
+    // Replace LDS_*_RET instruction that don't have any uses with the
+    // equivalent LDS_*_NORET instruction.
+    if (TII->isLDSRetInstr(MI->getOpcode())) {
       int DstIdx = TII->getOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst);
       assert(DstIdx != -1);
       MachineInstrBuilder NewMI;
-      if (!MRI.use_empty(MI->getOperand(DstIdx).getReg())) {
-        NewMI = BuildMI(*BB, I, BB->findDebugLoc(I), TII->get(MI->getOpcode()),
-                        AMDGPU::OQAP);
-        TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
-                                     MI->getOperand(0).getReg(),
-                                     AMDGPU::OQAP);
-      } else {
-        NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
-                        TII->get(AMDGPU::getLDSNoRetOp(MI->getOpcode())));
-      }
+      if (!MRI.use_empty(MI->getOperand(DstIdx).getReg()))
+        return BB;
+
+      NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
+                      TII->get(AMDGPU::getLDSNoRetOp(MI->getOpcode())));
       for (unsigned i = 1, e = MI->getNumOperands(); i < e; ++i) {
         NewMI.addOperand(MI->getOperand(i));
       }
@@ -513,7 +515,6 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
   case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
   case ISD::LOAD: return LowerLOAD(Op, DAG);
-  case ISD::FrameIndex: return LowerFrameIndex(Op, DAG);
   case ISD::GlobalAddress: return LowerGlobalAddress(MFI, Op, DAG);
   case ISD::INTRINSIC_VOID: {
     SDValue Chain = Op.getOperand(0);
@@ -554,6 +555,51 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
     SDLoc DL(Op);
     switch(IntrinsicID) {
     default: return AMDGPUTargetLowering::LowerOperation(Op, DAG);
+    case AMDGPUIntrinsic::R600_load_input: {
+      int64_t RegIndex = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
+      unsigned Reg = AMDGPU::R600_TReg32RegClass.getRegister(RegIndex);
+      MachineFunction &MF = DAG.getMachineFunction();
+      MachineRegisterInfo &MRI = MF.getRegInfo();
+      MRI.addLiveIn(Reg);
+      return DAG.getCopyFromReg(DAG.getEntryNode(),
+          SDLoc(DAG.getEntryNode()), Reg, VT);
+    }
+
+    case AMDGPUIntrinsic::R600_interp_input: {
+      int slot = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
+      int ijb = cast<ConstantSDNode>(Op.getOperand(2))->getSExtValue();
+      MachineSDNode *interp;
+      if (ijb < 0) {
+        const MachineFunction &MF = DAG.getMachineFunction();
+        const R600InstrInfo *TII =
+          static_cast<const R600InstrInfo*>(MF.getTarget().getInstrInfo());
+        interp = DAG.getMachineNode(AMDGPU::INTERP_VEC_LOAD, DL,
+            MVT::v4f32, DAG.getTargetConstant(slot / 4 , MVT::i32));
+        return DAG.getTargetExtractSubreg(
+            TII->getRegisterInfo().getSubRegFromChannel(slot % 4),
+            DL, MVT::f32, SDValue(interp, 0));
+      }
+      MachineFunction &MF = DAG.getMachineFunction();
+      MachineRegisterInfo &MRI = MF.getRegInfo();
+      unsigned RegisterI = AMDGPU::R600_TReg32RegClass.getRegister(2 * ijb);
+      unsigned RegisterJ = AMDGPU::R600_TReg32RegClass.getRegister(2 * ijb + 1);
+      MRI.addLiveIn(RegisterI);
+      MRI.addLiveIn(RegisterJ);
+      SDValue RegisterINode = DAG.getCopyFromReg(DAG.getEntryNode(),
+          SDLoc(DAG.getEntryNode()), RegisterI, MVT::f32);
+      SDValue RegisterJNode = DAG.getCopyFromReg(DAG.getEntryNode(),
+          SDLoc(DAG.getEntryNode()), RegisterJ, MVT::f32);
+
+      if (slot % 4 < 2)
+        interp = DAG.getMachineNode(AMDGPU::INTERP_PAIR_XY, DL,
+            MVT::f32, MVT::f32, DAG.getTargetConstant(slot / 4 , MVT::i32),
+            RegisterJNode, RegisterINode);
+      else
+        interp = DAG.getMachineNode(AMDGPU::INTERP_PAIR_ZW, DL,
+            MVT::f32, MVT::f32, DAG.getTargetConstant(slot / 4 , MVT::i32),
+            RegisterJNode, RegisterINode);
+      return SDValue(interp, slot % 2);
+    }
     case AMDGPUIntrinsic::R600_interp_xy:
     case AMDGPUIntrinsic::R600_interp_zw: {
       int slot = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
@@ -790,20 +836,6 @@ SDValue R600TargetLowering::LowerImplicitParameter(SelectionDAG &DAG, EVT VT,
                      DAG.getConstant(ByteOffset, MVT::i32), // PTR
                      MachinePointerInfo(ConstantPointerNull::get(PtrType)),
                      false, false, false, 0);
-}
-
-SDValue R600TargetLowering::LowerFrameIndex(SDValue Op, SelectionDAG &DAG) const {
-
-  MachineFunction &MF = DAG.getMachineFunction();
-  const AMDGPUFrameLowering *TFL =
-   static_cast<const AMDGPUFrameLowering*>(getTargetMachine().getFrameLowering());
-
-  FrameIndexSDNode *FIN = dyn_cast<FrameIndexSDNode>(Op);
-  assert(FIN);
-
-  unsigned FrameIndex = FIN->getIndex();
-  unsigned Offset = TFL->getFrameIndexOffset(MF, FrameIndex);
-  return DAG.getConstant(Offset * 4 * TFL->getStackWidth(MF), MVT::i32);
 }
 
 bool R600TargetLowering::isZero(SDValue Op) const {
@@ -1181,7 +1213,9 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
   }
 
   int ConstantBlock = ConstantAddressBlock(LoadNode->getAddressSpace());
-  if (ConstantBlock > -1 && LoadNode->getExtensionType() != ISD::SEXTLOAD) {
+  if (ConstantBlock > -1 &&
+      ((LoadNode->getExtensionType() == ISD::NON_EXTLOAD) ||
+       (LoadNode->getExtensionType() == ISD::ZEXTLOAD))) {
     SDValue Result;
     if (isa<ConstantExpr>(LoadNode->getSrcValue()) ||
         isa<Constant>(LoadNode->getSrcValue()) ||

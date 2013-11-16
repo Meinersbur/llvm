@@ -92,7 +92,7 @@ static SDValue ExtractSubVector(SDValue Vec, unsigned IdxVal,
                                VecIdx);
 
   return Result;
-  
+
 }
 /// Generate a DAG to grab 128-bits from a vector > 128 bits.  This
 /// sets things up to match to an AVX VEXTRACTF128 / VEXTRACTI128
@@ -1547,7 +1547,16 @@ void X86TargetLowering::resetOperationActions() {
 }
 
 EVT X86TargetLowering::getSetCCResultType(LLVMContext &, EVT VT) const {
-  if (!VT.isVector()) return MVT::i8;
+  if (!VT.isVector())
+    return MVT::i8;
+
+  const TargetMachine &TM = getTargetMachine();
+  if (!TM.Options.UseSoftFloat && Subtarget->hasAVX512())
+    switch(VT.getVectorNumElements()) {
+    case  8: return MVT::v8i1;
+    case 16: return MVT::v16i1;
+    }
+
   return VT.changeVectorElementTypeToInteger();
 }
 
@@ -1754,6 +1763,13 @@ bool X86TargetLowering::getStackCookieLocation(unsigned &AddressSpace,
     AddressSpace = 256;
   }
   return true;
+}
+
+bool X86TargetLowering::isNoopAddrSpaceCast(unsigned SrcAS,
+                                            unsigned DestAS) const {
+  assert(SrcAS != DestAS && "Expected different address spaces!");
+
+  return SrcAS < 256 && DestAS < 256;
 }
 
 //===----------------------------------------------------------------------===//
@@ -11632,7 +11648,19 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   case Intrinsic::x86_fma_vfmaddsub_ps_256:
   case Intrinsic::x86_fma_vfmaddsub_pd_256:
   case Intrinsic::x86_fma_vfmsubadd_ps_256:
-  case Intrinsic::x86_fma_vfmsubadd_pd_256: {
+  case Intrinsic::x86_fma_vfmsubadd_pd_256:
+  case Intrinsic::x86_fma_vfmadd_ps_512:
+  case Intrinsic::x86_fma_vfmadd_pd_512:
+  case Intrinsic::x86_fma_vfmsub_ps_512:
+  case Intrinsic::x86_fma_vfmsub_pd_512:
+  case Intrinsic::x86_fma_vfnmadd_ps_512:
+  case Intrinsic::x86_fma_vfnmadd_pd_512:
+  case Intrinsic::x86_fma_vfnmsub_ps_512:
+  case Intrinsic::x86_fma_vfnmsub_pd_512:
+  case Intrinsic::x86_fma_vfmaddsub_ps_512:
+  case Intrinsic::x86_fma_vfmaddsub_pd_512:
+  case Intrinsic::x86_fma_vfmsubadd_ps_512:
+  case Intrinsic::x86_fma_vfmsubadd_pd_512: { 
     unsigned Opc;
     switch (IntNo) {
     default: llvm_unreachable("Impossible intrinsic");  // Can't reach here.
@@ -11640,36 +11668,48 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
     case Intrinsic::x86_fma_vfmadd_pd:
     case Intrinsic::x86_fma_vfmadd_ps_256:
     case Intrinsic::x86_fma_vfmadd_pd_256:
+    case Intrinsic::x86_fma_vfmadd_ps_512:
+    case Intrinsic::x86_fma_vfmadd_pd_512:
       Opc = X86ISD::FMADD;
       break;
     case Intrinsic::x86_fma_vfmsub_ps:
     case Intrinsic::x86_fma_vfmsub_pd:
     case Intrinsic::x86_fma_vfmsub_ps_256:
     case Intrinsic::x86_fma_vfmsub_pd_256:
+    case Intrinsic::x86_fma_vfmsub_ps_512:
+    case Intrinsic::x86_fma_vfmsub_pd_512:
       Opc = X86ISD::FMSUB;
       break;
     case Intrinsic::x86_fma_vfnmadd_ps:
     case Intrinsic::x86_fma_vfnmadd_pd:
     case Intrinsic::x86_fma_vfnmadd_ps_256:
     case Intrinsic::x86_fma_vfnmadd_pd_256:
+    case Intrinsic::x86_fma_vfnmadd_ps_512:
+    case Intrinsic::x86_fma_vfnmadd_pd_512:
       Opc = X86ISD::FNMADD;
       break;
     case Intrinsic::x86_fma_vfnmsub_ps:
     case Intrinsic::x86_fma_vfnmsub_pd:
     case Intrinsic::x86_fma_vfnmsub_ps_256:
     case Intrinsic::x86_fma_vfnmsub_pd_256:
+    case Intrinsic::x86_fma_vfnmsub_ps_512:
+    case Intrinsic::x86_fma_vfnmsub_pd_512:
       Opc = X86ISD::FNMSUB;
       break;
     case Intrinsic::x86_fma_vfmaddsub_ps:
     case Intrinsic::x86_fma_vfmaddsub_pd:
     case Intrinsic::x86_fma_vfmaddsub_ps_256:
     case Intrinsic::x86_fma_vfmaddsub_pd_256:
+    case Intrinsic::x86_fma_vfmaddsub_ps_512:
+    case Intrinsic::x86_fma_vfmaddsub_pd_512:
       Opc = X86ISD::FMADDSUB;
       break;
     case Intrinsic::x86_fma_vfmsubadd_ps:
     case Intrinsic::x86_fma_vfmsubadd_pd:
     case Intrinsic::x86_fma_vfmsubadd_ps_256:
     case Intrinsic::x86_fma_vfmsubadd_pd_256:
+    case Intrinsic::x86_fma_vfmsubadd_ps_512:
+    case Intrinsic::x86_fma_vfmsubadd_pd_512:
       Opc = X86ISD::FMSUBADD;
       break;
     }
@@ -16314,6 +16354,44 @@ static SDValue XFormVExtractWithShuffleIntoLoad(SDNode *N, SelectionDAG &DAG,
                      EltNo);
 }
 
+/// Extract one bit from mask vector, like v16i1 or v8i1.
+/// AVX-512 feature.
+static SDValue ExtractBitFromMaskVector(SDNode *N, SelectionDAG &DAG) {
+  SDValue Vec = N->getOperand(0);
+  SDLoc dl(Vec);
+  MVT VecVT = Vec.getSimpleValueType();
+  SDValue Idx = N->getOperand(1);
+  MVT EltVT = N->getSimpleValueType(0);
+  
+  assert((VecVT.getVectorElementType() == MVT::i1 && EltVT == MVT::i8) ||
+         "Unexpected operands in ExtractBitFromMaskVector");
+
+  // variable index
+  if (!isa<ConstantSDNode>(Idx)) {
+    MVT ExtVT = (VecVT == MVT::v8i1 ?  MVT::v8i64 : MVT::v16i32);
+    SDValue Ext = DAG.getNode(ISD::ZERO_EXTEND, dl, ExtVT, Vec);
+    SDValue Elt = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl,
+                              ExtVT.getVectorElementType(), Ext);
+    return DAG.getNode(ISD::TRUNCATE, dl, EltVT, Elt);
+  }
+
+  unsigned IdxVal = cast<ConstantSDNode>(Idx)->getZExtValue();
+
+  MVT ScalarVT = MVT::getIntegerVT(VecVT.getSizeInBits());
+  unsigned MaxShift = VecVT.getSizeInBits() - 1;
+  Vec = DAG.getNode(ISD::BITCAST, dl, ScalarVT, Vec);
+  Vec = DAG.getNode(ISD::SHL, dl, ScalarVT, Vec, 
+              DAG.getConstant(MaxShift - IdxVal, ScalarVT));
+  Vec = DAG.getNode(ISD::SRL, dl, ScalarVT, Vec,
+    DAG.getConstant(MaxShift, ScalarVT));
+
+  if (VecVT == MVT::v16i1) {
+    Vec = DAG.getNode(ISD::BITCAST, dl, MVT::i16, Vec);
+    return DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Vec);
+  }
+  return DAG.getNode(ISD::BITCAST, dl, MVT::i8, Vec);
+}
+
 /// PerformEXTRACT_VECTOR_ELTCombine - Detect vector gather/scatter index
 /// generation and convert it from being a bunch of shuffles and extracts
 /// to a simple store and scalar loads to extract the elements.
@@ -16324,6 +16402,11 @@ static SDValue PerformEXTRACT_VECTOR_ELTCombine(SDNode *N, SelectionDAG &DAG,
     return NewOp;
 
   SDValue InputVector = N->getOperand(0);
+
+  if (InputVector.getValueType().getVectorElementType() == MVT::i1 &&
+      !DCI.isBeforeLegalize())
+    return ExtractBitFromMaskVector(N, DAG);
+
   // Detect whether we are trying to convert from mmx to i32 and the bitcast
   // from mmx to v2i32 has a single usage.
   if (InputVector.getNode()->getOpcode() == llvm::ISD::BITCAST &&

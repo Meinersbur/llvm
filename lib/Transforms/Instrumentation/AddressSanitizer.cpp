@@ -78,6 +78,7 @@ static const char *const kAsanUnregisterGlobalsName =
 static const char *const kAsanPoisonGlobalsName = "__asan_before_dynamic_init";
 static const char *const kAsanUnpoisonGlobalsName = "__asan_after_dynamic_init";
 static const char *const kAsanInitName = "__asan_init_v3";
+static const char *const kAsanCovName = "__sanitizer_cov";
 static const char *const kAsanHandleNoReturnName = "__asan_handle_no_return";
 static const char *const kAsanMappingOffsetName = "__asan_mapping_offset";
 static const char *const kAsanMappingOffset2Name = "__asan_mapping_offset2";
@@ -139,6 +140,8 @@ static cl::opt<bool> ClUseAfterReturn("asan-use-after-return",
 // This flag may need to be replaced with -f[no]asan-globals.
 static cl::opt<bool> ClGlobals("asan-globals",
        cl::desc("Handle global objects"), cl::Hidden, cl::init(true));
+static cl::opt<bool> ClCoverage("asan-coverage",
+       cl::desc("ASan coverage"), cl::Hidden, cl::init(false));
 static cl::opt<bool> ClInitializers("asan-initialization-order",
        cl::desc("Handle C++ initializer order"), cl::Hidden, cl::init(false));
 static cl::opt<bool> ClMemIntrin("asan-memintrin",
@@ -358,6 +361,7 @@ struct AddressSanitizer : public FunctionPass {
   bool LooksLikeCodeInBug11395(Instruction *I);
   void FindDynamicInitializers(Module &M);
   bool GlobalIsLinkerInitialized(GlobalVariable *G);
+  bool InjectCoverage(Function &F);
 
   bool CheckInitOrder;
   bool CheckUseAfterReturn;
@@ -373,6 +377,7 @@ struct AddressSanitizer : public FunctionPass {
   Function *AsanCtorFunction;
   Function *AsanInitFunction;
   Function *AsanHandleNoReturnFunc;
+  Function *AsanCovFunction;
   OwningPtr<SpecialCaseList> BL;
   // This array is indexed by AccessIsWrite and log2(AccessSize).
   Function *AsanErrorCallback[2][kNumberOfAccessSizes];
@@ -1137,6 +1142,8 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
 
   AsanHandleNoReturnFunc = checkInterfaceFunction(M.getOrInsertFunction(
       kAsanHandleNoReturnName, IRB.getVoidTy(), NULL));
+  AsanCovFunction = checkInterfaceFunction(M.getOrInsertFunction(
+      kAsanCovName, IRB.getVoidTy(), IntptrTy, NULL));
   // We insert an empty inline asm after __asan_report* to avoid callback merge.
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
@@ -1259,6 +1266,47 @@ bool AddressSanitizer::maybeInsertAsanInitAtFunctionEntry(Function &F) {
   return false;
 }
 
+// Poor man's coverage that works with ASan.
+// We create a Guard boolean variable with the same linkage
+// as the function and inject this code into the entry block:
+// if (*Guard) {
+//    __sanitizer_cov(&F);
+//    *Guard = 1;
+// }
+// The accesses to Guard are atomic. The rest of the logic is
+// in __sanitizer_cov (it's fine to call it more than once).
+//
+// This coverage implementation provides very limited data:
+// it only tells if a given function was ever executed.
+// No counters, no per-basic-block or per-edge data.
+// But for many use cases this is what we need and the added slowdown
+// is negligible. This simple implementation will probably be obsoleted
+// by the upcoming Clang-based coverage implementation.
+// By having it here and now we hope to
+//  a) get the functionality to users earlier and
+//  b) collect usage statistics to help improve Clang coverage design.
+bool AddressSanitizer::InjectCoverage(Function &F) {
+  if (!ClCoverage) return false;
+  IRBuilder<> IRB(F.getEntryBlock().getFirstInsertionPt());
+  Type *Int8Ty = IRB.getInt8Ty();
+  GlobalVariable *Guard = new GlobalVariable(
+      *F.getParent(), Int8Ty, false, GlobalValue::PrivateLinkage,
+      Constant::getNullValue(Int8Ty), "__asan_gen_cov_" + F.getName());
+  LoadInst *Load = IRB.CreateLoad(Guard);
+  Load->setAtomic(Monotonic);
+  Load->setAlignment(1);
+  Value *Cmp = IRB.CreateICmpEQ(Constant::getNullValue(Int8Ty), Load);
+  Instruction *Ins = SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+  IRB.SetInsertPoint(Ins);
+  // We pass &F to __sanitizer_cov. We could avoid this and rely on
+  // GET_CALLER_PC, but having the PC of the first instruction is just nice.
+  IRB.CreateCall(AsanCovFunction, IRB.CreatePointerCast(&F, IntptrTy));
+  StoreInst *Store = IRB.CreateStore(ConstantInt::get(Int8Ty, 1), Guard);
+  Store->setAtomic(Monotonic);
+  Store->setAlignment(1);
+  return true;
+}
+
 bool AddressSanitizer::runOnFunction(Function &F) {
   if (BL->isIn(F)) return false;
   if (&F == AsanCtorFunction) return false;
@@ -1354,6 +1402,10 @@ bool AddressSanitizer::runOnFunction(Function &F) {
   }
 
   bool res = NumInstrumented > 0 || ChangedStack || !NoReturnCalls.empty();
+
+  if (InjectCoverage(F))
+    res = true;
+
   DEBUG(dbgs() << "ASAN done instrumenting: " << res << " " << F << "\n");
 
   if (ClKeepUninstrumented) {
