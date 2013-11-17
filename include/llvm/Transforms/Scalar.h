@@ -148,6 +148,12 @@ Pass *createSimpleLoopUnrollPass();
 
 //===----------------------------------------------------------------------===//
 //
+// LoopReroll - This pass is a simple loop rerolling pass.
+//
+Pass *createLoopRerollPass();
+
+//===----------------------------------------------------------------------===//
+//
 // LoopRotate - This pass is a simple loop rotating pass.
 //
 Pass *createLoopRotatePass();

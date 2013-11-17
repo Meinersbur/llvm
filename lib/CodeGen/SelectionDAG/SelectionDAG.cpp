@@ -1126,9 +1126,10 @@ SDValue SelectionDAG::getGlobalAddress(const GlobalValue *GV, SDLoc DL,
                                        unsigned char TargetFlags) {
   assert((TargetFlags == 0 || isTargetGA) &&
          "Cannot set target flags on target-independent globals");
+  const TargetLowering *TLI = TM.getTargetLowering();
 
   // Truncate (with sign-extension) the offset value to the pointer size.
-  unsigned BitWidth = TM.getTargetLowering()->getPointerTy().getSizeInBits();
+  unsigned BitWidth = TLI->getPointerTypeSizeInBits(GV->getType());
   if (BitWidth < 64)
     Offset = SignExtend64(Offset, BitWidth);
 
@@ -6372,7 +6373,7 @@ unsigned SelectionDAG::InferPtrAlignment(SDValue Ptr) const {
   int64_t GVOffset = 0;
   const TargetLowering *TLI = TM.getTargetLowering();
   if (TLI->isGAPlusOffset(Ptr.getNode(), GV, GVOffset)) {
-    unsigned PtrWidth = TLI->getPointerTy().getSizeInBits();
+    unsigned PtrWidth = TLI->getPointerTypeSizeInBits(GV->getType());
     APInt KnownZero(PtrWidth, 0), KnownOne(PtrWidth, 0);
     llvm::ComputeMaskedBits(const_cast<GlobalValue*>(GV), KnownZero, KnownOne,
                             TLI->getDataLayout());
