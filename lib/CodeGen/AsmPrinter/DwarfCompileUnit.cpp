@@ -602,8 +602,8 @@ void CompileUnit::addBlockByrefAddress(const DbgVariable &DV, DIE *Die,
   // Find the __forwarding field and the variable field in the __Block_byref
   // struct.
   DIArray Fields = blockStruct.getTypeArray();
-  DIDescriptor varField = DIDescriptor();
-  DIDescriptor forwardingField = DIDescriptor();
+  DIDescriptor varField;
+  DIDescriptor forwardingField;
 
   for (unsigned i = 0, N = Fields.getNumElements(); i < N; ++i) {
     DIDescriptor Element = Fields.getElement(i);
@@ -1247,7 +1247,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
       addFlag(&Buffer, dwarf::DW_AT_APPLE_block);
 
     DICompositeType ContainingType(resolve(CTy.getContainingType()));
-    if (DIDescriptor(ContainingType).isCompositeType())
+    if (ContainingType.isCompositeType())
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type,
                   getOrCreateTypeDIE(DIType(ContainingType)));
 
@@ -1508,8 +1508,7 @@ static const ConstantExpr *getMergedGlobalExpr(const Value *V) {
 }
 
 /// createGlobalVariableDIE - create global variable DIE.
-void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
-  DIGlobalVariable GV(N);
+void CompileUnit::createGlobalVariableDIE(DIGlobalVariable GV) {
 
   // Check for pre-existence.
   if (getDIE(GV))
@@ -1617,7 +1616,7 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     // it is not a static member.
     if (!IsStaticMember)
       addConstantValue(VariableDIE, CI, isUnsignedDIType(DD, GTy));
-  } else if (const ConstantExpr *CE = getMergedGlobalExpr(N->getOperand(11))) {
+  } else if (const ConstantExpr *CE = getMergedGlobalExpr(GV->getOperand(11))) {
     addToAccelTable = true;
     // GV is a merged global.
     DIEBlock *Block = new (DIEValueAllocator) DIEBlock();

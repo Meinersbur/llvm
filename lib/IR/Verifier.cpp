@@ -78,7 +78,7 @@
 using namespace llvm;
 
 static cl::opt<bool> DisableDebugInfoVerifier("disable-debug-info-verifier",
-                                              cl::init(false));
+                                              cl::init(true));
 
 namespace {  // Anonymous namespace for class
   struct PreVerifier : public FunctionPass {
@@ -167,11 +167,8 @@ namespace {
     bool doInitialization(Module &M) {
       Mod = &M;
       Context = &M.getContext();
-      Finder.reset();
 
       DL = getAnalysisIfAvailable<DataLayout>();
-      if (!DisableDebugInfoVerifier)
-        Finder.processModule(M);
 
       // We must abort before returning back to the pass manager, or else the
       // pass manager may try to run other passes on the broken module.
@@ -185,9 +182,14 @@ namespace {
       Mod = F.getParent();
       if (!Context) Context = &F.getContext();
 
+      Finder.reset();
       visit(F);
       InstsInThisBlock.clear();
       PersonalityFn = 0;
+
+      if (!DisableDebugInfoVerifier)
+        // Verify Debug Info.
+        verifyDebugInfo();
 
       // We must abort before returning back to the pass manager, or else the
       // pass manager may try to run other passes on the broken module.
@@ -218,8 +220,12 @@ namespace {
       visitModuleFlags(M);
       visitModuleIdents(M);
 
-      // Verify Debug Info.
-      verifyDebugInfo();
+      if (!DisableDebugInfoVerifier) {
+        Finder.reset();
+        Finder.processModule(M);
+        // Verify Debug Info.
+        verifyDebugInfo();
+      }
 
       // If the module is broken, abort at this time.
       return abortIfBroken();
@@ -2125,7 +2131,7 @@ void Verifier::visitInstruction(Instruction &I) {
 
   if (!DisableDebugInfoVerifier) {
     MD = I.getMetadata(LLVMContext::MD_dbg);
-    Finder.processLocation(DILocation(MD));
+    Finder.processLocation(*Mod, DILocation(MD));
   }
 
   InstsInThisBlock.insert(&I);
@@ -2311,13 +2317,13 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
     Assert1(MD->getNumOperands() == 1,
                 "invalid llvm.dbg.declare intrinsic call 2", &CI);
     if (!DisableDebugInfoVerifier)
-      Finder.processDeclare(cast<DbgDeclareInst>(&CI));
+      Finder.processDeclare(*Mod, cast<DbgDeclareInst>(&CI));
   } break;
   case Intrinsic::dbg_value: { //llvm.dbg.value
     if (!DisableDebugInfoVerifier) {
       Assert1(CI.getArgOperand(0) && isa<MDNode>(CI.getArgOperand(0)),
               "invalid llvm.dbg.value intrinsic call 1", &CI);
-      Finder.processValue(cast<DbgValueInst>(&CI));
+      Finder.processValue(*Mod, cast<DbgValueInst>(&CI));
     }
     break;
   }
