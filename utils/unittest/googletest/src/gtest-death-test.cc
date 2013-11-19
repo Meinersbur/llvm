@@ -300,6 +300,9 @@ DeathTest::DeathTest() {
   }
 }
 
+// Pin the vtable to this file.
+DeathTest::~DeathTest() {}
+
 // Creates and returns a death test by dispatching to the current
 // death test factory.
 bool DeathTest::Create(const char* statement, const RE* regex,
@@ -1035,8 +1038,6 @@ DeathTest::TestRole ExecDeathTest::AssumeRole() {
 
 # endif  // !GTEST_OS_WINDOWS
 
-DeathTestFactory::~DeathTestFactory() {}
-
 // Creates a concrete DeathTest-derived class that depends on the
 // --gtest_death_test_style flag, and sets the pointer pointed to
 // by the "test" argument to its address.  If the test should be
@@ -1092,6 +1093,9 @@ bool DefaultDeathTestFactory::Create(const char* statement, const RE* regex,
 
   return true;
 }
+
+// Pin the vtable to this file.
+DeathTestFactory::~DeathTestFactory() {}
 
 // Splits a given string on a given delimiter, populating a given
 // vector with the fields.  GTEST_HAS_DEATH_TEST implies that we have

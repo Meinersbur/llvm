@@ -281,7 +281,7 @@ protected:
   void printInternal(raw_ostream &OS) const;
 
 public:
-  DIType(const MDNode *N = 0) : DIScope(N) {}
+  explicit DIType(const MDNode *N = 0) : DIScope(N) {}
 
   /// Verify - Verify that a type descriptor is well formed.
   bool Verify() const;
@@ -761,6 +761,8 @@ DITypeIdentifierMap generateDITypeIdentifierMap(const NamedMDNode *CU_Nodes);
 /// used by the CUs.
 class DebugInfoFinder {
 public:
+  DebugInfoFinder() : TypeMapInitialized(false) {}
+
   /// processModule - Process entire module and collect debug info
   /// anchors.
   void processModule(const Module &M);
