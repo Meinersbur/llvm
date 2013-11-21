@@ -40,16 +40,16 @@ static cl::opt<bool> GenerateTypeUnits("generate-type-units", cl::Hidden,
 /// CompileUnit - Compile unit constructor.
 CompileUnit::CompileUnit(unsigned UID, DIE *D, DICompileUnit Node,
                          AsmPrinter *A, DwarfDebug *DW, DwarfUnits *DWU)
-    : UniqueID(UID), Node(Node), CUDie(D), Asm(A), DD(DW), DU(DWU),
-      IndexTyDie(0), Language(Node.getLanguage()) {
+    : UniqueID(UID), Node(Node), Language(Node.getLanguage()), CUDie(D),
+      DebugInfoOffset(0), Asm(A), DD(DW), DU(DWU), IndexTyDie(0) {
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
   insertDIE(Node, D);
 }
 
 CompileUnit::CompileUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
                          DwarfDebug *DD, DwarfUnits *DU)
-    : UniqueID(UID), Node(NULL), CUDie(D), Asm(A), DD(DD), DU(DU),
-      IndexTyDie(0), Language(Language) {
+    : UniqueID(UID), Node(NULL), Language(Language), CUDie(D),
+      DebugInfoOffset(0), Asm(A), DD(DD), DU(DU), IndexTyDie(0) {
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
 }
 
@@ -112,8 +112,13 @@ int64_t CompileUnit::getDefaultLowerBound() const {
 
 /// Check whether the DIE for this MDNode can be shared across CUs.
 static bool isShareableAcrossCUs(DIDescriptor D) {
-  // When the MDNode can be part of the type system, the DIE can be
-  // shared across CUs.
+  // When the MDNode can be part of the type system, the DIE can be shared
+  // across CUs.
+  // Combining type units and cross-CU DIE sharing is lower value (since
+  // cross-CU DIE sharing is used in LTO and removes type redundancy at that
+  // level already) but may be implementable for some value in projects
+  // building multiple independent libraries with LTO and then linking those
+  // together.
   return (D.isType() ||
           (D.isSubprogram() && !DISubprogram(D).isDefinition())) &&
          !GenerateTypeUnits;

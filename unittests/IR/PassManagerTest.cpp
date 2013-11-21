@@ -25,15 +25,17 @@ public:
 
   struct Result {
     Result(int Count) : InstructionCount(Count) {}
-    bool invalidate(Function *) { return true; }
     int InstructionCount;
   };
 
   /// \brief Returns an opaque, unique ID for this pass type.
   static void *ID() { return (void *)&PassID; }
 
+  TestAnalysisPass(int &Runs) : Runs(Runs) {}
+
   /// \brief Run the analysis pass over the function and return a result.
   Result run(Function *F) {
+    ++Runs;
     int Count = 0;
     for (Function::iterator BBI = F->begin(), BBE = F->end(); BBI != BBE; ++BBI)
       for (BasicBlock::iterator II = BBI->begin(), IE = BBI->end(); II != IE;
@@ -45,6 +47,8 @@ public:
 private:
   /// \brief Private static data to provide unique ID.
   static char PassID;
+
+  int &Runs;
 };
 
 char TestAnalysisPass::PassID;
@@ -60,6 +64,20 @@ struct TestModulePass {
   int &RunCount;
 };
 
+struct TestPreservingModulePass {
+  PreservedAnalyses run(Module *M) {
+    return PreservedAnalyses::all();
+  }
+};
+
+struct TestMinPreservingModulePass {
+  PreservedAnalyses run(Module *M) {
+    PreservedAnalyses PA;
+    PA.preserve<FunctionAnalysisModuleProxy>();
+    return PA;
+  }
+};
+
 struct TestFunctionPass {
   TestFunctionPass(FunctionAnalysisManager &AM, int &RunCount,
                    int &AnalyzedInstrCount)
@@ -71,7 +89,7 @@ struct TestFunctionPass {
     const TestAnalysisPass::Result &AR = AM.getResult<TestAnalysisPass>(F);
     AnalyzedInstrCount += AR.InstructionCount;
 
-    return PreservedAnalyses::none();
+    return PreservedAnalyses::all();
   }
 
   FunctionAnalysisManager &AM;
@@ -106,25 +124,65 @@ public:
 };
 
 TEST_F(PassManagerTest, Basic) {
-  FunctionAnalysisManager AM;
-  AM.registerPass(TestAnalysisPass());
+  FunctionAnalysisManager FAM;
+  int AnalysisRuns = 0;
+  FAM.registerPass(TestAnalysisPass(AnalysisRuns));
 
-  ModulePassManager MPM;
-  FunctionPassManager FPM(&AM);
+  ModuleAnalysisManager MAM;
+  MAM.registerPass(FunctionAnalysisModuleProxy(FAM));
+
+  ModulePassManager MPM(&MAM);
+
+  // Count the runs over a Function.
+  FunctionPassManager FPM1(&FAM);
+  int FunctionPassRunCount1 = 0;
+  int AnalyzedInstrCount1 = 0;
+  FPM1.addPass(TestFunctionPass(FAM, FunctionPassRunCount1, AnalyzedInstrCount1));
+  MPM.addPass(createModuleToFunctionPassAdaptor(FPM1, &MAM));
 
   // Count the runs over a module.
   int ModulePassRunCount = 0;
   MPM.addPass(TestModulePass(ModulePassRunCount));
 
-  // Count the runs over a Function.
-  int FunctionPassRunCount = 0;
-  int AnalyzedInstrCount = 0;
-  FPM.addPass(TestFunctionPass(AM, FunctionPassRunCount, AnalyzedInstrCount));
-  MPM.addPass(createModuleToFunctionPassAdaptor(FPM));
+  // Count the runs over a Function in a separate manager.
+  FunctionPassManager FPM2(&FAM);
+  int FunctionPassRunCount2 = 0;
+  int AnalyzedInstrCount2 = 0;
+  FPM2.addPass(TestFunctionPass(FAM, FunctionPassRunCount2, AnalyzedInstrCount2));
+  MPM.addPass(createModuleToFunctionPassAdaptor(FPM2, &MAM));
+
+  // A third function pass manager but with only preserving intervening passes.
+  MPM.addPass(TestPreservingModulePass());
+  FunctionPassManager FPM3(&FAM);
+  int FunctionPassRunCount3 = 0;
+  int AnalyzedInstrCount3 = 0;
+  FPM3.addPass(TestFunctionPass(FAM, FunctionPassRunCount3, AnalyzedInstrCount3));
+  MPM.addPass(createModuleToFunctionPassAdaptor(FPM3, &MAM));
+
+  // A fourth function pass manager but with a minimal intervening passes.
+  MPM.addPass(TestMinPreservingModulePass());
+  FunctionPassManager FPM4(&FAM);
+  int FunctionPassRunCount4 = 0;
+  int AnalyzedInstrCount4 = 0;
+  FPM4.addPass(TestFunctionPass(FAM, FunctionPassRunCount4, AnalyzedInstrCount4));
+  MPM.addPass(createModuleToFunctionPassAdaptor(FPM4, &MAM));
 
   MPM.run(M.get());
+
+  // Validate module pass counters.
   EXPECT_EQ(1, ModulePassRunCount);
-  EXPECT_EQ(3, FunctionPassRunCount);
-  EXPECT_EQ(5, AnalyzedInstrCount);
+
+  // Validate both function pass counter sets.
+  EXPECT_EQ(3, FunctionPassRunCount1);
+  EXPECT_EQ(5, AnalyzedInstrCount1);
+  EXPECT_EQ(3, FunctionPassRunCount2);
+  EXPECT_EQ(5, AnalyzedInstrCount2);
+  EXPECT_EQ(3, FunctionPassRunCount3);
+  EXPECT_EQ(5, AnalyzedInstrCount3);
+  EXPECT_EQ(3, FunctionPassRunCount4);
+  EXPECT_EQ(5, AnalyzedInstrCount4);
+
+  // Validate the analysis counters.
+  EXPECT_EQ(9, AnalysisRuns);
 }
 }

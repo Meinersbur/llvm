@@ -136,7 +136,7 @@ namespace {
     // Reversed, NUL-terminated copy of Options.Version.
     char ReversedVersion[5];  
     // Checksum, produced by hash of EdgeDestinations
-    uint32_t FileChecksum;
+    SmallVector<uint32_t, 4> FileChecksums;
 
     Module *M;
     LLVMContext *Ctx;
@@ -498,14 +498,17 @@ void GCOVProfiler::emitProfileNotes() {
       EdgeDestinations += Func->getEdgeDestinations();
     }
 
-    FileChecksum = hash_value(EdgeDestinations);
+    FileChecksums.push_back(hash_value(EdgeDestinations));
     out.write("oncg", 4);
     out.write(ReversedVersion, 4);
-    out.write(reinterpret_cast<char*>(&FileChecksum), 4);
+    out.write(reinterpret_cast<char*>(&FileChecksums.back()), 4);
 
     for (SmallVectorImpl<GCOVFunction *>::iterator I = Funcs.begin(),
-           E = Funcs.end(); I != E; ++I)
-      (*I)->writeOut();
+           E = Funcs.end(); I != E; ++I) {
+      GCOVFunction *Func = *I;
+      Func->setCfgChecksum(FileChecksums.back());
+      Func->writeOut();
+    }
 
     out.write("\0\0\0\0\0\0\0\0", 8);  // EOF
     out.close();
@@ -800,10 +803,11 @@ Function *GCOVProfiler::insertCounterWriteout(
     for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
       DICompileUnit CU(CU_Nodes->getOperand(i));
       std::string FilenameGcda = mangleName(CU, "gcda");
+      uint32_t CfgChecksum = FileChecksums.size() ? FileChecksums[i] : 0;
       Builder.CreateCall3(StartFile,
                           Builder.CreateGlobalStringPtr(FilenameGcda),
                           Builder.CreateGlobalStringPtr(ReversedVersion),
-                          Builder.getInt32(FileChecksum));
+                          Builder.getInt32(CfgChecksum));
       for (unsigned j = 0, e = CountersBySP.size(); j != e; ++j) {
         DISubprogram SP(CountersBySP[j].second);
         Builder.CreateCall4(
@@ -812,7 +816,7 @@ Function *GCOVProfiler::insertCounterWriteout(
               Builder.CreateGlobalStringPtr(getFunctionName(SP)) :
               Constant::getNullValue(Builder.getInt8PtrTy()),
             Builder.getInt8(Options.UseCfgChecksum),
-            Builder.getInt32(FileChecksum));
+            Builder.getInt32(CfgChecksum));
 
         GlobalVariable *GV = CountersBySP[j].first;
         unsigned Arcs =

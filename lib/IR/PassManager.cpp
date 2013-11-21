@@ -29,7 +29,7 @@ void ModuleAnalysisManager::invalidate(Module *M, const PreservedAnalyses &PA) {
   for (ModuleAnalysisResultMapT::iterator I = ModuleAnalysisResults.begin(),
                                           E = ModuleAnalysisResults.end();
        I != E; ++I)
-    if (!PA.preserved(I->first) && I->second->invalidate(M))
+    if (I->second->invalidate(M, PA))
       ModuleAnalysisResults.erase(I);
 }
 
@@ -76,7 +76,7 @@ void FunctionAnalysisManager::invalidate(Function *F, const PreservedAnalyses &P
   for (FunctionAnalysisResultListT::iterator I = ResultsList.begin(),
                                              E = ResultsList.end();
        I != E;)
-    if (!PA.preserved(I->first) && I->second->invalidate(F)) {
+    if (I->second->invalidate(F, PA)) {
       InvalidatedPassIDs.push_back(I->first);
       I = ResultsList.erase(I);
     } else {
@@ -85,6 +85,19 @@ void FunctionAnalysisManager::invalidate(Function *F, const PreservedAnalyses &P
   while (!InvalidatedPassIDs.empty())
     FunctionAnalysisResults.erase(
         std::make_pair(InvalidatedPassIDs.pop_back_val(), F));
+}
+
+bool FunctionAnalysisManager::empty() const {
+  assert(FunctionAnalysisResults.empty() ==
+             FunctionAnalysisResultLists.empty() &&
+         "The storage and index of analysis results disagree on how many there "
+         "are!");
+  return FunctionAnalysisResults.empty();
+}
+
+void FunctionAnalysisManager::clear() {
+  FunctionAnalysisResults.clear();
+  FunctionAnalysisResultLists.clear();
 }
 
 const detail::AnalysisResultConcept<Function> &
@@ -116,4 +129,36 @@ void FunctionAnalysisManager::invalidateImpl(void *PassID, Function *F) {
     return;
 
   FunctionAnalysisResultLists[F].erase(RI->second);
+}
+
+char FunctionAnalysisModuleProxy::PassID;
+
+FunctionAnalysisModuleProxy::Result
+FunctionAnalysisModuleProxy::run(Module *M) {
+  assert(FAM.empty() && "Function analyses ran prior to the module proxy!");
+  return Result(FAM);
+}
+
+FunctionAnalysisModuleProxy::Result::~Result() {
+  // Clear out the analysis manager if we're being destroyed -- it means we
+  // didn't even see an invalidate call when we got invalidated.
+  FAM.clear();
+}
+
+bool FunctionAnalysisModuleProxy::Result::invalidate(Module *M, const PreservedAnalyses &PA) {
+  // If this proxy isn't marked as preserved, then it is has an invalid set of
+  // Function objects in the cache making it impossible to incrementally
+  // preserve them. Just clear the entire manager.
+  if (!PA.preserved(ID())) {
+    FAM.clear();
+    return false;
+  }
+
+  // The set of functions was preserved some how, so just directly invalidate
+  // any analysis results not preserved.
+  for (Module::iterator I = M->begin(), E = M->end(); I != E; ++I)
+    FAM.invalidate(I, PA);
+
+  // Return false to indicate that this result is still a valid proxy.
+  return false;
 }
