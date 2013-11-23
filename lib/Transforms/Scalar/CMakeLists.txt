@@ -7,6 +7,7 @@ add_llvm_library(LLVMScalarOpts
   CorrelatedValuePropagation.cpp
   DCE.cpp
   DeadStoreElimination.cpp
+  Scalarizer.cpp
   EarlyCSE.cpp
   GlobalMerge.cpp
   GVN.cpp

@@ -2665,15 +2665,21 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       RegsToPass.push_back(std::make_pair(unsigned(X86::EBX),
                DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(), getPointerTy())));
     } else {
-      // If we are tail calling a global or external symbol in GOT pic mode, we
-      // cannot use a direct jump, since that would make lazy dynamic linking
-      // impossible (see PR15086).  So pretend this is not a tail call, to
-      // prevent the optimization to a jump.
+      // If we are tail calling and generating PIC/GOT style code load the
+      // address of the callee into ECX. The value in ecx is used as target of
+      // the tail jump. This is done to circumvent the ebx/callee-saved problem
+      // for tail calls on PIC/GOT architectures. Normally we would just put the
+      // address of GOT into ebx and then call target@PLT. But for tail calls
+      // ebx would be restored (since ebx is callee saved) before jumping to the
+      // target@PLT.
+
+      // Note: The actual moving to ECX is done further down.
       GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
-      if ((G && !G->getGlobal()->hasHiddenVisibility() &&
-          !G->getGlobal()->hasProtectedVisibility()) ||
-          isa<ExternalSymbolSDNode>(Callee))
-        isTailCall = false;
+      if (G && !G->getGlobal()->hasHiddenVisibility() &&
+          !G->getGlobal()->hasProtectedVisibility())
+        Callee = LowerGlobalAddress(Callee, DAG);
+      else if (isa<ExternalSymbolSDNode>(Callee))
+        Callee = LowerExternalSymbol(Callee, DAG);
     }
   }
 
@@ -3086,9 +3092,13 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
   if (isCalleeStructRet || isCallerStructRet)
     return false;
 
-  // An stdcall caller is expected to clean up its arguments; the callee
-  // isn't going to do that.
-  if (!CCMatch && CallerCC == CallingConv::X86_StdCall)
+  // An stdcall/thiscall caller is expected to clean up its arguments; the
+  // callee isn't going to do that.
+  // FIXME: this is more restrictive than needed. We could produce a tailcall
+  // when the stack adjustment matches. For example, with a thiscall that takes
+  // only one argument.
+  if (!CCMatch && (CallerCC == CallingConv::X86_StdCall ||
+                   CallerCC == CallingConv::X86_ThisCall))
     return false;
 
   // Do not sibcall optimize vararg calls unless all arguments are passed via
@@ -3407,6 +3417,24 @@ bool X86::isCalleePop(CallingConv::ID CallingConv,
   case CallingConv::HiPE:
     return TailCallOpt;
   }
+}
+
+/// \brief Return true if the condition is an unsigned comparison operation.
+static bool isX86CCUnsigned(unsigned X86CC) {
+  switch (X86CC) {
+  default: llvm_unreachable("Invalid integer condition!");
+  case X86::COND_E:     return true;
+  case X86::COND_G:     return false;
+  case X86::COND_GE:    return false;
+  case X86::COND_L:     return false;
+  case X86::COND_LE:    return false;
+  case X86::COND_NE:    return true;
+  case X86::COND_B:     return true;
+  case X86::COND_A:     return true;
+  case X86::COND_BE:    return true;
+  case X86::COND_AE:    return true;
+  }
+  llvm_unreachable("covered switch fell through?!");
 }
 
 /// TranslateX86CC - do a one to one translation of a ISD::CondCode to the X86
@@ -9652,6 +9680,17 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
   SDLoc dl(Op0);
   if ((Op0.getValueType() == MVT::i8 || Op0.getValueType() == MVT::i16 ||
        Op0.getValueType() == MVT::i32 || Op0.getValueType() == MVT::i64)) {
+    // Do the comparison at i32 if it's smaller. This avoids subregister
+    // aliasing issues. Keep the smaller reference if we're optimizing for
+    // size, however, as that'll allow better folding of memory operations.
+    if (Op0.getValueType() != MVT::i32 && Op0.getValueType() != MVT::i64 &&
+        !DAG.getMachineFunction().getFunction()->getAttributes().hasAttribute(
+             AttributeSet::FunctionIndex, Attribute::MinSize)) {
+      unsigned ExtendOp =
+          isX86CCUnsigned(X86CC) ? ISD::ZERO_EXTEND : ISD::SIGN_EXTEND;
+      Op0 = DAG.getNode(ExtendOp, dl, MVT::i32, Op0);
+      Op1 = DAG.getNode(ExtendOp, dl, MVT::i32, Op1);
+    }
     // Use SUB instead of CMP to enable CSE between SUB and CMP.
     SDVTList VTs = DAG.getVTList(Op0.getValueType(), MVT::i32);
     SDValue Sub = DAG.getNode(X86ISD::SUB, dl, VTs,
@@ -17014,6 +17053,15 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
     if (BitWidth == 1)
       return SDValue();
 
+    // Check all uses of that condition operand to check whether it will be
+    // consumed by non-BLEND instructions, which may depend on all bits are set
+    // properly.
+    for (SDNode::use_iterator I = Cond->use_begin(),
+                              E = Cond->use_end(); I != E; ++I)
+      if (I->getOpcode() != ISD::VSELECT)
+        // TODO: Add other opcodes eventually lowered into BLEND.
+        return SDValue();
+
     assert(BitWidth >= 8 && BitWidth <= 64 && "Invalid mask size");
     APInt DemandedMask = APInt::getHighBitsSet(BitWidth, 1);
 
@@ -17892,6 +17940,18 @@ static SDValue PerformOrCombine(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   // fold (or (x << c) | (y >> (64 - c))) ==> (shld64 x, y, c)
+  MachineFunction &MF = DAG.getMachineFunction();
+  bool OptForSize = MF.getFunction()->getAttributes().
+    hasAttribute(AttributeSet::FunctionIndex, Attribute::OptimizeForSize);
+ 
+  // SHLD/SHRD instructions have lower register pressure, but on some 
+  // platforms they have higher latency than the equivalent 
+  // series of shifts/or that would otherwise be generated. 
+  // Don't fold (or (x << c) | (y >> (64 - c))) if SHLD/SHRD instructions
+  // have higer latencies and we are not optimizing for size.  
+  if (!OptForSize && Subtarget->isSHLDSlow())
+    return SDValue();
+
   if (N0.getOpcode() == ISD::SRL && N1.getOpcode() == ISD::SHL)
     std::swap(N0, N1);
   if (N0.getOpcode() != ISD::SHL || N1.getOpcode() != ISD::SRL)

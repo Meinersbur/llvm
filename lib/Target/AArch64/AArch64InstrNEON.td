@@ -1592,29 +1592,29 @@ def Neon_High4S  : PatFrag<(ops node:$in),
                            (extract_subvector (v4i32 node:$in), (iPTR 2))>;
 def Neon_High2D  : PatFrag<(ops node:$in),
                            (extract_subvector (v2i64 node:$in), (iPTR 1))>;
-def Neon_High4f  : PatFrag<(ops node:$in),
-                           (extract_subvector (v4f32 node:$in), (iPTR 2))>;
-def Neon_High2d  : PatFrag<(ops node:$in),
-                           (extract_subvector (v2f64 node:$in), (iPTR 1))>;
+def Neon_High4float : PatFrag<(ops node:$in),
+                               (extract_subvector (v4f32 node:$in), (iPTR 2))>;
+def Neon_High2double : PatFrag<(ops node:$in),
+                               (extract_subvector (v2f64 node:$in), (iPTR 1))>;
 
-def Neon_low16B : PatFrag<(ops node:$in),
+def Neon_Low16B : PatFrag<(ops node:$in),
                           (v8i8 (extract_subvector (v16i8 node:$in),
                                                    (iPTR 0)))>;
-def Neon_low8H : PatFrag<(ops node:$in),
+def Neon_Low8H : PatFrag<(ops node:$in),
                          (v4i16 (extract_subvector (v8i16 node:$in),
                                                    (iPTR 0)))>;
-def Neon_low4S : PatFrag<(ops node:$in),
+def Neon_Low4S : PatFrag<(ops node:$in),
                          (v2i32 (extract_subvector (v4i32 node:$in),
                                                    (iPTR 0)))>;
-def Neon_low2D : PatFrag<(ops node:$in),
+def Neon_Low2D : PatFrag<(ops node:$in),
                          (v1i64 (extract_subvector (v2i64 node:$in),
                                                    (iPTR 0)))>;
-def Neon_low4f : PatFrag<(ops node:$in),
-                         (v2f32 (extract_subvector (v4f32 node:$in),
-                                                   (iPTR 0)))>;
-def Neon_low2d : PatFrag<(ops node:$in),
-                         (v1f64 (extract_subvector (v2f64 node:$in),
-                                                   (iPTR 0)))>;
+def Neon_Low4float : PatFrag<(ops node:$in),
+                             (v2f32 (extract_subvector (v4f32 node:$in),
+                                                       (iPTR 0)))>;
+def Neon_Low2double : PatFrag<(ops node:$in),
+                              (v1f64 (extract_subvector (v2f64 node:$in),
+                                                        (iPTR 0)))>;
 
 def neon_uimm3_shift : Operand<i32>,
                          ImmLeaf<i32, [{return Imm < 8;}]> {
@@ -3451,6 +3451,54 @@ def ST1x3_1D : NeonI_STVList<0, 0b0110, 0b11, VTriple1D_operand, "st1">;
 
 defm ST1x4 : STVList_BHSD<0b0010, "VQuad", "st1">;
 def ST1x4_1D : NeonI_STVList<0, 0b0010, 0b11, VQuad1D_operand, "st1">;
+
+def : Pat<(v2f64 (load GPR64xsp:$addr)), (LD1_2D GPR64xsp:$addr)>;
+def : Pat<(v2i64 (load GPR64xsp:$addr)), (LD1_2D GPR64xsp:$addr)>;
+
+def : Pat<(v4f32 (load GPR64xsp:$addr)), (LD1_4S GPR64xsp:$addr)>;
+def : Pat<(v4i32 (load GPR64xsp:$addr)), (LD1_4S GPR64xsp:$addr)>;
+
+def : Pat<(v8i16 (load GPR64xsp:$addr)), (LD1_8H GPR64xsp:$addr)>;
+def : Pat<(v16i8 (load GPR64xsp:$addr)), (LD1_16B GPR64xsp:$addr)>;
+
+def : Pat<(v1f64 (load GPR64xsp:$addr)), (LD1_1D GPR64xsp:$addr)>;
+def : Pat<(v1i64 (load GPR64xsp:$addr)), (LD1_1D GPR64xsp:$addr)>;
+
+def : Pat<(v2f32 (load GPR64xsp:$addr)), (LD1_2S GPR64xsp:$addr)>;
+def : Pat<(v2i32 (load GPR64xsp:$addr)), (LD1_2S GPR64xsp:$addr)>;
+
+def : Pat<(v4i16 (load GPR64xsp:$addr)), (LD1_4H GPR64xsp:$addr)>;
+def : Pat<(v8i8 (load GPR64xsp:$addr)), (LD1_8B GPR64xsp:$addr)>;
+
+def : Pat<(store (v2i64 VPR128:$value), GPR64xsp:$addr),
+          (ST1_2D GPR64xsp:$addr, VPR128:$value)>;
+def : Pat<(store (v2f64 VPR128:$value), GPR64xsp:$addr),
+          (ST1_2D GPR64xsp:$addr, VPR128:$value)>;
+
+def : Pat<(store (v4i32 VPR128:$value), GPR64xsp:$addr),
+          (ST1_4S GPR64xsp:$addr, VPR128:$value)>;
+def : Pat<(store (v4f32 VPR128:$value), GPR64xsp:$addr),
+          (ST1_4S GPR64xsp:$addr, VPR128:$value)>;
+
+def : Pat<(store (v8i16 VPR128:$value), GPR64xsp:$addr),
+          (ST1_8H GPR64xsp:$addr, VPR128:$value)>;
+def : Pat<(store (v16i8 VPR128:$value), GPR64xsp:$addr),
+          (ST1_16B GPR64xsp:$addr, VPR128:$value)>;
+
+def : Pat<(store (v1i64 VPR64:$value), GPR64xsp:$addr),
+          (ST1_1D GPR64xsp:$addr, VPR64:$value)>;
+def : Pat<(store (v1f64 VPR64:$value), GPR64xsp:$addr),
+          (ST1_1D GPR64xsp:$addr, VPR64:$value)>;
+
+def : Pat<(store (v2i32 VPR64:$value), GPR64xsp:$addr),
+          (ST1_2S GPR64xsp:$addr, VPR64:$value)>;
+def : Pat<(store (v2f32 VPR64:$value), GPR64xsp:$addr),
+          (ST1_2S GPR64xsp:$addr, VPR64:$value)>;
+
+def : Pat<(store (v4i16 VPR64:$value), GPR64xsp:$addr),
+          (ST1_4H GPR64xsp:$addr, VPR64:$value)>;
+def : Pat<(store (v8i8 VPR64:$value), GPR64xsp:$addr),
+          (ST1_8B GPR64xsp:$addr, VPR64:$value)>;
 
 // End of vector load/store multiple N-element structure(class SIMD lselem)
 
@@ -5871,17 +5919,17 @@ multiclass NeonI_Scalar_DUP_Elt_pattern<Instruction DUPI, ValueType ResTy,
 multiclass NeonI_SDUP<PatFrag GetLow, PatFrag GetHigh,
                  ValueType ResTy, ValueType OpTy> {
   def : Pat<(ResTy (GetLow VPR128:$Rn)),
-            (ResTy (DUPdv_D (OpTy VPR128:$Rn), 0))>;
+            (ResTy (EXTRACT_SUBREG (OpTy VPR128:$Rn), sub_64))>;
   def : Pat<(ResTy (GetHigh VPR128:$Rn)),
             (ResTy (DUPdv_D (OpTy VPR128:$Rn), 1))>;
 }
 
-defm : NeonI_SDUP<Neon_low16B, Neon_High16B, v8i8, v16i8>;
-defm : NeonI_SDUP<Neon_low8H, Neon_High8H, v4i16, v8i16>;
-defm : NeonI_SDUP<Neon_low4S, Neon_High4S, v2i32, v4i32>;
-defm : NeonI_SDUP<Neon_low2D, Neon_High2D, v1i64, v2i64>;
-defm : NeonI_SDUP<Neon_low4f, Neon_High4f, v2f32, v4f32>;
-defm : NeonI_SDUP<Neon_low2d, Neon_High2d, v1f64, v2f64>;
+defm : NeonI_SDUP<Neon_Low16B, Neon_High16B, v8i8, v16i8>;
+defm : NeonI_SDUP<Neon_Low8H, Neon_High8H, v4i16, v8i16>;
+defm : NeonI_SDUP<Neon_Low4S, Neon_High4S, v2i32, v4i32>;
+defm : NeonI_SDUP<Neon_Low2D, Neon_High2D, v1i64, v2i64>;
+defm : NeonI_SDUP<Neon_Low4float, Neon_High4float, v2f32, v4f32>;
+defm : NeonI_SDUP<Neon_Low2double, Neon_High2double, v1f64, v2f64>;
 
 // Patterns for vector extract of FP data using scalar DUP instructions
 defm : NeonI_Scalar_DUP_Elt_pattern<DUPsv_S, f32,
@@ -6004,6 +6052,12 @@ def : Pat<(f32 (bitconvert (v1f32  FPR32:$src))), (f32 FPR32:$src)>;
 def : Pat<(f64 (bitconvert (v1f64  FPR64:$src))), (f64 FPR64:$src)>;
 
 def : Pat<(i64 (bitconvert (v1i64  FPR64:$src))), (FMOVxd $src)>;
+def : Pat<(i64 (bitconvert (v1f64  FPR64:$src))), (FMOVxd $src)>;
+def : Pat<(i64 (bitconvert (v2i32  FPR64:$src))), (FMOVxd $src)>;
+def : Pat<(i64 (bitconvert (v2f32  FPR64:$src))), (FMOVxd $src)>;
+def : Pat<(i64 (bitconvert (v4i16  FPR64:$src))), (FMOVxd $src)>;
+def : Pat<(i64 (bitconvert (v8i8  FPR64:$src))), (FMOVxd $src)>;
+
 def : Pat<(i32 (bitconvert (v1i32  FPR32:$src))), (FMOVws $src)>;
 
 def : Pat<(v8i8  (bitconvert (v1i64  VPR64:$src))), (v8i8 VPR64:$src)>;
@@ -6030,6 +6084,12 @@ def : Pat<(v1f32 (bitconvert (f32  FPR32:$src))), (v1f32 FPR32:$src)>;
 def : Pat<(v1f64 (bitconvert (f64  FPR64:$src))), (v1f64 FPR64:$src)>;
 
 def : Pat<(v1i64 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+def : Pat<(v1f64 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+def : Pat<(v2i32 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+def : Pat<(v2f32 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+def : Pat<(v4i16 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+def : Pat<(v8i8 (bitconvert (i64  GPR64:$src))), (FMOVdx $src)>;
+
 def : Pat<(v1i32 (bitconvert (i32  GPR32:$src))), (FMOVsw $src)>;
 
 def : Pat<(v8i8   (bitconvert (f64   FPR64:$src))), (v8i8 FPR64:$src)>;
@@ -6232,7 +6292,7 @@ multiclass NI_2VE_v1_pat<string subop, SDPatternOperator op>
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_2s4s"), neon_uimm2_bare,
                      op, VPR64, VPR64, VPR128, v2i32, v2i32, v4i32,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low4S node:$LHS), node:$RHS)>>;
+                                 (Neon_Low4S node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_4s4s"), neon_uimm2_bare,
                      op, VPR128, VPR128, VPR128, v4i32, v4i32, v4i32,
@@ -6241,7 +6301,7 @@ multiclass NI_2VE_v1_pat<string subop, SDPatternOperator op>
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_4h8h"), neon_uimm3_bare,
                      op, VPR64, VPR64, VPR128Lo, v4i16, v4i16, v8i16,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low8H node:$LHS), node:$RHS)>>;
+                                 (Neon_Low8H node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_8h8h"), neon_uimm3_bare,
                      op, VPR128, VPR128, VPR128Lo, v8i16, v8i16, v8i16,
@@ -6349,7 +6409,7 @@ multiclass NI_2VE_mul_v1_pat<string subop, SDPatternOperator op> {
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_2s4s"), neon_uimm2_bare,
                          op, VPR64, VPR128, v2i32, v2i32, v4i32,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low4S node:$LHS), node:$RHS)>>;
+                                     (Neon_Low4S node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_4s4s"), neon_uimm2_bare,
                          op, VPR128, VPR128, v4i32, v4i32, v4i32,
@@ -6358,7 +6418,7 @@ multiclass NI_2VE_mul_v1_pat<string subop, SDPatternOperator op> {
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_4h8h"), neon_uimm3_bare,
                          op, VPR64, VPR128Lo, v4i16, v4i16, v8i16,
                          BinOpFrag<(Neon_vduplane
-                                    (Neon_low8H node:$LHS), node:$RHS)>>;
+                                    (Neon_Low8H node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_8h8h"), neon_uimm3_bare,
                          op, VPR128, VPR128Lo, v8i16, v8i16, v8i16,
@@ -6435,7 +6495,7 @@ multiclass NI_2VE_mul_v2_pat<string subop, SDPatternOperator op> {
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_2s4s"), neon_uimm2_bare,
                          op, VPR64, VPR128, v2f32, v2f32, v4f32,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low4f node:$LHS), node:$RHS)>>;
+                                     (Neon_Low4float node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_4s4s"), neon_uimm2_bare,
                          op, VPR128, VPR128, v4f32, v4f32, v4f32,
@@ -6532,7 +6592,7 @@ multiclass NI_2VE_fma_v2_pat<string subop, SDPatternOperator op> {
   def : NI_2VEswap_laneq<!cast<Instruction>(subop # "_2s4s"),
                          neon_uimm2_bare, op, VPR64, VPR128, v2f32, v4f32,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low4f node:$LHS), node:$RHS)>>;
+                                     (Neon_Low4float node:$LHS), node:$RHS)>>;
 
   def : NI_2VEswap_laneq<!cast<Instruction>(subop # "_4s4s"),
                          neon_uimm2_bare, op, VPR128, VPR128, v4f32, v4f32,
@@ -6566,12 +6626,12 @@ multiclass NI_2VE_fms_v2_pat<string subop, SDPatternOperator op>
   def : NI_2VEswap_laneq<!cast<Instruction>(subop # "_2s4s"),
                          neon_uimm2_bare, op, VPR64, VPR128, v2f32, v4f32,
                          BinOpFrag<(fneg (Neon_vduplane
-                                     (Neon_low4f node:$LHS), node:$RHS))>>;
+                                     (Neon_Low4float node:$LHS), node:$RHS))>>;
 
   def : NI_2VEswap_laneq<!cast<Instruction>(subop # "_2s4s"),
                          neon_uimm2_bare, op, VPR64, VPR128, v2f32, v4f32,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low4f (fneg node:$LHS)),
+                                     (Neon_Low4float (fneg node:$LHS)),
                                      node:$RHS)>>;
 
   def : NI_2VEswap_laneq<!cast<Instruction>(subop # "_4s4s"),
@@ -6739,22 +6799,22 @@ multiclass NI_2VEL_v3_pat<string subop, SDPatternOperator op> {
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_4s4h"), neon_uimm3_bare,
                      op, VPR128, VPR64, VPR128Lo, v4i32, v4i16, v8i16,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low8H node:$LHS), node:$RHS)>>;
+                                 (Neon_Low8H node:$LHS), node:$RHS)>>;
   
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_2d2s"), neon_uimm2_bare,
                      op, VPR128, VPR64, VPR128, v2i64, v2i32, v4i32,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low4S node:$LHS), node:$RHS)>>;
+                                 (Neon_Low4S node:$LHS), node:$RHS)>>;
   
   def : NI_2VEL2_laneq<!cast<Instruction>(subop # "_4s8h"), neon_uimm3_bare,
                        op, VPR128Lo, v4i32, v8i16, v8i16, v4i16, Neon_High8H,
                        BinOpFrag<(Neon_vduplane
-                                   (Neon_low8H node:$LHS), node:$RHS)>>;
+                                   (Neon_Low8H node:$LHS), node:$RHS)>>;
   
   def : NI_2VEL2_laneq<!cast<Instruction>(subop # "_2d4s"), neon_uimm2_bare,
                        op, VPR128, v2i64, v4i32, v4i32, v2i32, Neon_High4S,
                        BinOpFrag<(Neon_vduplane
-                                   (Neon_low4S node:$LHS), node:$RHS)>>;
+                                   (Neon_Low4S node:$LHS), node:$RHS)>>;
   
   // Index can only be half of the max value for lane in 64-bit vector
 
@@ -6805,23 +6865,23 @@ multiclass NI_2VEL_mul_v3_pat<string subop, SDPatternOperator op> {
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_4s4h"), neon_uimm3_bare,
                          op, VPR64, VPR128Lo, v4i32, v4i16, v8i16,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low8H node:$LHS), node:$RHS)>>;
+                                     (Neon_Low8H node:$LHS), node:$RHS)>>;
 
   def : NI_2VE_mul_laneq<!cast<Instruction>(subop # "_2d2s"), neon_uimm2_bare,
                          op, VPR64, VPR128, v2i64, v2i32, v4i32,
                          BinOpFrag<(Neon_vduplane
-                                     (Neon_low4S node:$LHS), node:$RHS)>>;
+                                     (Neon_Low4S node:$LHS), node:$RHS)>>;
 
   def : NI_2VEL2_mul_laneq<!cast<Instruction>(subop # "_4s8h"), neon_uimm3_bare,
                            op, VPR128Lo, v4i32, v8i16, v8i16, v4i16,
                            Neon_High8H,
                            BinOpFrag<(Neon_vduplane
-                                       (Neon_low8H node:$LHS), node:$RHS)>>;
+                                       (Neon_Low8H node:$LHS), node:$RHS)>>;
   
   def : NI_2VEL2_mul_laneq<!cast<Instruction>(subop # "_2d4s"), neon_uimm2_bare,
                            op, VPR128, v2i64, v4i32, v4i32, v2i32, Neon_High4S,
                            BinOpFrag<(Neon_vduplane
-                                       (Neon_low4S node:$LHS), node:$RHS)>>;
+                                       (Neon_Low4S node:$LHS), node:$RHS)>>;
   
   // Index can only be half of the max value for lane in 64-bit vector
 
@@ -6864,25 +6924,25 @@ multiclass NI_2VEL_v3_qdma_pat<string subop, string op> {
                      !cast<PatFrag>(op # "_4s"), VPR128, VPR64, VPR128Lo,
                      v4i32, v4i16, v8i16,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low8H node:$LHS), node:$RHS)>>;
+                                 (Neon_Low8H node:$LHS), node:$RHS)>>;
   
   def : NI_2VE_laneq<!cast<Instruction>(subop # "_2d2s"), neon_uimm2_bare,
                      !cast<PatFrag>(op # "_2d"), VPR128, VPR64, VPR128,
                      v2i64, v2i32, v4i32,
                      BinOpFrag<(Neon_vduplane
-                                 (Neon_low4S node:$LHS), node:$RHS)>>;
+                                 (Neon_Low4S node:$LHS), node:$RHS)>>;
   
   def : NI_2VEL2_laneq<!cast<Instruction>(subop # "_4s8h"), neon_uimm3_bare,
                        !cast<PatFrag>(op # "_4s"), VPR128Lo,
                        v4i32, v8i16, v8i16, v4i16, Neon_High8H,
                        BinOpFrag<(Neon_vduplane
-                                   (Neon_low8H node:$LHS), node:$RHS)>>;
+                                   (Neon_Low8H node:$LHS), node:$RHS)>>;
   
   def : NI_2VEL2_laneq<!cast<Instruction>(subop # "_2d4s"), neon_uimm2_bare,
                        !cast<PatFrag>(op # "_2d"), VPR128,
                        v2i64, v4i32, v4i32, v2i32, Neon_High4S,
                        BinOpFrag<(Neon_vduplane
-                                   (Neon_low4S node:$LHS), node:$RHS)>>;
+                                   (Neon_Low4S node:$LHS), node:$RHS)>>;
   
   // Index can only be half of the max value for lane in 64-bit vector
 

@@ -256,6 +256,8 @@ public:
         NextStringPoolNumber(0), StringPref(Pref), AddressPool(),
         NextAddrPoolNumber(0) {}
 
+  ~DwarfUnits();
+
   /// \brief Compute the size and offset of a DIE given an incoming Offset.
   unsigned computeSizeAndOffset(DIE *Die, unsigned Offset);
 
@@ -456,6 +458,9 @@ class DwarfDebug {
   // Version of dwarf we're emitting.
   unsigned DwarfVersion;
 
+  // Maps from a type identifier to the actual MDNode.
+  DITypeIdentifierMap TypeIdentifierMap;
+
   // DWARF5 Experimental Options
   bool HasDwarfAccelTables;
   bool HasSplitDwarf;
@@ -465,9 +470,6 @@ class DwarfDebug {
   // original object file, rather than things that are meant
   // to be in the .dwo sections.
 
-  // The CUs left in the original object file for separated debug info.
-  SmallVector<CompileUnit *, 1> SkeletonCUs;
-
   // Used to uniquely define abbreviations for the skeleton emission.
   FoldingSet<DIEAbbrev> SkeletonAbbrevSet;
 
@@ -476,9 +478,6 @@ class DwarfDebug {
 
   // Holder for the skeleton information.
   DwarfUnits SkeletonHolder;
-
-  // Maps from a type identifier to the actual MDNode.
-  DITypeIdentifierMap TypeIdentifierMap;
 
 private:
 
