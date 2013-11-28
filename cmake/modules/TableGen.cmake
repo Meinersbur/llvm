@@ -48,7 +48,7 @@ macro(tablegen project ofn)
   #set_source_files_properties(${LLVM_TARGET_DEFINITIONS} PROPERTIES HEADER_FILE_ONLY ON)
 endmacro(tablegen)
 
-function(add_public_tablegen_target target)
+macro(add_public_tablegen_target target)
   # Creates a target for publicly exporting tablegen dependencies.
   if( TABLEGEN_OUTPUT )
     add_custom_target(${target}
@@ -57,8 +57,9 @@ function(add_public_tablegen_target target)
       add_dependencies(${target} ${LLVM_COMMON_DEPENDS})
     endif ()
     set_target_properties(${target} PROPERTIES FOLDER "Tablegenning")
+    list(APPEND LLVM_COMMON_DEPENDS ${target} intrinsics_gen)
   endif( TABLEGEN_OUTPUT )
-endfunction()
+endmacro()
 
 if(CMAKE_CROSSCOMPILING)
   set(CX_NATIVE_TG_DIR "${CMAKE_BINARY_DIR}/native")
