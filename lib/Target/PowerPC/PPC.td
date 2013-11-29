@@ -155,9 +155,9 @@ include "PPCInstrInfo.td"
 //
 
 def : Processor<"generic", G3Itineraries, [Directive32]>;
-def : Processor<"440", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
+def : ProcessorModel<"440", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
 def : Processor<"440fp2", PPC440Itineraries, // BG/L
                           [Directive440, FeatureFSqrt,
                            FeatureSTFIWX, FeatureISEL, FeatureFP2,
@@ -166,9 +166,9 @@ def : Processor<"440d", PPC440Itineraries,   // BG/L
                           [Directive440, FeatureFSqrt, FeatureSTFIWX,
                            FeatureISEL, FeatureFP2, FeatureBookE,
                            DeprecatedMFTB]>;
-def : Processor<"450", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
+def : ProcessorModel<"450", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
 def : Processor<"450fp2", PPC440Itineraries, // BG/P
                           [Directive440, FeatureFSqrt, FeatureSTFIWX,
                            FeatureISEL, FeatureFP2, FeatureBookE,
