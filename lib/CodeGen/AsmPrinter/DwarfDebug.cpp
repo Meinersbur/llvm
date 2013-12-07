@@ -179,7 +179,7 @@ static unsigned getDwarfVersionFromModule(const Module *M) {
 
 DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
     : Asm(A), MMI(Asm->MMI), FirstCU(0), SourceIdMap(DIEValueAllocator),
-      PrevLabel(NULL), GlobalCUIndexCount(0), GlobalRangeCount(0),
+      PrevLabel(NULL), GlobalRangeCount(0),
       InfoHolder(A, "info_string", DIEValueAllocator),
       SkeletonHolder(A, "skel_string", DIEValueAllocator) {
 
@@ -233,17 +233,17 @@ static MCSymbol *emitSectionSym(AsmPrinter *Asm, const MCSection *Section,
   return TmpSym;
 }
 
-DwarfUnits::~DwarfUnits() {
+DwarfFile::~DwarfFile() {
   for (SmallVectorImpl<Unit *>::iterator I = CUs.begin(), E = CUs.end(); I != E;
        ++I)
     delete *I;
 }
 
-MCSymbol *DwarfUnits::getStringPoolSym() {
+MCSymbol *DwarfFile::getStringPoolSym() {
   return Asm->GetTempSymbol(StringPref);
 }
 
-MCSymbol *DwarfUnits::getStringPoolEntry(StringRef Str) {
+MCSymbol *DwarfFile::getStringPoolEntry(StringRef Str) {
   std::pair<MCSymbol *, unsigned> &Entry =
       StringPool.GetOrCreateValue(Str).getValue();
   if (Entry.first)
@@ -253,7 +253,7 @@ MCSymbol *DwarfUnits::getStringPoolEntry(StringRef Str) {
   return Entry.first = Asm->GetTempSymbol(StringPref, Entry.second);
 }
 
-unsigned DwarfUnits::getStringPoolIndex(StringRef Str) {
+unsigned DwarfFile::getStringPoolIndex(StringRef Str) {
   std::pair<MCSymbol *, unsigned> &Entry =
       StringPool.GetOrCreateValue(Str).getValue();
   if (Entry.first)
@@ -264,11 +264,11 @@ unsigned DwarfUnits::getStringPoolIndex(StringRef Str) {
   return Entry.second;
 }
 
-unsigned DwarfUnits::getAddrPoolIndex(const MCSymbol *Sym) {
+unsigned DwarfFile::getAddrPoolIndex(const MCSymbol *Sym) {
   return getAddrPoolIndex(MCSymbolRefExpr::Create(Sym, Asm->OutContext));
 }
 
-unsigned DwarfUnits::getAddrPoolIndex(const MCExpr *Sym) {
+unsigned DwarfFile::getAddrPoolIndex(const MCExpr *Sym) {
   std::pair<DenseMap<const MCExpr *, unsigned>::iterator, bool> P =
       AddressPool.insert(std::make_pair(Sym, NextAddrPoolNumber));
   if (P.second)
@@ -278,7 +278,7 @@ unsigned DwarfUnits::getAddrPoolIndex(const MCExpr *Sym) {
 
 // Define a unique number for the abbreviation.
 //
-void DwarfUnits::assignAbbrevNumber(DIEAbbrev &Abbrev) {
+void DwarfFile::assignAbbrevNumber(DIEAbbrev &Abbrev) {
   // Check the set for priors.
   DIEAbbrev *InSet = AbbreviationsSet.GetOrInsertNode(&Abbrev);
 
@@ -747,8 +747,10 @@ CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
   CompilationDir = DIUnit.getDirectory();
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
-  CompileUnit *NewCU = new CompileUnit(GlobalCUIndexCount++, Die, DIUnit, Asm,
-                                       this, &InfoHolder);
+  CompileUnit *NewCU = new CompileUnit(InfoHolder.getUnits().size(), Die,
+                                       DIUnit, Asm, this, &InfoHolder);
+  InfoHolder.addUnit(NewCU);
+
 
   FileIDCUMap[NewCU->getUniqueID()] = 0;
   // Call this to emit a .file directive if it wasn't emitted for the source
@@ -816,7 +818,14 @@ CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
   if (!FirstCU)
     FirstCU = NewCU;
 
-  InfoHolder.addUnit(NewCU);
+  NewCU->initSection(
+      useSplitDwarf() ? Asm->getObjFileLowering().getDwarfInfoDWOSection()
+                      : Asm->getObjFileLowering().getDwarfInfoSection(),
+      // FIXME: This is subtle (using the info section even when
+      // this CU is in the dwo section) and necessary for the
+      // current arange code - ideally it should iterate
+      // skeleton units, not full units, if it's going to reference skeletons
+      DwarfInfoSectionSym);
 
   CUMap.insert(std::make_pair(DIUnit, NewCU));
   CUDieMap.insert(std::make_pair(Die, NewCU));
@@ -1910,7 +1919,7 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
 
 // Compute the size and offset of a DIE. The offset is relative to start of the
 // CU. It returns the offset after laying out the DIE.
-unsigned DwarfUnits::computeSizeAndOffset(DIE *Die, unsigned Offset) {
+unsigned DwarfFile::computeSizeAndOffset(DIE *Die, unsigned Offset) {
   // Get the children.
   const std::vector<DIE *> &Children = Die->getChildren();
 
@@ -1951,7 +1960,7 @@ unsigned DwarfUnits::computeSizeAndOffset(DIE *Die, unsigned Offset) {
 }
 
 // Compute the size and offset for each DIE.
-void DwarfUnits::computeSizeAndOffsets() {
+void DwarfFile::computeSizeAndOffsets() {
   // Offset from the first CU in the debug info section is 0 initially.
   unsigned SecOffset = 0;
 
@@ -2064,11 +2073,11 @@ void DwarfDebug::emitDIE(DIE *Die) {
         assert(CU && "CUDie should belong to a CU.");
         Addr += CU->getDebugInfoOffset();
         if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-          Asm->EmitLabelPlusOffset(DwarfInfoSectionSym, Addr,
+          Asm->EmitLabelPlusOffset(CU->getSectionSym(), Addr,
                                    DIEEntry::getRefAddrSize(Asm));
         else
-          Asm->EmitLabelOffsetDifference(DwarfInfoSectionSym, Addr,
-                                         DwarfInfoSectionSym,
+          Asm->EmitLabelOffsetDifference(CU->getSectionSym(), Addr,
+                                         CU->getSectionSym(),
                                          DIEEntry::getRefAddrSize(Asm));
       } else {
         // Make sure Origin belong to the same CU.
@@ -2118,18 +2127,17 @@ void DwarfDebug::emitDIE(DIE *Die) {
 
 // Emit the various dwarf units to the unit section USection with
 // the abbreviations going into ASection.
-void DwarfUnits::emitUnits(DwarfDebug *DD, const MCSection *USection,
-                           const MCSection *ASection,
-                           const MCSymbol *ASectionSym) {
-  Asm->OutStreamer.SwitchSection(USection);
+void DwarfFile::emitUnits(DwarfDebug *DD, const MCSection *ASection,
+                          const MCSymbol *ASectionSym) {
   for (SmallVectorImpl<Unit *>::iterator I = CUs.begin(), E = CUs.end(); I != E;
        ++I) {
     Unit *TheU = *I;
     DIE *Die = TheU->getUnitDie();
+    const MCSection *USection = TheU->getSection();
+    Asm->OutStreamer.SwitchSection(USection);
 
     // Emit the compile units header.
-    Asm->OutStreamer.EmitLabel(
-        Asm->GetTempSymbol(USection->getLabelBeginName(), TheU->getUniqueID()));
+    Asm->OutStreamer.EmitLabel(TheU->getLabelBegin());
 
     // Emit size of content not including length itself
     Asm->OutStreamer.AddComment("Length of Unit");
@@ -2138,28 +2146,26 @@ void DwarfUnits::emitUnits(DwarfDebug *DD, const MCSection *USection,
     TheU->emitHeader(ASection, ASectionSym);
 
     DD->emitDIE(Die);
-    Asm->OutStreamer.EmitLabel(
-        Asm->GetTempSymbol(USection->getLabelEndName(), TheU->getUniqueID()));
+    Asm->OutStreamer.EmitLabel(TheU->getLabelEnd());
   }
 }
 
 // Emit the debug info section.
 void DwarfDebug::emitDebugInfo() {
-  DwarfUnits &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
+  DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
 
-  Holder.emitUnits(this, Asm->getObjFileLowering().getDwarfInfoSection(),
-                   Asm->getObjFileLowering().getDwarfAbbrevSection(),
+  Holder.emitUnits(this, Asm->getObjFileLowering().getDwarfAbbrevSection(),
                    DwarfAbbrevSectionSym);
 }
 
 // Emit the abbreviation section.
 void DwarfDebug::emitAbbreviations() {
-  DwarfUnits &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
+  DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
 
   Holder.emitAbbrevs(Asm->getObjFileLowering().getDwarfAbbrevSection());
 }
 
-void DwarfUnits::emitAbbrevs(const MCSection *Section) {
+void DwarfFile::emitAbbrevs(const MCSection *Section) {
   // Check to see if it is worth the effort.
   if (!Abbreviations.empty()) {
     // Start the debug abbrev section.
@@ -2406,15 +2412,14 @@ static dwarf::PubIndexEntryDescriptor computeIndexValue(Unit *CU,
 /// emitDebugPubNames - Emit visible names into a debug pubnames section.
 ///
 void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
-  const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
   const MCSection *PSec =
       GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubNamesSection()
                : Asm->getObjFileLowering().getDwarfPubNamesSection();
 
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
-       I != E; ++I) {
-    Unit *TheU = *I;
+  DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
+  const SmallVectorImpl<Unit *> &Units = Holder.getUnits();
+  for (unsigned i = 0; i != Units.size(); ++i) {
+    Unit *TheU = Units[i];
     unsigned ID = TheU->getUniqueID();
 
     // Start the dwarf pubnames section.
@@ -2436,16 +2441,13 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
     Asm->EmitInt16(dwarf::DW_PUBNAMES_VERSION);
 
     Asm->OutStreamer.AddComment("Offset of Compilation Unit Info");
-    Asm->EmitSectionOffset(Asm->GetTempSymbol(ISec->getLabelBeginName(), ID),
-                           DwarfInfoSectionSym);
+    Asm->EmitSectionOffset(TheU->getLabelBegin(), TheU->getSectionSym());
 
     Asm->OutStreamer.AddComment("Compilation Unit Length");
-    Asm->EmitLabelDifference(Asm->GetTempSymbol(ISec->getLabelEndName(), ID),
-                             Asm->GetTempSymbol(ISec->getLabelBeginName(), ID),
-                             4);
+    Asm->EmitLabelDifference(TheU->getLabelEnd(), TheU->getLabelBegin(), 4);
 
     // Emit the pubnames for this compilation unit.
-    const StringMap<const DIE *> &Globals = TheU->getGlobalNames();
+    const StringMap<const DIE *> &Globals = getUnits()[ID]->getGlobalNames();
     for (StringMap<const DIE *>::const_iterator GI = Globals.begin(),
                                                 GE = Globals.end();
          GI != GE; ++GI) {
@@ -2474,15 +2476,14 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
 }
 
 void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
-  const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
   const MCSection *PSec =
       GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubTypesSection()
                : Asm->getObjFileLowering().getDwarfPubTypesSection();
 
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
-       I != E; ++I) {
-    Unit *TheU = *I;
+  DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
+  const SmallVectorImpl<Unit *> &Units = Holder.getUnits();
+  for (unsigned i = 0; i != Units.size(); ++i) {
+    Unit *TheU = Units[i];
     unsigned ID = TheU->getUniqueID();
 
     // Start the dwarf pubtypes section.
@@ -2504,17 +2505,13 @@ void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
     Asm->EmitInt16(dwarf::DW_PUBTYPES_VERSION);
 
     Asm->OutStreamer.AddComment("Offset of Compilation Unit Info");
-    Asm->EmitSectionOffset(
-        Asm->GetTempSymbol(ISec->getLabelBeginName(), TheU->getUniqueID()),
-        DwarfInfoSectionSym);
+    Asm->EmitSectionOffset(TheU->getLabelBegin(), TheU->getSectionSym());
 
     Asm->OutStreamer.AddComment("Compilation Unit Length");
-    Asm->EmitLabelDifference(
-        Asm->GetTempSymbol(ISec->getLabelEndName(), TheU->getUniqueID()),
-        Asm->GetTempSymbol(ISec->getLabelBeginName(), TheU->getUniqueID()), 4);
+    Asm->EmitLabelDifference(TheU->getLabelEnd(), TheU->getLabelBegin(), 4);
 
     // Emit the pubtypes.
-    const StringMap<const DIE *> &Globals = TheU->getGlobalTypes();
+    const StringMap<const DIE *> &Globals = getUnits()[ID]->getGlobalTypes();
     for (StringMap<const DIE *>::const_iterator GI = Globals.begin(),
                                                 GE = Globals.end();
          GI != GE; ++GI) {
@@ -2545,7 +2542,7 @@ void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
 }
 
 // Emit strings into a string section.
-void DwarfUnits::emitStrings(const MCSection *StrSection,
+void DwarfFile::emitStrings(const MCSection *StrSection,
                              const MCSection *OffsetSection = NULL,
                              const MCSymbol *StrSecSym = NULL) {
 
@@ -2593,7 +2590,7 @@ void DwarfUnits::emitStrings(const MCSection *StrSection,
 
 
 // Emit addresses into the section given.
-void DwarfUnits::emitAddresses(const MCSection *AddrSection) {
+void DwarfFile::emitAddresses(const MCSection *AddrSection) {
 
   if (AddressPool.empty())
     return;
@@ -2620,7 +2617,7 @@ void DwarfUnits::emitAddresses(const MCSection *AddrSection) {
 
 // Emit visible names into a debug str section.
 void DwarfDebug::emitDebugStr() {
-  DwarfUnits &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
+  DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
   Holder.emitStrings(Asm->getObjFileLowering().getDwarfStrSection());
 }
 
@@ -2817,7 +2814,6 @@ void DwarfDebug::emitDebugARanges() {
     }
   }
 
-  const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
   unsigned PtrSize = Asm->getDataLayout().getPointerSize();
 
   // Build a list of CUs used.
@@ -2858,9 +2854,7 @@ void DwarfDebug::emitDebugARanges() {
     Asm->OutStreamer.AddComment("DWARF Arange version number");
     Asm->EmitInt16(dwarf::DW_ARANGES_VERSION);
     Asm->OutStreamer.AddComment("Offset Into Debug Info Section");
-    Asm->EmitSectionOffset(
-        Asm->GetTempSymbol(ISec->getLabelBeginName(), CU->getUniqueID()),
-        DwarfInfoSectionSym);
+    Asm->EmitSectionOffset(CU->getLabelBegin(), CU->getSectionSym());
     Asm->OutStreamer.AddComment("Address Size (in bytes)");
     Asm->EmitInt8(PtrSize);
     Asm->OutStreamer.AddComment("Segment Size (in bytes)");
@@ -3001,6 +2995,8 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
                     Asm->GetTempSymbol("gnu_ranges", NewCU->getUniqueID()),
                     DwarfDebugRangeSectionSym);
 
+  NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
+                     DwarfInfoSectionSym);
   SkeletonHolder.addUnit(NewCU);
 
   return NewCU;
@@ -3010,7 +3006,7 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
 // compile units that would normally be in debug_info.
 void DwarfDebug::emitDebugInfoDWO() {
   assert(useSplitDwarf() && "No split dwarf debug info?");
-  InfoHolder.emitUnits(this, Asm->getObjFileLowering().getDwarfInfoDWOSection(),
+  InfoHolder.emitUnits(this,
                        Asm->getObjFileLowering().getDwarfAbbrevDWOSection(),
                        DwarfAbbrevDWOSectionSym);
 }
@@ -3048,8 +3044,10 @@ void DwarfDebug::addTypeUnitType(uint16_t Language, DIE *RefDie,
     }
   } else {
     DIE *UnitDie = new DIE(dwarf::DW_TAG_type_unit);
-    TypeUnit *NewTU = new TypeUnit(GlobalCUIndexCount++, UnitDie, Language, Asm,
-                                   this, &InfoHolder);
+    TypeUnit *NewTU = new TypeUnit(InfoHolder.getUnits().size(), UnitDie,
+                                   Language, Asm, this, &InfoHolder);
+    InfoHolder.addUnit(NewTU);
+
     NewTU->addUInt(UnitDie, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
                    Language);
 
@@ -3078,7 +3076,14 @@ void DwarfDebug::addTypeUnitType(uint16_t Language, DIE *RefDie,
     I->second.first = Signature;
     I->second.second = NULL;
 
-    InfoHolder.addUnit(NewTU);
+    NewTU->initSection(
+        useSplitDwarf() ? Asm->getObjFileLowering().getDwarfInfoDWOSection()
+                        : Asm->getObjFileLowering().getDwarfInfoSection(),
+        // FIXME: This is subtle (using the info section even when
+        // this CU is in the dwo section) and necessary for the
+        // current arange code - ideally it should iterate
+        // skeleton units, not full units, if it's going to reference skeletons
+        useSplitDwarf() ? NULL : DwarfInfoSectionSym);
   }
 
   // Populate all the signatures.

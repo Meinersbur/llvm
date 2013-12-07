@@ -22,6 +22,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSection.h"
 
 namespace llvm {
 
@@ -78,7 +79,7 @@ protected:
 
   // Holders for some common dwarf information.
   DwarfDebug *DD;
-  DwarfUnits *DU;
+  DwarfFile *DU;
 
   /// IndexTyDie - An anonymous type for index type.  Owned by UnitDie.
   DIE *IndexTyDie;
@@ -127,11 +128,55 @@ protected:
   // DIEIntegerOne - A preallocated DIEValue because 1 is used frequently.
   DIEInteger *DIEIntegerOne;
 
+  /// The section this unit will be emitted in.
+  const MCSection *Section;
+
+  /// A label at the start of the non-dwo section related to this unit.
+  MCSymbol *SectionSym;
+
+  /// The start of the unit within its section.
+  MCSymbol *LabelBegin;
+
+  /// The end of the unit within its section.
+  MCSymbol *LabelEnd;
+
   Unit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A, DwarfDebug *DW,
-       DwarfUnits *DWU);
+       DwarfFile *DWU);
 
 public:
   virtual ~Unit();
+
+  /// Pass in the SectionSym even though we could recreate it in every compile
+  /// unit (type units will have actually distinct symbols once they're in
+  /// comdat sections).
+  void initSection(const MCSection *Section, MCSymbol *SectionSym) {
+    assert(!this->Section);
+    this->Section = Section;
+    this->SectionSym = SectionSym;
+    this->LabelBegin =
+        Asm->GetTempSymbol(Section->getLabelBeginName(), getUniqueID());
+    this->LabelEnd =
+        Asm->GetTempSymbol(Section->getLabelEndName(), getUniqueID());
+  }
+  const MCSection *getSection() const {
+    assert(Section);
+    return Section;
+  }
+
+  MCSymbol *getSectionSym() const {
+    assert(Section);
+    return SectionSym;
+  }
+
+  MCSymbol *getLabelBegin() const {
+    assert(Section);
+    return LabelBegin;
+  }
+
+  MCSymbol *getLabelEnd() const {
+    assert(Section);
+    return LabelEnd;
+  }
 
   // Accessors.
   unsigned getUniqueID() const { return UniqueID; }
@@ -443,7 +488,7 @@ private:
 class CompileUnit : public Unit {
 public:
   CompileUnit(unsigned UID, DIE *D, DICompileUnit Node, AsmPrinter *A,
-              DwarfDebug *DW, DwarfUnits *DWU);
+              DwarfDebug *DW, DwarfFile *DWU);
 
   /// createGlobalVariableDIE - create global variable DIE.
   void createGlobalVariableDIE(DIGlobalVariable GV);
@@ -461,7 +506,7 @@ private:
 
 public:
   TypeUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
-           DwarfDebug *DW, DwarfUnits *DWU);
+           DwarfDebug *DW, DwarfFile *DWU);
 
   uint16_t getLanguage() const { return Language; }
 };

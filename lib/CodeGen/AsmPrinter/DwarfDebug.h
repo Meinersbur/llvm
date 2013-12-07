@@ -220,8 +220,9 @@ private:
 };
 
 /// \brief Collects and handles information specific to a particular
-/// collection of units.
-class DwarfUnits {
+/// collection of units. This collection represents all of the units
+/// that will be ultimately output into a single object file.
+class DwarfFile {
   // Target of Dwarf emission, used for sizing of abbreviations.
   AsmPrinter *Asm;
 
@@ -251,11 +252,11 @@ class DwarfUnits {
   unsigned NextAddrPoolNumber;
 
 public:
-  DwarfUnits(AsmPrinter *AP, const char *Pref, BumpPtrAllocator &DA)
+  DwarfFile(AsmPrinter *AP, const char *Pref, BumpPtrAllocator &DA)
       : Asm(AP), StringPool(DA), NextStringPoolNumber(0), StringPref(Pref),
         AddressPool(), NextAddrPoolNumber(0) {}
 
-  ~DwarfUnits();
+  ~DwarfFile();
 
   const SmallVectorImpl<Unit *> &getUnits() { return CUs; }
 
@@ -273,8 +274,8 @@ public:
 
   /// \brief Emit all of the units to the section listed with the given
   /// abbreviation section.
-  void emitUnits(DwarfDebug *DD, const MCSection *USection,
-                 const MCSection *ASection, const MCSymbol *ASectionSym);
+  void emitUnits(DwarfDebug *DD, const MCSection *ASection,
+                 const MCSymbol *ASectionSym);
 
   /// \brief Emit a set of abbreviations to the specific section.
   void emitAbbrevs(const MCSection *);
@@ -436,14 +437,11 @@ class DwarfDebug : public AsmPrinterHandler {
   // table for the same directory as DW_AT_comp_dir.
   StringRef CompilationDir;
 
-  // Counter for assigning globally unique IDs for CUs.
-  unsigned GlobalCUIndexCount;
-
   // Counter for assigning globally unique IDs for ranges.
   unsigned GlobalRangeCount;
 
   // Holder for the file specific debug information.
-  DwarfUnits InfoHolder;
+  DwarfFile InfoHolder;
 
   // Holders for the various debug information flags that we might need to
   // have exposed. See accessor functions below for description.
@@ -480,7 +478,7 @@ class DwarfDebug : public AsmPrinterHandler {
   // to be in the .dwo sections.
 
   // Holder for the skeleton information.
-  DwarfUnits SkeletonHolder;
+  DwarfFile SkeletonHolder;
 
   void addScopeVariable(LexicalScope *LS, DbgVariable *Var);
 
