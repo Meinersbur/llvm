@@ -60,7 +60,7 @@ public:
 //===----------------------------------------------------------------------===//
 /// Unit - This dwarf writer support class manages information associated
 /// with a source file.
-class Unit {
+class DwarfUnit {
 protected:
   /// UniqueID - a numeric ID unique among all CUs in the module
   unsigned UniqueID;
@@ -140,11 +140,14 @@ protected:
   /// The end of the unit within its section.
   MCSymbol *LabelEnd;
 
-  Unit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A, DwarfDebug *DW,
-       DwarfFile *DWU);
+  /// The label for the start of the range sets for the elements of this unit.
+  MCSymbol *LabelRange;
+
+  DwarfUnit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A,
+            DwarfDebug *DW, DwarfFile *DWU);
 
 public:
-  virtual ~Unit();
+  virtual ~DwarfUnit();
 
   /// Pass in the SectionSym even though we could recreate it in every compile
   /// unit (type units will have actually distinct symbols once they're in
@@ -157,7 +160,9 @@ public:
         Asm->GetTempSymbol(Section->getLabelBeginName(), getUniqueID());
     this->LabelEnd =
         Asm->GetTempSymbol(Section->getLabelEndName(), getUniqueID());
+    this->LabelRange = Asm->GetTempSymbol("gnu_ranges", getUniqueID());
   }
+
   const MCSection *getSection() const {
     assert(Section);
     return Section;
@@ -176,6 +181,11 @@ public:
   MCSymbol *getLabelEnd() const {
     assert(Section);
     return LabelEnd;
+  }
+
+  MCSymbol *getLabelRange() const {
+    assert(Section);
+    return LabelRange;
   }
 
   // Accessors.
@@ -485,10 +495,10 @@ private:
   void updateAcceleratorTables(DIScope Context, DIType Ty, const DIE *TyDIE);
 };
 
-class CompileUnit : public Unit {
+class DwarfCompileUnit : public DwarfUnit {
 public:
-  CompileUnit(unsigned UID, DIE *D, DICompileUnit Node, AsmPrinter *A,
-              DwarfDebug *DW, DwarfFile *DWU);
+  DwarfCompileUnit(unsigned UID, DIE *D, DICompileUnit Node, AsmPrinter *A,
+                   DwarfDebug *DW, DwarfFile *DWU);
 
   /// createGlobalVariableDIE - create global variable DIE.
   void createGlobalVariableDIE(DIGlobalVariable GV);
@@ -500,13 +510,13 @@ public:
   uint16_t getLanguage() const { return getNode().getLanguage(); }
 };
 
-class TypeUnit : public Unit {
+class DwarfTypeUnit : public DwarfUnit {
 private:
   uint16_t Language;
 
 public:
-  TypeUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
-           DwarfDebug *DW, DwarfFile *DWU);
+  DwarfTypeUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
+                DwarfDebug *DW, DwarfFile *DWU);
 
   uint16_t getLanguage() const { return Language; }
 };

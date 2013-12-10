@@ -106,8 +106,7 @@ DwarfPubSections("generate-dwarf-pub-sections", cl::Hidden,
 
 static cl::opt<unsigned>
 DwarfVersionNumber("dwarf-version", cl::Hidden,
-                   cl::desc("Generate DWARF for dwarf version."),
-                   cl::init(0));
+                   cl::desc("Generate DWARF for dwarf version."), cl::init(0));
 
 static const char *const DWARFGroupName = "DWARF Emission";
 static const char *const DbgTimerName = "DWARF Debug Writer";
@@ -189,7 +188,8 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   DwarfAddrSectionSym = 0;
   DwarfAbbrevDWOSectionSym = DwarfStrDWOSectionSym = 0;
   FunctionBeginSym = FunctionEndSym = 0;
-  CurFn = 0; CurMI = 0;
+  CurFn = 0;
+  CurMI = 0;
 
   // Turn on accelerator tables for Darwin by default, pubnames by
   // default for non-Darwin, and handle split dwarf.
@@ -234,8 +234,8 @@ static MCSymbol *emitSectionSym(AsmPrinter *Asm, const MCSection *Section,
 }
 
 DwarfFile::~DwarfFile() {
-  for (SmallVectorImpl<Unit *>::iterator I = CUs.begin(), E = CUs.end(); I != E;
-       ++I)
+  for (SmallVectorImpl<DwarfUnit *>::iterator I = CUs.begin(), E = CUs.end();
+       I != E; ++I)
     delete *I;
 }
 
@@ -334,7 +334,7 @@ static bool SectionSort(const MCSection *A, const MCSection *B) {
 // TODO: Determine whether or not we should add names for programs
 // that do not have a DW_AT_name or DW_AT_linkage_name field - this
 // is only slightly different than the lookup of non-standard ObjC names.
-static void addSubprogramNames(Unit *TheU, DISubprogram SP, DIE *Die) {
+static void addSubprogramNames(DwarfUnit *TheU, DISubprogram SP, DIE *Die) {
   if (!SP.isDefinition())
     return;
   TheU->addAccelName(SP.getName(), Die);
@@ -373,7 +373,8 @@ bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
 // Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
 // and DW_AT_high_pc attributes. If there are global variables in this
 // scope then create and insert DIEs for these variables.
-DIE *DwarfDebug::updateSubprogramScopeDIE(CompileUnit *SPCU, DISubprogram SP) {
+DIE *DwarfDebug::updateSubprogramScopeDIE(DwarfCompileUnit *SPCU,
+                                          DISubprogram SP) {
   DIE *SPDie = SPCU->getDIE(SP);
 
   assert(SPDie && "Unable to find subprogram DIE!");
@@ -457,7 +458,7 @@ bool DwarfDebug::isLexicalScopeDIENull(LexicalScope *Scope) {
   return !End;
 }
 
-static void addSectionLabel(AsmPrinter *Asm, Unit *U, DIE *D,
+static void addSectionLabel(AsmPrinter *Asm, DwarfUnit *U, DIE *D,
                             dwarf::Attribute A, const MCSymbol *L,
                             const MCSymbol *Sec) {
   if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
@@ -466,7 +467,7 @@ static void addSectionLabel(AsmPrinter *Asm, Unit *U, DIE *D,
     U->addSectionDelta(D, A, L, Sec);
 }
 
-void DwarfDebug::addScopeRangeList(CompileUnit *TheCU, DIE *ScopeDIE,
+void DwarfDebug::addScopeRangeList(DwarfCompileUnit *TheCU, DIE *ScopeDIE,
                                    const SmallVectorImpl<InsnRange> &Range) {
   // Emit offset in .debug_range as a relocatable label. emitDIE will handle
   // emitting it appropriately.
@@ -489,7 +490,7 @@ void DwarfDebug::addScopeRangeList(CompileUnit *TheCU, DIE *ScopeDIE,
 
 // Construct new DW_TAG_lexical_block for this scope and attach
 // DW_AT_low_pc/DW_AT_high_pc labels.
-DIE *DwarfDebug::constructLexicalScopeDIE(CompileUnit *TheCU,
+DIE *DwarfDebug::constructLexicalScopeDIE(DwarfCompileUnit *TheCU,
                                           LexicalScope *Scope) {
   if (isLexicalScopeDIENull(Scope))
     return 0;
@@ -523,7 +524,7 @@ DIE *DwarfDebug::constructLexicalScopeDIE(CompileUnit *TheCU,
 
 // This scope represents inlined body of a function. Construct DIE to
 // represent this concrete inlined copy of the function.
-DIE *DwarfDebug::constructInlinedScopeDIE(CompileUnit *TheCU,
+DIE *DwarfDebug::constructInlinedScopeDIE(DwarfCompileUnit *TheCU,
                                           LexicalScope *Scope) {
   const SmallVectorImpl<InsnRange> &ScopeRanges = Scope->getRanges();
   assert(!ScopeRanges.empty() &&
@@ -577,7 +578,8 @@ DIE *DwarfDebug::constructInlinedScopeDIE(CompileUnit *TheCU,
   return ScopeDIE;
 }
 
-DIE *DwarfDebug::createScopeChildrenDIE(CompileUnit *TheCU, LexicalScope *Scope,
+DIE *DwarfDebug::createScopeChildrenDIE(DwarfCompileUnit *TheCU,
+                                        LexicalScope *Scope,
                                         SmallVectorImpl<DIE *> &Children) {
   DIE *ObjectPointer = NULL;
 
@@ -610,7 +612,8 @@ DIE *DwarfDebug::createScopeChildrenDIE(CompileUnit *TheCU, LexicalScope *Scope,
 }
 
 // Construct a DIE for this scope.
-DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
+DIE *DwarfDebug::constructScopeDIE(DwarfCompileUnit *TheCU,
+                                   LexicalScope *Scope) {
   if (!Scope || !Scope->getScopeNode())
     return NULL;
 
@@ -727,7 +730,7 @@ unsigned DwarfDebug::getOrCreateSourceID(StringRef FileName, StringRef DirName,
   return SrcId;
 }
 
-void DwarfDebug::addGnuPubAttributes(Unit *U, DIE *D) const {
+void DwarfDebug::addGnuPubAttributes(DwarfUnit *U, DIE *D) const {
   if (!GenerateGnuPubSections)
     return;
 
@@ -740,17 +743,16 @@ void DwarfDebug::addGnuPubAttributes(Unit *U, DIE *D) const {
                   DwarfGnuPubTypesSectionSym);
 }
 
-// Create new CompileUnit for the given metadata node with tag
+// Create new DwarfCompileUnit for the given metadata node with tag
 // DW_TAG_compile_unit.
-CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
+DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
   StringRef FN = DIUnit.getFilename();
   CompilationDir = DIUnit.getDirectory();
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
-  CompileUnit *NewCU = new CompileUnit(InfoHolder.getUnits().size(), Die,
-                                       DIUnit, Asm, this, &InfoHolder);
+  DwarfCompileUnit *NewCU = new DwarfCompileUnit(
+      InfoHolder.getUnits().size(), Die, DIUnit, Asm, this, &InfoHolder);
   InfoHolder.addUnit(NewCU);
-
 
   FileIDCUMap[NewCU->getUniqueID()] = 0;
   // Call this to emit a .file directive if it wasn't emitted for the source
@@ -786,15 +788,14 @@ CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
     // The line table entries are not always emitted in assembly, so it
     // is not okay to use line_table_start here.
     if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-      NewCU->addSectionLabel(
-          Die, dwarf::DW_AT_stmt_list,
-          UseTheFirstCU ? Asm->GetTempSymbol("section_line")
-                        : LineTableStartSym);
+      NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list,
+                             UseTheFirstCU ? Asm->GetTempSymbol("section_line")
+                                           : LineTableStartSym);
     else if (UseTheFirstCU)
       NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
     else
-      NewCU->addSectionDelta(Die, dwarf::DW_AT_stmt_list,
-                             LineTableStartSym, DwarfLineSectionSym);
+      NewCU->addSectionDelta(Die, dwarf::DW_AT_stmt_list, LineTableStartSym,
+                             DwarfLineSectionSym);
 
     // If we're using split dwarf the compilation dir is going to be in the
     // skeleton CU and so we don't need to duplicate it here.
@@ -833,12 +834,13 @@ CompileUnit *DwarfDebug::constructCompileUnit(DICompileUnit DIUnit) {
 }
 
 // Construct subprogram DIE.
-void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU, const MDNode *N) {
+void DwarfDebug::constructSubprogramDIE(DwarfCompileUnit *TheCU,
+                                        const MDNode *N) {
   // FIXME: We should only call this routine once, however, during LTO if a
   // program is defined in multiple CUs we could end up calling it out of
   // beginModule as we walk the CUs.
 
-  CompileUnit *&CURef = SPMap[N];
+  DwarfCompileUnit *&CURef = SPMap[N];
   if (CURef)
     return;
   CURef = TheCU;
@@ -855,7 +857,7 @@ void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU, const MDNode *N) {
   TheCU->addGlobalName(SP.getName(), SubprogramDie, resolve(SP.getContext()));
 }
 
-void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
+void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
                                             const MDNode *N) {
   DIImportedEntity Module(N);
   if (!Module.Verify())
@@ -864,15 +866,15 @@ void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
     constructImportedEntityDIE(TheCU, Module, D);
 }
 
-void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU, const MDNode *N,
-                                            DIE *Context) {
+void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
+                                            const MDNode *N, DIE *Context) {
   DIImportedEntity Module(N);
   if (!Module.Verify())
     return;
   return constructImportedEntityDIE(TheCU, Module, Context);
 }
 
-void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
+void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
                                             const DIImportedEntity &Module,
                                             DIE *Context) {
   assert(Module.Verify() &&
@@ -923,7 +925,7 @@ void DwarfDebug::beginModule() {
 
   for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
     DICompileUnit CUNode(CU_Nodes->getOperand(i));
-    CompileUnit *CU = constructCompileUnit(CUNode);
+    DwarfCompileUnit *CU = constructDwarfCompileUnit(CUNode);
     DIArray ImportedEntities = CUNode.getImportedEntities();
     for (unsigned i = 0, e = ImportedEntities.getNumElements(); i != e; ++i)
       ScopesWithImportedEntities.push_back(std::make_pair(
@@ -996,7 +998,8 @@ void DwarfDebug::collectDeadVariables() {
           continue;
 
         // Construct subprogram DIE and add variables DIEs.
-        CompileUnit *SPCU = static_cast<CompileUnit *>(CUMap.lookup(TheCU));
+        DwarfCompileUnit *SPCU =
+            static_cast<DwarfCompileUnit *>(CUMap.lookup(TheCU));
         assert(SPCU && "Unable to find Compile Unit!");
         // FIXME: See the comment in constructSubprogramDIE about duplicate
         // subprogram DIEs.
@@ -1044,7 +1047,7 @@ static bool isContainedInAnonNamespace(DIE *Die) {
 
 /// Test if the current CU language is C++ and that we have
 /// a named type that is not contained in an anonymous namespace.
-static bool shouldAddODRHash(TypeUnit *CU, DIE *Die) {
+static bool shouldAddODRHash(DwarfTypeUnit *CU, DIE *Die) {
   return CU->getLanguage() == dwarf::DW_LANG_C_plus_plus &&
          getDIEStringAttr(Die, dwarf::DW_AT_name) != "" &&
          !isContainedInAnonNamespace(Die);
@@ -1059,10 +1062,10 @@ void DwarfDebug::finalizeModuleInfo() {
 
   // Handle anything that needs to be done on a per-unit basis after
   // all other generation.
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = getUnits().begin(),
+                                                    E = getUnits().end();
        I != E; ++I) {
-    Unit *TheU = *I;
+    DwarfUnit *TheU = *I;
     // Emit DW_AT_containing_type attribute to connect types with their
     // vtable holding type.
     TheU->constructContainingTypeDIEs();
@@ -1080,7 +1083,8 @@ void DwarfDebug::finalizeModuleInfo() {
       TheU->addUInt(TheU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
                     dwarf::DW_FORM_data8, ID);
       // Now construct the skeleton CU associated.
-      CompileUnit *SkCU = constructSkeletonCU(static_cast<CompileUnit *>(TheU));
+      DwarfCompileUnit *SkCU =
+          constructSkeletonCU(static_cast<DwarfCompileUnit *>(TheU));
       // This should be a unique identifier when we want to build .dwp files.
       SkCU->addUInt(SkCU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
                     dwarf::DW_FORM_data8, ID);
@@ -1588,11 +1592,11 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
   // Make sure that each lexical scope will have a begin/end label.
   identifyScopeMarkers();
 
-  // Set DwarfCompileUnitID in MCContext to the Compile Unit this function
+  // Set DwarfDwarfCompileUnitID in MCContext to the Compile Unit this function
   // belongs to so that we add to the correct per-cu line table in the
   // non-asm case.
   LexicalScope *FnScope = LScopes.getCurrentFunctionScope();
-  CompileUnit *TheCU = SPMap.lookup(FnScope->getScopeNode());
+  DwarfCompileUnit *TheCU = SPMap.lookup(FnScope->getScopeNode());
   assert(TheCU && "Unable to find compile unit!");
   if (Asm->TM.hasMCUseLoc() && Asm->OutStreamer.hasRawTextSupport())
     // Use a single line table if we are using .loc and generating assembly.
@@ -1817,14 +1821,14 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
   FunctionEndSym = Asm->GetTempSymbol("func_end", Asm->getFunctionNumber());
   // Assumes in correct section after the entry point.
   Asm->OutStreamer.EmitLabel(FunctionEndSym);
-  // Set DwarfCompileUnitID in MCContext to default value.
+  // Set DwarfDwarfCompileUnitID in MCContext to default value.
   Asm->OutStreamer.getContext().setDwarfCompileUnitID(0);
 
   SmallPtrSet<const MDNode *, 16> ProcessedVars;
   collectVariableInfo(ProcessedVars);
 
   LexicalScope *FnScope = LScopes.getCurrentFunctionScope();
-  CompileUnit *TheCU = SPMap.lookup(FnScope->getScopeNode());
+  DwarfCompileUnit *TheCU = SPMap.lookup(FnScope->getScopeNode());
   assert(TheCU && "Unable to find compile unit!");
 
   // Construct abstract scopes.
@@ -1966,7 +1970,8 @@ void DwarfFile::computeSizeAndOffsets() {
 
   // Iterate over each compile unit and set the size and offsets for each
   // DIE within each compile unit. All offsets are CU relative.
-  for (SmallVectorImpl<Unit *>::const_iterator I = CUs.begin(), E = CUs.end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = CUs.begin(),
+                                                    E = CUs.end();
        I != E; ++I) {
     (*I)->setDebugInfoOffset(SecOffset);
 
@@ -2069,7 +2074,7 @@ void DwarfDebug::emitDIE(DIE *Die) {
         // For DW_FORM_ref_addr, output the offset from beginning of debug info
         // section. Origin->getOffset() returns the offset from start of the
         // compile unit.
-        CompileUnit *CU = CUDieMap.lookup(Origin->getUnit());
+        DwarfCompileUnit *CU = CUDieMap.lookup(Origin->getUnit());
         assert(CU && "CUDie should belong to a CU.");
         Addr += CU->getDebugInfoOffset();
         if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
@@ -2129,9 +2134,9 @@ void DwarfDebug::emitDIE(DIE *Die) {
 // the abbreviations going into ASection.
 void DwarfFile::emitUnits(DwarfDebug *DD, const MCSection *ASection,
                           const MCSymbol *ASectionSym) {
-  for (SmallVectorImpl<Unit *>::iterator I = CUs.begin(), E = CUs.end(); I != E;
-       ++I) {
-    Unit *TheU = *I;
+  for (SmallVectorImpl<DwarfUnit *>::iterator I = CUs.begin(), E = CUs.end();
+       I != E; ++I) {
+    DwarfUnit *TheU = *I;
     DIE *Die = TheU->getUnitDie();
     const MCSection *USection = TheU->getSection();
     Asm->OutStreamer.SwitchSection(USection);
@@ -2216,10 +2221,10 @@ void DwarfDebug::emitEndOfLineMatrix(unsigned SectionEnd) {
 void DwarfDebug::emitAccelNames() {
   DwarfAccelTable AT(
       DwarfAccelTable::Atom(dwarf::DW_ATOM_die_offset, dwarf::DW_FORM_data4));
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = getUnits().begin(),
+                                                    E = getUnits().end();
        I != E; ++I) {
-    Unit *TheU = *I;
+    DwarfUnit *TheU = *I;
     const StringMap<std::vector<const DIE *> > &Names = TheU->getAccelNames();
     for (StringMap<std::vector<const DIE *> >::const_iterator
              GI = Names.begin(),
@@ -2249,10 +2254,10 @@ void DwarfDebug::emitAccelNames() {
 void DwarfDebug::emitAccelObjC() {
   DwarfAccelTable AT(
       DwarfAccelTable::Atom(dwarf::DW_ATOM_die_offset, dwarf::DW_FORM_data4));
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = getUnits().begin(),
+                                                    E = getUnits().end();
        I != E; ++I) {
-    Unit *TheU = *I;
+    DwarfUnit *TheU = *I;
     const StringMap<std::vector<const DIE *> > &Names = TheU->getAccelObjC();
     for (StringMap<std::vector<const DIE *> >::const_iterator
              GI = Names.begin(),
@@ -2281,10 +2286,10 @@ void DwarfDebug::emitAccelObjC() {
 void DwarfDebug::emitAccelNamespaces() {
   DwarfAccelTable AT(
       DwarfAccelTable::Atom(dwarf::DW_ATOM_die_offset, dwarf::DW_FORM_data4));
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = getUnits().begin(),
+                                                    E = getUnits().end();
        I != E; ++I) {
-    Unit *TheU = *I;
+    DwarfUnit *TheU = *I;
     const StringMap<std::vector<const DIE *> > &Names =
         TheU->getAccelNamespace();
     for (StringMap<std::vector<const DIE *> >::const_iterator
@@ -2320,10 +2325,10 @@ void DwarfDebug::emitAccelTypes() {
   Atoms.push_back(
       DwarfAccelTable::Atom(dwarf::DW_ATOM_type_flags, dwarf::DW_FORM_data1));
   DwarfAccelTable AT(Atoms);
-  for (SmallVectorImpl<Unit *>::const_iterator I = getUnits().begin(),
-                                               E = getUnits().end();
+  for (SmallVectorImpl<DwarfUnit *>::const_iterator I = getUnits().begin(),
+                                                    E = getUnits().end();
        I != E; ++I) {
-    Unit *TheU = *I;
+    DwarfUnit *TheU = *I;
     const StringMap<std::vector<std::pair<const DIE *, unsigned> > > &Names =
         TheU->getAccelTypes();
     for (StringMap<
@@ -2367,7 +2372,7 @@ void DwarfDebug::emitAccelTypes() {
 // reference in the pubname header doesn't change.
 
 /// computeIndexValue - Compute the gdb index value for the DIE and CU.
-static dwarf::PubIndexEntryDescriptor computeIndexValue(Unit *CU,
+static dwarf::PubIndexEntryDescriptor computeIndexValue(DwarfUnit *CU,
                                                         const DIE *Die) {
   dwarf::GDBIndexEntryLinkage Linkage = dwarf::GIEL_STATIC;
 
@@ -2417,9 +2422,9 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
                : Asm->getObjFileLowering().getDwarfPubNamesSection();
 
   DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
-  const SmallVectorImpl<Unit *> &Units = Holder.getUnits();
+  const SmallVectorImpl<DwarfUnit *> &Units = Holder.getUnits();
   for (unsigned i = 0; i != Units.size(); ++i) {
-    Unit *TheU = Units[i];
+    DwarfUnit *TheU = Units[i];
     unsigned ID = TheU->getUniqueID();
 
     // Start the dwarf pubnames section.
@@ -2481,9 +2486,9 @@ void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
                : Asm->getObjFileLowering().getDwarfPubTypesSection();
 
   DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
-  const SmallVectorImpl<Unit *> &Units = Holder.getUnits();
+  const SmallVectorImpl<DwarfUnit *> &Units = Holder.getUnits();
   for (unsigned i = 0; i != Units.size(); ++i) {
-    Unit *TheU = Units[i];
+    DwarfUnit *TheU = Units[i];
     unsigned ID = TheU->getUniqueID();
 
     // Start the dwarf pubtypes section.
@@ -2543,8 +2548,8 @@ void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
 
 // Emit strings into a string section.
 void DwarfFile::emitStrings(const MCSection *StrSection,
-                             const MCSection *OffsetSection = NULL,
-                             const MCSymbol *StrSecSym = NULL) {
+                            const MCSection *OffsetSection = NULL,
+                            const MCSymbol *StrSecSym = NULL) {
 
   if (StringPool.empty())
     return;
@@ -2587,7 +2592,6 @@ void DwarfFile::emitStrings(const MCSection *StrSection,
     }
   }
 }
-
 
 // Emit addresses into the section given.
 void DwarfFile::emitAddresses(const MCSection *AddrSection) {
@@ -2741,7 +2745,7 @@ struct SymbolCUSorter {
   }
 };
 
-static bool CUSort(const Unit *A, const Unit *B) {
+static bool CUSort(const DwarfUnit *A, const DwarfUnit *B) {
   return (A->getUniqueID() < B->getUniqueID());
 }
 
@@ -2756,7 +2760,7 @@ void DwarfDebug::emitDebugARanges() {
   Asm->OutStreamer.SwitchSection(
       Asm->getObjFileLowering().getDwarfARangesSection());
 
-  typedef DenseMap<CompileUnit *, std::vector<ArangeSpan> > SpansType;
+  typedef DenseMap<DwarfCompileUnit *, std::vector<ArangeSpan> > SpansType;
 
   SpansType Spans;
 
@@ -2817,9 +2821,9 @@ void DwarfDebug::emitDebugARanges() {
   unsigned PtrSize = Asm->getDataLayout().getPointerSize();
 
   // Build a list of CUs used.
-  std::vector<CompileUnit *> CUs;
+  std::vector<DwarfCompileUnit *> CUs;
   for (SpansType::iterator it = Spans.begin(); it != Spans.end(); it++) {
-    CompileUnit *CU = it->first;
+    DwarfCompileUnit *CU = it->first;
     CUs.push_back(CU);
   }
 
@@ -2828,7 +2832,7 @@ void DwarfDebug::emitDebugARanges() {
 
   // Emit an arange table for each CU we used.
   for (size_t CUIdx = 0; CUIdx < CUs.size(); CUIdx++) {
-    CompileUnit *CU = CUs[CUIdx];
+    DwarfCompileUnit *CU = CUs[CUIdx];
     std::vector<ArangeSpan> &List = Spans[CU];
 
     // Emit size of content not including length itself.
@@ -2897,20 +2901,18 @@ void DwarfDebug::emitDebugRanges() {
   unsigned char Size = Asm->getDataLayout().getPointerSize();
 
   // Grab the specific ranges for the compile units in the module.
-  for (DenseMap<const MDNode *, CompileUnit *>::iterator I = CUMap.begin(),
-                                                         E = CUMap.end();
+  for (DenseMap<const MDNode *, DwarfCompileUnit *>::iterator I = CUMap.begin(),
+                                                              E = CUMap.end();
        I != E; ++I) {
-    CompileUnit *TheCU = I->second;
-    unsigned ID = TheCU->getUniqueID();
+    DwarfCompileUnit *TheCU = I->second;
 
     // Emit a symbol so we can find the beginning of our ranges.
-    Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("gnu_ranges", ID));
+    Asm->OutStreamer.EmitLabel(TheCU->getLabelRange());
 
     // Iterate over the misc ranges for the compile units in the module.
     const SmallVectorImpl<RangeSpanList> &RangeLists = TheCU->getRangeLists();
-    for (SmallVectorImpl<RangeSpanList>::const_iterator
-             I = RangeLists.begin(),
-             E = RangeLists.end();
+    for (SmallVectorImpl<RangeSpanList>::const_iterator I = RangeLists.begin(),
+                                                        E = RangeLists.end();
          I != E; ++I) {
       const RangeSpanList &List = *I;
 
@@ -2953,11 +2955,13 @@ void DwarfDebug::emitDebugMacInfo() {
 // This DIE has the following attributes: DW_AT_comp_dir, DW_AT_stmt_list,
 // DW_AT_low_pc, DW_AT_high_pc, DW_AT_ranges, DW_AT_dwo_name, DW_AT_dwo_id,
 // DW_AT_ranges_base, DW_AT_addr_base.
-CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
+DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
-  CompileUnit *NewCU = new CompileUnit(CU->getUniqueID(), Die, CU->getNode(),
-                                       Asm, this, &SkeletonHolder);
+  DwarfCompileUnit *NewCU = new DwarfCompileUnit(
+      CU->getUniqueID(), Die, CU->getNode(), Asm, this, &SkeletonHolder);
+  NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
+                     DwarfInfoSectionSym);
 
   NewCU->addLocalString(Die, dwarf::DW_AT_GNU_dwo_name,
                         CU->getNode().getSplitDebugFilename());
@@ -2978,8 +2982,7 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
   // compile unit in debug_line section.
   // FIXME: Should handle multiple compile units.
   if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-    NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list,
-                           DwarfLineSectionSym);
+    NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list, DwarfLineSectionSym);
   else
     NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
 
@@ -2992,11 +2995,8 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
   // unit.
   if (!CU->getRangeLists().empty())
     addSectionLabel(Asm, NewCU, Die, dwarf::DW_AT_GNU_ranges_base,
-                    Asm->GetTempSymbol("gnu_ranges", NewCU->getUniqueID()),
-                    DwarfDebugRangeSectionSym);
+                    NewCU->getLabelRange(), DwarfDebugRangeSectionSym);
 
-  NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
-                     DwarfInfoSectionSym);
   SkeletonHolder.addUnit(NewCU);
 
   return NewCU;
@@ -3030,31 +3030,33 @@ void DwarfDebug::emitDebugStrDWO() {
                          OffSec, StrSym);
 }
 
-void DwarfDebug::addTypeUnitType(uint16_t Language, DIE *RefDie,
-                                 DICompositeType CTy) {
+void DwarfDebug::addDwarfTypeUnitType(uint16_t Language, DIE *RefDie,
+                                      DICompositeType CTy) {
   DenseMap<const MDNode *,
            std::pair<uint64_t, SmallVectorImpl<DIE *> *> >::iterator I =
-      TypeUnits.find(CTy);
+      DwarfTypeUnits.find(CTy);
   SmallVector<DIE *, 8> References;
   References.push_back(RefDie);
-  if (I != TypeUnits.end()) {
+  if (I != DwarfTypeUnits.end()) {
     if (I->second.second) {
       I->second.second->push_back(RefDie);
       return;
     }
   } else {
     DIE *UnitDie = new DIE(dwarf::DW_TAG_type_unit);
-    TypeUnit *NewTU = new TypeUnit(InfoHolder.getUnits().size(), UnitDie,
-                                   Language, Asm, this, &InfoHolder);
+    DwarfTypeUnit *NewTU =
+        new DwarfTypeUnit(InfoHolder.getUnits().size(), UnitDie, Language, Asm,
+                          this, &InfoHolder);
     InfoHolder.addUnit(NewTU);
 
     NewTU->addUInt(UnitDie, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
                    Language);
 
-    // Register the type in the TypeUnits map with a vector of references to be
+    // Register the type in the DwarfTypeUnits map with a vector of references
+    // to be
     // populated whenever a reference is required.
-    I = TypeUnits.insert(std::make_pair(CTy, std::make_pair(0, &References)))
-            .first;
+    I = DwarfTypeUnits.insert(std::make_pair(
+                                  CTy, std::make_pair(0, &References))).first;
 
     // Construct the type, this may, recursively, require more type units that
     // may in turn require this type again - in which case they will add DIEs to

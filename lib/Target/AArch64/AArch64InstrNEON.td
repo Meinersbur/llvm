@@ -978,6 +978,20 @@ defm FMULXvvv : NeonI_3VSame_SD_sizes<0b0, 0b0, 0b11011, "fmulx",
                                       int_aarch64_neon_vmulx,
                                       v2f32, v4f32, v2f64, 1>;
 
+// Patterns to match llvm.aarch64.* intrinsic for 
+// ADDP, SMINP, UMINP, SMAXP, UMAXP having i32 as output
+class Neon_VectorPair_v2i32_pattern<SDPatternOperator opnode, Instruction INST>
+  : Pat<(v1i32 (opnode (v2i32 VPR64:$Rn))),
+        (EXTRACT_SUBREG
+             (v2i32 (INST (v2i32 VPR64:$Rn), (v2i32 VPR64:$Rn))),
+             sub_32)>;
+
+def : Neon_VectorPair_v2i32_pattern<int_aarch64_neon_sminv, SMINPvvv_2S>;
+def : Neon_VectorPair_v2i32_pattern<int_aarch64_neon_uminv, UMINPvvv_2S>;
+def : Neon_VectorPair_v2i32_pattern<int_aarch64_neon_smaxv, SMAXPvvv_2S>;
+def : Neon_VectorPair_v2i32_pattern<int_aarch64_neon_umaxv, UMAXPvvv_2S>;
+def : Neon_VectorPair_v2i32_pattern<int_aarch64_neon_vaddv, ADDP_2S>;
+
 // Vector Immediate Instructions
 
 multiclass neon_mov_imm_shift_asmoperands<string PREFIX>
@@ -1423,9 +1437,8 @@ let isReMaterializable = 1 in {
 def MOVIdi : NeonI_1VModImm<0b0, 0b1,
                            (outs FPR64:$Rd), (ins neon_uimm64_mask:$Imm),
                            "movi\t $Rd, $Imm",
-                           [(set (f64 FPR64:$Rd),
-                              (f64 (bitconvert
-                                (v1i64 (Neon_movi (timm:$Imm), (i32 imm))))))],
+                           [(set (v1i64 FPR64:$Rd),
+                             (v1i64 (Neon_movi (timm:$Imm), (i32 imm))))],
                            NoItinerary> {
   let cmode = 0b1110;
 }
@@ -5294,53 +5307,37 @@ defm FMAXNMPvv : NeonI_ScalarPair_SD_sizes<0b1, 0b0, 0b01100, "fmaxnmp", 0>;
 // Scalar Reduce minNum Pairwise (Floating Point)
 defm FMINNMPvv : NeonI_ScalarPair_SD_sizes<0b1, 0b1, 0b01100, "fminnmp", 0>;
 
-multiclass Neon_ScalarPair_SD_size_patterns<SDPatternOperator opnodeS,
-                                            SDPatternOperator opnodeD,
+multiclass Neon_ScalarPair_SD_size_patterns<SDPatternOperator opnode,
                                             Instruction INSTS,
                                             Instruction INSTD> {
-  def : Pat<(v1f32 (opnodeS (v2f32 VPR64:$Rn))),
+  def : Pat<(f32 (opnode (v2f32 VPR64:$Rn))),
             (INSTS VPR64:$Rn)>;
-  def : Pat<(v1f64 (opnodeD (v2f64 VPR128:$Rn))),
+  def : Pat<(f64 (opnode (v2f64 VPR128:$Rn))),
             (INSTD VPR128:$Rn)>;
 }
 
 // Patterns to match llvm.aarch64.* intrinsic for
 // Scalar Reduce Add, Max, Min, MaxiNum, MinNum Pairwise (Floating Point)
 defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vpfadd,
-  int_aarch64_neon_vpfaddq, FADDPvv_S_2S, FADDPvv_D_2D>;
+                                        FADDPvv_S_2S, FADDPvv_D_2D>;
 
 defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vpmax,
-  int_aarch64_neon_vpmaxq, FMAXPvv_S_2S, FMAXPvv_D_2D>;
+                                        FMAXPvv_S_2S, FMAXPvv_D_2D>;
 
 defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vpmin,
-  int_aarch64_neon_vpminq, FMINPvv_S_2S, FMINPvv_D_2D>;
+                                        FMINPvv_S_2S, FMINPvv_D_2D>;
 
 defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vpfmaxnm,
-  int_aarch64_neon_vpfmaxnmq, FMAXNMPvv_S_2S, FMAXNMPvv_D_2D>;
+                                        FMAXNMPvv_S_2S, FMAXNMPvv_D_2D>;
 
 defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vpfminnm,
-  int_aarch64_neon_vpfminnmq, FMINNMPvv_S_2S, FMINNMPvv_D_2D>;
+                                        FMINNMPvv_S_2S, FMINNMPvv_D_2D>;
 
-defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vaddv,
-    int_aarch64_neon_vaddv, FADDPvv_S_2S, FADDPvv_D_2D>;
-
-def : Pat<(v1f32 (int_aarch64_neon_vaddv (v4f32 VPR128:$Rn))),
+def : Pat<(f32 (int_aarch64_neon_vpfadd (v4f32 VPR128:$Rn))),
           (FADDPvv_S_2S (v2f32
                (EXTRACT_SUBREG
                    (v4f32 (FADDP_4S (v4f32 VPR128:$Rn), (v4f32 VPR128:$Rn))),
                    sub_64)))>;
-
-defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vmaxv,
-    int_aarch64_neon_vmaxv, FMAXPvv_S_2S, FMAXPvv_D_2D>;
-
-defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vminv,
-    int_aarch64_neon_vminv, FMINPvv_S_2S, FMINPvv_D_2D>;
-
-defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vmaxnmv,
-    int_aarch64_neon_vmaxnmv, FMAXNMPvv_S_2S, FMAXNMPvv_D_2D>;
-
-defm : Neon_ScalarPair_SD_size_patterns<int_aarch64_neon_vminnmv,
-    int_aarch64_neon_vminnmv, FMINNMPvv_S_2S, FMINNMPvv_D_2D>;
 
 // Scalar by element Arithmetic
 
@@ -7694,6 +7691,11 @@ defm SADDLP : NeonI_PairwiseAdd<"saddlp", 0b0, 0b00010,
                                 int_arm_neon_vpaddls>;
 defm UADDLP : NeonI_PairwiseAdd<"uaddlp", 0b1, 0b00010,
                                 int_arm_neon_vpaddlu>;
+
+def : Pat<(v1i64 (int_aarch64_neon_saddlv (v2i32 VPR64:$Rn))),
+          (SADDLP2s1d $Rn)>;
+def : Pat<(v1i64 (int_aarch64_neon_uaddlv (v2i32 VPR64:$Rn))),
+          (UADDLP2s1d $Rn)>;
 
 multiclass NeonI_PairwiseAddAcc<string asmop, bit U, bits<5> opcode,
                              SDPatternOperator Neon_Padd> {
