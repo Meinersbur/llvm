@@ -1,4 +1,5 @@
 //===------------------- StackMaps.h - StackMaps ----------------*- C++ -*-===//
+
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -117,10 +118,10 @@ private:
 
   struct CallsiteInfo {
     const MCExpr *CSOffsetExpr;
-    unsigned ID;
+    uint64_t ID;
     LocationVec Locations;
     CallsiteInfo() : CSOffsetExpr(0), ID(0) {}
-    CallsiteInfo(const MCExpr *CSOffsetExpr, unsigned ID,
+    CallsiteInfo(const MCExpr *CSOffsetExpr, uint64_t ID,
                  LocationVec Locations)
       : CSOffsetExpr(CSOffsetExpr), ID(ID), Locations(Locations) {}
   };
@@ -151,18 +152,17 @@ private:
   CallsiteInfoList CSInfos;
   ConstantPool ConstPool;
 
-  /// Parse 
   std::pair<Location, MachineInstr::const_mop_iterator>
   parseOperand(MachineInstr::const_mop_iterator MOI,
                MachineInstr::const_mop_iterator MOE);
-               
+
 
   /// This should be called by the MC lowering code _immediately_ before
   /// lowering the MI to an MCInst. It records where the operands for the
   /// instruction are stored, and outputs a label to record the offset of
   /// the call from the start of the text section. In special cases (e.g. AnyReg
   /// calling convention) the return register is also recorded if requested.
-  void recordStackMapOpers(const MachineInstr &MI, uint32_t ID,
+  void recordStackMapOpers(const MachineInstr &MI, uint64_t ID,
                            MachineInstr::const_mop_iterator MOI,
                            MachineInstr::const_mop_iterator MOE,
                            bool recordResult = false);

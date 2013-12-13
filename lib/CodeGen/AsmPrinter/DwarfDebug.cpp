@@ -1180,9 +1180,6 @@ void DwarfDebug::endModule() {
   // Emit info into a debug ranges section.
   emitDebugRanges();
 
-  // Emit info into a debug macinfo section.
-  emitDebugMacInfo();
-
   if (useSplitDwarf()) {
     emitDebugStrDWO();
     emitDebugInfoDWO();
@@ -2941,20 +2938,12 @@ void DwarfDebug::emitDebugRanges() {
   }
 }
 
-// Emit visible names into a debug macinfo section.
-void DwarfDebug::emitDebugMacInfo() {
-  if (const MCSection *LineInfo =
-          Asm->getObjFileLowering().getDwarfMacroInfoSection()) {
-    // Start the dwarf macinfo section.
-    Asm->OutStreamer.SwitchSection(LineInfo);
-  }
-}
-
 // DWARF5 Experimental Separate Dwarf emitters.
 
 // This DIE has the following attributes: DW_AT_comp_dir, DW_AT_stmt_list,
 // DW_AT_low_pc, DW_AT_high_pc, DW_AT_ranges, DW_AT_dwo_name, DW_AT_dwo_id,
 // DW_AT_ranges_base, DW_AT_addr_base.
+// TODO: Implement DW_AT_ranges_base.
 DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
@@ -2990,12 +2979,6 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
     NewCU->addLocalString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
 
   addGnuPubAttributes(NewCU, Die);
-
-  // Attribute if we've emitted any ranges and their location for the compile
-  // unit.
-  if (!CU->getRangeLists().empty())
-    addSectionLabel(Asm, NewCU, Die, dwarf::DW_AT_GNU_ranges_base,
-                    NewCU->getLabelRange(), DwarfDebugRangeSectionSym);
 
   SkeletonHolder.addUnit(NewCU);
 
@@ -3073,19 +3056,17 @@ void DwarfDebug::addDwarfTypeUnitType(uint16_t Language, DIE *RefDie,
     // referenced type, or possibly walk the precomputed hashes of related types
     // at the end.
     uint64_t Signature = DIEHash().computeTypeSignature(*Die);
+    NewTU->setTypeSignature(Signature);
+    NewTU->setType(Die);
 
     // Remove the References vector and add the type hash.
     I->second.first = Signature;
     I->second.second = NULL;
 
     NewTU->initSection(
-        useSplitDwarf() ? Asm->getObjFileLowering().getDwarfInfoDWOSection()
-                        : Asm->getObjFileLowering().getDwarfInfoSection(),
-        // FIXME: This is subtle (using the info section even when
-        // this CU is in the dwo section) and necessary for the
-        // current arange code - ideally it should iterate
-        // skeleton units, not full units, if it's going to reference skeletons
-        useSplitDwarf() ? NULL : DwarfInfoSectionSym);
+        useSplitDwarf()
+            ? Asm->getObjFileLowering().getDwarfTypesDWOSection(Signature)
+            : Asm->getObjFileLowering().getDwarfTypesSection(Signature));
   }
 
   // Populate all the signatures.

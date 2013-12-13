@@ -413,14 +413,15 @@ public:
 
   /// Compute the size of a header for this unit, not including the initial
   /// length field.
-  unsigned getHeaderSize() const {
+  virtual unsigned getHeaderSize() const {
     return sizeof(int16_t) + // DWARF version number
            sizeof(int32_t) + // Offset Into Abbrev. Section
            sizeof(int8_t);   // Pointer Size (in bytes)
   }
 
   /// Emit the header for this unit, not including the initial length field.
-  void emitHeader(const MCSection *ASection, const MCSymbol *ASectionSym);
+  virtual void emitHeader(const MCSection *ASection,
+                          const MCSymbol *ASectionSym) const;
 
 protected:
   /// getOrCreateStaticMemberDIE - Create new static data member DIE.
@@ -507,18 +508,31 @@ public:
   /// either DW_FORM_addr or DW_FORM_GNU_addr_index.
   void addLabelAddress(DIE *Die, dwarf::Attribute Attribute, MCSymbol *Label);
 
-  uint16_t getLanguage() const { return getNode().getLanguage(); }
+  uint16_t getLanguage() const LLVM_OVERRIDE { return getNode().getLanguage(); }
 };
 
 class DwarfTypeUnit : public DwarfUnit {
 private:
   uint16_t Language;
+  uint64_t TypeSignature;
+  const DIE *Ty;
 
 public:
   DwarfTypeUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
                 DwarfDebug *DW, DwarfFile *DWU);
 
-  uint16_t getLanguage() const { return Language; }
+  void setTypeSignature(uint64_t Signature) { TypeSignature = Signature; }
+  void setType(const DIE *Ty) { this->Ty = Ty; }
+
+  uint16_t getLanguage() const LLVM_OVERRIDE { return Language; }
+  /// Emit the header for this unit, not including the initial length field.
+  void emitHeader(const MCSection *ASection, const MCSymbol *ASectionSym) const
+      LLVM_OVERRIDE;
+  unsigned getHeaderSize() const LLVM_OVERRIDE {
+    return DwarfUnit::getHeaderSize() + sizeof(uint64_t) + // Type Signature
+           sizeof(uint32_t);                               // Type DIE Offset
+  }
+  void initSection(const MCSection *Section);
 };
 } // end llvm namespace
 #endif

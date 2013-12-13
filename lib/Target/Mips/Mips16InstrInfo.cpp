@@ -1,3 +1,4 @@
+
 //===-- Mips16InstrInfo.cpp - Mips16 Instruction Information --------------===//
 //
 //                     The LLVM Compiler Infrastructure
@@ -173,22 +174,30 @@ void Mips16InstrInfo::makeFrame(unsigned SP, int64_t FrameSize,
                     MachineBasicBlock &MBB,
                     MachineBasicBlock::iterator I) const {
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
+  const BitVector Reserved = RI.getReservedRegs(*MBB.getParent());
+  bool SaveS2 = Reserved[Mips::S2];
+  MachineInstrBuilder MIB;
+  unsigned Opc = ((FrameSize <= 128) && !SaveS2)? Mips::Save16:Mips::SaveX16;
   if (isUInt<11>(FrameSize))
-    BuildMI(MBB, I, DL, get(Mips::SaveX16)).addReg(Mips::RA).
+    MIB = BuildMI(
+            MBB, I, DL, get(Opc)).addReg(Mips::RA).
             addReg(Mips::S0).
-            addReg(Mips::S1).addReg(Mips::S2).addImm(FrameSize);
+            addReg(Mips::S1).addImm(FrameSize);
   else {
     int Base = 2040; // should create template function like isUInt that
                      // returns largest possible n bit unsigned integer
     int64_t Remainder = FrameSize - Base;
-    BuildMI(MBB, I, DL, get(Mips::SaveX16)).addReg(Mips::RA).
+    MIB = BuildMI(
+            MBB, I, DL, get(Opc)).addReg(Mips::RA).
             addReg(Mips::S0).
-            addReg(Mips::S1).addReg(Mips::S2).addImm(Base);
+            addReg(Mips::S1).addImm(Base);
     if (isInt<16>(-Remainder))
       BuildAddiuSpImm(MBB, I, -Remainder);
     else
       adjustStackPtrBig(SP, -Remainder, MBB, I, Mips::V0, Mips::V1);
   }
+  if (SaveS2)
+    MIB.addReg(Mips::S2);
 }
 
 // Adjust SP by FrameSize bytes. Restore RA, S0, S1
@@ -196,12 +205,18 @@ void Mips16InstrInfo::restoreFrame(unsigned SP, int64_t FrameSize,
                                    MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator I) const {
   DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
+  const BitVector Reserved = RI.getReservedRegs(*MBB.getParent());
+  bool SaveS2 = Reserved[Mips::S2];
+  MachineInstrBuilder MIB;
+  unsigned Opc = ((FrameSize <= 128) && !SaveS2)?
+    Mips::Restore16:Mips::RestoreX16;
   if (isUInt<11>(FrameSize))
-    BuildMI(MBB, I, DL, get(Mips::RestoreX16)).
+    MIB = BuildMI(
+            MBB, I, DL, get(Opc)).
             addReg(Mips::RA, RegState::Define).
             addReg(Mips::S0, RegState::Define).
             addReg(Mips::S1, RegState::Define).
-            addReg(Mips::S2, RegState::Define).addImm(FrameSize);
+            addImm(FrameSize);
   else {
     int Base = 2040; // should create template function like isUInt that
                      // returns largest possible n bit unsigned integer
@@ -210,12 +225,15 @@ void Mips16InstrInfo::restoreFrame(unsigned SP, int64_t FrameSize,
       BuildAddiuSpImm(MBB, I, Remainder);
     else
       adjustStackPtrBig(SP, Remainder, MBB, I, Mips::A0, Mips::A1);
-    BuildMI(MBB, I, DL, get(Mips::RestoreX16)).
+    MIB = BuildMI(
+            MBB, I, DL, get(Opc)).
             addReg(Mips::RA, RegState::Define).
             addReg(Mips::S0, RegState::Define).
             addReg(Mips::S1, RegState::Define).
-            addReg(Mips::S2, RegState::Define).addImm(Base);
+            addImm(Base);
   }
+  if (SaveS2)
+    MIB.addReg(Mips::S2, RegState::Define);
 }
 
 // Adjust SP by Amount bytes where bytes can be up to 32bit number.
