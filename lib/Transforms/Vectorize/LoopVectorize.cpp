@@ -2879,6 +2879,23 @@ void InnerLoopVectorizer::updateAnalysis() {
   DEBUG(DT->verifyAnalysis());
 }
 
+/// \brief Check whether it is safe to if-convert this phi node.
+///
+/// Phi nodes with constant expressions that can trap are not safe to if
+/// convert.
+static bool canIfConvertPHINodes(BasicBlock *BB) {
+  for (BasicBlock::iterator I = BB->begin(), E = BB->end(); I != E; ++I) {
+    PHINode *Phi = dyn_cast<PHINode>(I);
+    if (!Phi)
+      return true;
+    for (unsigned p = 0, e = Phi->getNumIncomingValues(); p != e; ++p)
+      if (Constant *C = dyn_cast<Constant>(Phi->getIncomingValue(p)))
+        if (C->canTrap())
+          return false;
+  }
+  return true;
+}
+
 bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
   if (!EnableIfConversion)
     return false;
@@ -2905,6 +2922,7 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
   }
 
   // Collect the blocks that need predication.
+  BasicBlock *Header = TheLoop->getHeader();
   for (Loop::block_iterator BI = TheLoop->block_begin(),
          BE = TheLoop->block_end(); BI != BE; ++BI) {
     BasicBlock *BB = *BI;
@@ -2914,8 +2932,12 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
       return false;
 
     // We must be able to predicate all blocks that need to be predicated.
-    if (blockNeedsPredication(BB) && !blockCanBePredicated(BB, SafePointes))
+    if (blockNeedsPredication(BB)) {
+      if (!blockCanBePredicated(BB, SafePointes))
+        return false;
+    } else if (BB != Header && !canIfConvertPHINodes(BB))
       return false;
+
   }
 
   // We can if-convert this loop.
@@ -4468,6 +4490,14 @@ bool LoopVectorizationLegality::blockCanBePredicated(BasicBlock *BB,
     // We don't predicate stores at the moment.
     if (it->mayWriteToMemory() || it->mayThrow())
       return false;
+
+    // Check that we don't have a constant expression that can trap as operand.
+    for (Instruction::op_iterator OI = it->op_begin(), OE = it->op_end();
+         OI != OE; ++OI) {
+      if (Constant *C = dyn_cast<Constant>(*OI))
+        if (C->canTrap())
+          return false;
+    }
 
     // The instructions below can trap.
     switch (it->getOpcode()) {

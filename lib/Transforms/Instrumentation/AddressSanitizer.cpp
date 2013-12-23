@@ -669,7 +669,7 @@ bool AddressSanitizer::instrumentMemIntrinsic(MemIntrinsic *MI) {
 
     Value *Cmp = IRB.CreateICmpNE(Length,
                                   Constant::getNullValue(Length->getType()));
-    InsertBefore = SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+    InsertBefore = SplitBlockAndInsertIfThen(Cmp, InsertBefore, false);
   }
 
   instrumentMemIntrinsicParam(MI, Dst, Length, InsertBefore, true);
@@ -832,7 +832,7 @@ void AddressSanitizer::instrumentAddress(Instruction *OrigIns,
 
   if (ClAlwaysSlowPath || (TypeSize < 8 * Granularity)) {
     TerminatorInst *CheckTerm =
-        SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+        SplitBlockAndInsertIfThen(Cmp, InsertBefore, false);
     assert(dyn_cast<BranchInst>(CheckTerm)->isUnconditional());
     BasicBlock *NextBB = CheckTerm->getSuccessor(0);
     IRB.SetInsertPoint(CheckTerm);
@@ -843,7 +843,7 @@ void AddressSanitizer::instrumentAddress(Instruction *OrigIns,
     BranchInst *NewTerm = BranchInst::Create(CrashBlock, NextBB, Cmp2);
     ReplaceInstWithInst(CheckTerm, NewTerm);
   } else {
-    CrashTerm = SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), true);
+    CrashTerm = SplitBlockAndInsertIfThen(Cmp, InsertBefore, true);
   }
 
   Instruction *Crash = generateCrashCode(
@@ -1291,7 +1291,7 @@ bool AddressSanitizer::InjectCoverage(Function &F) {
   Load->setAtomic(Monotonic);
   Load->setAlignment(1);
   Value *Cmp = IRB.CreateICmpEQ(Constant::getNullValue(Int8Ty), Load);
-  Instruction *Ins = SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+  Instruction *Ins = SplitBlockAndInsertIfThen(Cmp, IP, false);
   IRB.SetInsertPoint(Ins);
   // We pass &F to __sanitizer_cov. We could avoid this and rely on
   // GET_CALLER_PC, but having the PC of the first instruction is just nice.
@@ -1454,27 +1454,26 @@ FunctionStackPoisoner::poisonRedZones(const ArrayRef<uint8_t> ShadowBytes,
                                       IRBuilder<> &IRB, Value *ShadowBase,
                                       bool DoPoison) {
   size_t n = ShadowBytes.size();
-  size_t LargeStoreSize = ASan.LongSize / 8;
-  size_t i;
-  for (i = 0; i + LargeStoreSize - 1 < n; i += LargeStoreSize) {
-    uint64_t Val = 0;
-    for (size_t j = 0; j < LargeStoreSize; j++) {
-      if (ASan.TD->isLittleEndian())
-        Val |= (uint64_t)ShadowBytes[i + j] << (8 * j);
-      else
-        Val = (Val << 8) | ShadowBytes[i + j];
+  size_t i = 0;
+  // We need to (un)poison n bytes of stack shadow. Poison as many as we can
+  // using 64-bit stores (if we are on 64-bit arch), then poison the rest
+  // with 32-bit stores, then with 16-byte stores, then with 8-byte stores.
+  for (size_t LargeStoreSizeInBytes = ASan.LongSize / 8;
+       LargeStoreSizeInBytes != 0; LargeStoreSizeInBytes /= 2) {
+    for (; i + LargeStoreSizeInBytes - 1 < n; i += LargeStoreSizeInBytes) {
+      uint64_t Val = 0;
+      for (size_t j = 0; j < LargeStoreSizeInBytes; j++) {
+        if (ASan.TD->isLittleEndian())
+          Val |= (uint64_t)ShadowBytes[i + j] << (8 * j);
+        else
+          Val = (Val << 8) | ShadowBytes[i + j];
+      }
+      if (!Val) continue;
+      Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
+      Type *StoreTy = Type::getIntNTy(*C, LargeStoreSizeInBytes * 8);
+      Value *Poison = ConstantInt::get(StoreTy, DoPoison ? Val : 0);
+      IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, StoreTy->getPointerTo()));
     }
-    if (!Val) continue;
-    Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
-    Value *Poison = ConstantInt::get(IntptrTy, DoPoison ? Val : 0);
-    IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, IntptrPtrTy));
-  }
-  for (; i < n; i++) {
-    uint8_t Val =  ShadowBytes[i];
-    if (!Val) continue;
-    Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
-    Value *Poison = ConstantInt::get(IRB.getInt8Ty(), DoPoison ? Val : 0);
-    IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, IRB.getInt8PtrTy()));
   }
 }
 
@@ -1551,8 +1550,7 @@ void FunctionStackPoisoner::poisonStack() {
         kAsanOptionDetectUAR, IRB.getInt32Ty());
     Value *Cmp = IRB.CreateICmpNE(IRB.CreateLoad(OptionDetectUAR),
                                   Constant::getNullValue(IRB.getInt32Ty()));
-    Instruction *Term =
-        SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+    Instruction *Term = SplitBlockAndInsertIfThen(Cmp, InsBefore, false);
     BasicBlock *CmpBlock = cast<Instruction>(Cmp)->getParent();
     IRBuilder<> IRBIf(Term);
     LocalStackBase = IRBIf.CreateCall2(
@@ -1632,8 +1630,7 @@ void FunctionStackPoisoner::poisonStack() {
         //     **SavedFlagPtr(LocalStackBase) = 0
         // FIXME: if LocalStackBase != OrigStackBase don't call poisonRedZones.
         Value *Cmp = IRBRet.CreateICmpNE(LocalStackBase, OrigStackBase);
-        TerminatorInst *PoisonTerm =
-            SplitBlockAndInsertIfThen(cast<Instruction>(Cmp), false);
+        TerminatorInst *PoisonTerm = SplitBlockAndInsertIfThen(Cmp, Ret, false);
         IRBuilder<> IRBPoison(PoisonTerm);
         int ClassSize = kMinStackMallocSize << StackMallocIdx;
         SetShadowToStackAfterReturnInlined(IRBPoison, ShadowBase,

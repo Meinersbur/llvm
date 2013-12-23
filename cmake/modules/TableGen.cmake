@@ -4,7 +4,7 @@
 
 macro(tablegen project ofn)
   file(GLOB local_tds "*.td")
-  file(GLOB_RECURSE global_tds "${LLVM_MAIN_SRC_DIR}/include/llvm/*.td")
+  file(GLOB_RECURSE global_tds "${LLVM_MAIN_INCLUDE_DIR}/llvm/*.td")
   parse_arguments( EX "DEPENDS" "" ${ARGN} )
 
   if (IS_ABSOLUTE ${LLVM_TARGET_DEFINITIONS})
@@ -82,8 +82,6 @@ if(CMAKE_CROSSCOMPILING)
 endif()
 
 macro(add_tablegen target project)
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_TOOLS_BINARY_DIR})
-
   set(${target}_OLD_LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS})
   set(LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} TableGen)
   add_llvm_utility(${target} ${ARGN})
