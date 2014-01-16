@@ -40,7 +40,7 @@ typedef bool lto_bool_t;
  * @{
  */
 
-#define LTO_API_VERSION 5
+#define LTO_API_VERSION 7
 
 typedef enum {
     LTO_SYMBOL_ALIGNMENT_MASK              = 0x0000001F, /* log2 of alignment */
@@ -73,6 +73,11 @@ typedef enum {
     LTO_CODEGEN_PIC_MODEL_DYNAMIC_NO_PIC = 2
 } lto_codegen_model;
 
+typedef enum {
+    LTO_INTERNALIZE_FULL   = 0,
+    LTO_INTERNALIZE_NONE   = 1,
+    LTO_INTERNALIZE_HIDDEN = 2
+} lto_internalize_strategy;
 
 /** opaque reference to a loaded object module */
 typedef struct LTOModule*         lto_module_t;
@@ -199,6 +204,33 @@ lto_module_get_symbol_name(lto_module_t mod, unsigned int index);
 extern lto_symbol_attributes
 lto_module_get_symbol_attribute(lto_module_t mod, unsigned int index);
 
+/**
+ * Diagnostic severity.
+ */
+typedef enum {
+  LTO_DS_ERROR,
+  LTO_DS_WARNING,
+  LTO_DS_NOTE
+} lto_codegen_diagnostic_severity_t;
+
+/**
+ * Diagnostic handler type.
+ * \p severity defines the severity.
+ * \p diag is the actual diagnostic.
+ * The diagnostic is not prefixed by any of severity keyword, e.g., 'error: '.
+ * \p ctxt is used to pass the context set with the diagnostic handler.
+ */
+typedef void (*lto_diagnostic_handler_t)(
+    lto_codegen_diagnostic_severity_t severity, const char *diag, void *ctxt);
+
+/**
+ * Set a diagnostic handler and the related context (void *).
+ * This is more general than lto_get_error_message, as the diagnostic handler
+ * can be called at anytime within lto.
+ */
+extern void lto_codegen_set_diagnostic_handler(lto_code_gen_t,
+                                               lto_diagnostic_handler_t,
+                                               void *);
 
 /**
  * Instantiates a code generator.
@@ -262,6 +294,14 @@ lto_codegen_set_assembler_path(lto_code_gen_t cg, const char* path);
 extern void
 lto_codegen_set_assembler_args(lto_code_gen_t cg, const char **args,
                                int nargs);
+
+/**
+ * Sets the strategy to use during internalize.  Default strategy is
+ * LTO_INTERNALIZE_FULL.
+ */
+extern void
+lto_codegen_set_internalize_strategy(lto_code_gen_t cg,
+                                     lto_internalize_strategy);
 
 /**
  * Tells LTO optimization passes that this symbol must be preserved

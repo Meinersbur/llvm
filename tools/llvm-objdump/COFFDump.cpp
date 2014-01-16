@@ -230,11 +230,13 @@ static void printCOFFSymbolAddress(llvm::raw_ostream &Out,
 // Prints import tables. The import table is a table containing the list of
 // DLL name and symbol names which will be linked by the loader.
 static void printImportTables(const COFFObjectFile *Obj) {
+  import_directory_iterator i = Obj->import_directory_begin();
+  import_directory_iterator e = Obj->import_directory_end();
+  if (i == e)
+    return;
   outs() << "The Import Tables:\n";
   error_code ec;
-  for (import_directory_iterator i = Obj->import_directory_begin(),
-                                 e = Obj->import_directory_end();
-       i != e; i = i.increment(ec)) {
+  for (; i != e; i = i.increment(ec)) {
     if (ec)
       return;
 
@@ -265,6 +267,36 @@ static void printImportTables(const COFFObjectFile *Obj) {
         return;
       outs() << format("      % 6d  ", Hint) << Name << "\n";
     }
+    outs() << "\n";
+  }
+}
+
+// Prints export tables. The export table is a table containing the list of
+// exported symbol from the DLL.
+static void printExportTable(const COFFObjectFile *Obj) {
+  outs() << "Export Table:\n";
+  export_directory_iterator I = Obj->export_directory_begin();
+  export_directory_iterator E = Obj->export_directory_end();
+  if (I == E)
+    return;
+  outs() << " Ordinal      RVA  Name\n";
+  error_code EC;
+  for (; I != E; I = I.increment(EC)) {
+    if (EC)
+      return;
+    uint32_t Ordinal;
+    if (I->getOrdinal(Ordinal))
+      return;
+    uint32_t RVA;
+    if (I->getExportRVA(RVA))
+      return;
+    outs() << format("    % 4d %# 8x", Ordinal, RVA);
+
+    StringRef Name;
+    if (I->getName(Name))
+      continue;
+    if (!Name.empty())
+      outs() << "  " << Name;
     outs() << "\n";
   }
 }
@@ -397,5 +429,7 @@ void llvm::printCOFFUnwindInfo(const COFFObjectFile *Obj) {
 }
 
 void llvm::printCOFFFileHeader(const object::ObjectFile *Obj) {
-  printImportTables(dyn_cast<const COFFObjectFile>(Obj));
+  const COFFObjectFile *file = dyn_cast<const COFFObjectFile>(Obj);
+  printImportTables(file);
+  printExportTable(file);
 }

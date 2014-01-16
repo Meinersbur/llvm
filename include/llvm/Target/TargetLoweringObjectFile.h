@@ -29,11 +29,13 @@ namespace llvm {
   class MCSymbol;
   class MCSymbolRefExpr;
   class MCStreamer;
+  class ConstantExpr;
   class GlobalValue;
   class TargetMachine;
   
 class TargetLoweringObjectFile : public MCObjectFileInfo {
   MCContext *Ctx;
+  const DataLayout *DL;
 
   TargetLoweringObjectFile(
     const TargetLoweringObjectFile&) LLVM_DELETED_FUNCTION;
@@ -42,7 +44,7 @@ class TargetLoweringObjectFile : public MCObjectFileInfo {
 public:
   MCContext &getContext() const { return *Ctx; }
 
-  TargetLoweringObjectFile() : MCObjectFileInfo(), Ctx(0) {}
+  TargetLoweringObjectFile() : MCObjectFileInfo(), Ctx(0), DL(0) {}
   
   virtual ~TargetLoweringObjectFile();
   
@@ -150,6 +152,11 @@ public:
   /// \brief Create a symbol reference to describe the given TLS variable when
   /// emitting the address in debug info.
   virtual const MCExpr *getDebugThreadLocalSymbol(const MCSymbol *Sym) const;
+
+  virtual const MCExpr *
+  getExecutableRelativeSymbol(const ConstantExpr *CE, Mangler *Mang) const {
+    return 0;
+  }
 
 protected:
   virtual const MCSection *

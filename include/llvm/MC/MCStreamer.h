@@ -71,6 +71,9 @@ protected:
 public:
   virtual ~MCTargetStreamer();
   void setStreamer(MCStreamer *S) { Streamer = S; }
+
+  // Allow a target to add behavior to the EmitLabel of MCStreamer.
+  virtual void emitLabel(MCSymbol *Symbol);
 };
 
 // FIXME: declared here because it is used from
@@ -92,6 +95,8 @@ public:
   virtual void switchVendor(StringRef Vendor) = 0;
   virtual void emitAttribute(unsigned Attribute, unsigned Value) = 0;
   virtual void emitTextAttribute(unsigned Attribute, StringRef String) = 0;
+  virtual void emitIntTextAttribute(unsigned Attribute, unsigned IntValue,
+				    StringRef StringValue = "") = 0;
   virtual void emitFPU(unsigned FPU) = 0;
   virtual void emitArch(unsigned Arch) = 0;
   virtual void finishAttributeSection() = 0;
@@ -169,9 +174,8 @@ public:
 
   MCContext &getContext() const { return Context; }
 
-  MCTargetStreamer &getTargetStreamer() {
-    assert(TargetStreamer);
-    return *TargetStreamer;
+  MCTargetStreamer *getTargetStreamer() {
+    return TargetStreamer.get();
   }
 
   unsigned getNumFrameInfos() { return FrameInfos.size(); }
@@ -212,6 +216,12 @@ public:
   /// Unlike AddComment, you are required to terminate comments with \n if you
   /// use this method.
   virtual raw_ostream &GetCommentOS();
+
+  /// Print T and prefix it with the comment string (normally #) and optionally
+  /// a tab. This prints the comment immediately, not at the end of the
+  /// current line. It is basically a safe version of EmitRawText: since it
+  /// only prints comments, the object streamer ignores it instead of asserting.
+  virtual void emitRawComment(const Twine &T, bool TabPrefix = true);
 
   /// AddBlankLine - Emit a blank line to a .s file to pretty it up.
   virtual void AddBlankLine() {}

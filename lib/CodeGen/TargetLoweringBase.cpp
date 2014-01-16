@@ -747,6 +747,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm,
   UseUnderscoreSetJmp = false;
   UseUnderscoreLongJmp = false;
   SelectIsExpensive = false;
+  HasMultipleConditionRegisters = false;
   IntDivIsCheap = false;
   Pow2DivIsCheap = false;
   JumpIsExpensive = false;
@@ -1375,7 +1376,7 @@ void llvm::GetReturnInfo(Type* ReturnType, AttributeSet attr,
 /// function arguments in the caller parameter area.  This is the actual
 /// alignment, not its logarithm.
 unsigned TargetLoweringBase::getByValTypeAlignment(Type *Ty) const {
-  return TD->getCallFrameTypeAlignment(Ty);
+  return TD->getABITypeAlignment(Ty);
 }
 
 //===----------------------------------------------------------------------===//

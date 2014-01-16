@@ -12,11 +12,10 @@
 //===----------------------------------------------------------------------===//
 
 
-#include "llvm/Assembly/PrintModulePass.h"
-#include "llvm/Assembly/Writer.h"
+#include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/LegacyPassManagers.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -145,7 +144,7 @@ void PassManagerPrettyStackEntry::print(raw_ostream &OS) const {
     OS << "value";
 
   OS << " '";
-  WriteAsOperand(OS, V, /*PrintTy=*/false, M);
+  V->printAsOperand(OS, /*PrintTy=*/false, M);
   OS << "'\n";
 }
 
@@ -237,7 +236,7 @@ public:
 
   /// createPrinterPass - Get a function printer pass.
   Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const {
-    return createPrintFunctionPass(Banner, &O);
+    return createPrintFunctionPass(O, Banner);
   }
 
   // Prepare for running an on the fly pass, freeing memory if needed
@@ -306,7 +305,7 @@ public:
 
   /// createPrinterPass - Get a module printer pass.
   Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const {
-    return createPrintModulePass(&O, false, Banner);
+    return createPrintModulePass(O, Banner);
   }
 
   /// run - Execute all of the passes scheduled for execution.  Keep track of
@@ -419,7 +418,7 @@ public:
 
   /// createPrinterPass - Get a module printer pass.
   Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const {
-    return createPrintModulePass(&O, false, Banner);
+    return createPrintModulePass(O, Banner);
   }
 
   /// run - Execute all of the passes scheduled for execution.  Keep track of

@@ -18,16 +18,17 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ConstantFolding.h"
-#include "llvm/Assembly/Writer.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -41,7 +42,6 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Timer.h"
-#include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
@@ -165,7 +165,7 @@ bool AsmPrinter::doInitialization(Module &M) {
 
   OutStreamer.InitStreamer();
 
-  Mang = new Mangler(&TM);
+  Mang = new Mangler(TM.getDataLayout());
 
   // Allow the target to emit any magic that it wants at the start of the file.
   EmitStartOfAsmFile(M);
@@ -257,7 +257,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Weak);
     }
     return;
-  case GlobalValue::DLLExportLinkage:
   case GlobalValue::AppendingLinkage:
     // FIXME: appending linkage variables should go into a section of
     // their name or something.  For now, just emit them as external.
@@ -272,7 +271,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
     return;
   case GlobalValue::AvailableExternallyLinkage:
     llvm_unreachable("Should never emit this");
-  case GlobalValue::DLLImportLinkage:
   case GlobalValue::ExternalWeakLinkage:
     llvm_unreachable("Don't know how to emit these");
   }
@@ -291,7 +289,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
       return;
 
     if (isVerbose()) {
-      WriteAsOperand(OutStreamer.GetCommentOS(), GV,
+      GV->printAsOperand(OutStreamer.GetCommentOS(),
                      /*PrintType=*/false, GV->getParent());
       OutStreamer.GetCommentOS() << '\n';
     }
@@ -470,7 +468,7 @@ void AsmPrinter::EmitFunctionHeader() {
     OutStreamer.EmitSymbolAttribute(CurrentFnSym, MCSA_ELF_TypeFunction);
 
   if (isVerbose()) {
-    WriteAsOperand(OutStreamer.GetCommentOS(), F,
+    F->printAsOperand(OutStreamer.GetCommentOS(),
                    /*PrintType=*/false, F->getParent());
     OutStreamer.GetCommentOS() << '\n';
   }
@@ -581,7 +579,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
 
   SmallString<128> Str;
   raw_svector_ostream OS(Str);
-  OS << '\t' << AP.MAI->getCommentString() << "DEBUG_VALUE: ";
+  OS << "DEBUG_VALUE: ";
 
   DIVariable V(MI->getOperand(2).getMetadata());
   if (V.getContext().isSubprogram()) {
@@ -629,7 +627,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
       // Suppress offset, it is not meaningful here.
       OS << "undef";
       // NOTE: Want this comment at start of line, don't emit with AddComment.
-      AP.OutStreamer.EmitRawText(OS.str());
+      AP.OutStreamer.emitRawComment(OS.str());
       return true;
     }
     if (Deref)
@@ -641,7 +639,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
     OS << '+' << Offset << ']';
 
   // NOTE: Want this comment at start of line, don't emit with AddComment.
-  AP.OutStreamer.EmitRawText(OS.str());
+  AP.OutStreamer.emitRawComment(OS.str());
   return true;
 }
 
@@ -659,10 +657,6 @@ AsmPrinter::CFIMoveType AsmPrinter::needsCFIMoves() {
 bool AsmPrinter::needsSEHMoves() {
   return MAI->getExceptionHandlingType() == ExceptionHandling::Win64 &&
     MF->getFunction()->needsUnwindTableEntry();
-}
-
-bool AsmPrinter::needsRelocationsForDwarfStringPool() const {
-  return MAI->doesDwarfUseRelocationsAcrossSections();
 }
 
 void AsmPrinter::emitPrologLabel(const MachineInstr &MI) {
@@ -1110,6 +1104,7 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.
 ///
 void AsmPrinter::EmitJumpTableInfo() {
+  const DataLayout *DL = MF->getTarget().getDataLayout();
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -1175,7 +1170,7 @@ void AsmPrinter::EmitJumpTableInfo() {
     // before each jump table.  The first label is never referenced, but tells
     // the assembler and linker the extents of the jump table object.  The
     // second label is actually referenced by the code.
-    if (JTInDiffSection && MAI->hasLinkerPrivateGlobalPrefix())
+    if (JTInDiffSection && DL->hasLinkerPrivateGlobalPrefix())
       // FIXME: This doesn't have to have any specific name, just any randomly
       // named and numbered 'l' label would work.  Simplify GetJTISymbol.
       OutStreamer.EmitLabel(GetJTISymbol(JTI, true));
@@ -1517,6 +1512,10 @@ static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP) {
     llvm_unreachable("Unknown constant value to lower!");
   }
 
+  if (const MCExpr *RelocExpr =
+          AP.getObjFileLowering().getExecutableRelativeSymbol(CE, AP.Mang))
+    return RelocExpr;
+
   switch (CE->getOpcode()) {
   default:
     // If the code isn't optimized, there may be outstanding folding
@@ -1532,7 +1531,7 @@ static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP) {
       std::string S;
       raw_string_ostream OS(S);
       OS << "Unsupported expression in static initializer: ";
-      WriteAsOperand(OS, CE, /*PrintType=*/false,
+      CE->printAsOperand(OS, /*PrintType=*/false,
                      !AP.MF ? 0 : AP.MF->getFunction()->getParent());
       report_fatal_error(OS.str());
     }
@@ -1997,14 +1996,16 @@ void AsmPrinter::printOffset(int64_t Offset, raw_ostream &OS) const {
 /// GetTempSymbol - Return the MCSymbol corresponding to the assembler
 /// temporary label with the specified stem and unique ID.
 MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name, unsigned ID) const {
-  return OutContext.GetOrCreateSymbol(Twine(MAI->getPrivateGlobalPrefix()) +
+  const DataLayout *DL = TM.getDataLayout();
+  return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix()) +
                                       Name + Twine(ID));
 }
 
 /// GetTempSymbol - Return an assembler temporary label with the specified
 /// stem.
 MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name) const {
-  return OutContext.GetOrCreateSymbol(Twine(MAI->getPrivateGlobalPrefix())+
+  const DataLayout *DL = TM.getDataLayout();
+  return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix())+
                                       Name);
 }
 
@@ -2019,8 +2020,9 @@ MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BasicBlock *BB) const {
 
 /// GetCPISymbol - Return the symbol for the specified constant pool entry.
 MCSymbol *AsmPrinter::GetCPISymbol(unsigned CPID) const {
+  const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol
-    (Twine(MAI->getPrivateGlobalPrefix()) + "CPI" + Twine(getFunctionNumber())
+    (Twine(DL->getPrivateGlobalPrefix()) + "CPI" + Twine(getFunctionNumber())
      + "_" + Twine(CPID));
 }
 
@@ -2032,8 +2034,9 @@ MCSymbol *AsmPrinter::GetJTISymbol(unsigned JTID, bool isLinkerPrivate) const {
 /// GetJTSetSymbol - Return the symbol for the specified jump table .set
 /// FIXME: privatize to AsmPrinter.
 MCSymbol *AsmPrinter::GetJTSetSymbol(unsigned UID, unsigned MBBID) const {
+  const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol
-  (Twine(MAI->getPrivateGlobalPrefix()) + Twine(getFunctionNumber()) + "_" +
+  (Twine(DL->getPrivateGlobalPrefix()) + Twine(getFunctionNumber()) + "_" +
    Twine(UID) + "_set_" + Twine(MBBID));
 }
 
@@ -2152,8 +2155,7 @@ void AsmPrinter::EmitBasicBlockStart(const MachineBasicBlock *MBB) const {
   if (MBB->pred_empty() || isBlockOnlyReachableByFallthrough(MBB)) {
     if (isVerbose() && OutStreamer.hasRawTextSupport()) {
       // NOTE: Want this comment at start of line, don't emit with AddComment.
-      OutStreamer.EmitRawText(Twine(MAI->getCommentString()) + " BB#" +
-                              Twine(MBB->getNumber()) + ":");
+      OutStreamer.emitRawComment(" BB#" + Twine(MBB->getNumber()) + ":", false);
     }
   } else {
     OutStreamer.EmitLabel(MBB->getSymbol());
@@ -2216,14 +2218,13 @@ isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const {
     if (!MI.isBranch() || MI.isIndirectBranch())
       return false;
 
-    // If we are the operands of one of the branches, this is not
-    // a fall through.
-    for (MachineInstr::mop_iterator OI = MI.operands_begin(),
-           OE = MI.operands_end(); OI != OE; ++OI) {
-      const MachineOperand& OP = *OI;
-      if (OP.isJTI())
+    // If we are the operands of one of the branches, this is not a fall
+    // through. Note that targets with delay slots will usually bundle
+    // terminators with the delay slot instruction.
+    for (ConstMIBundleOperands OP(&MI); OP.isValid(); ++OP) {
+      if (OP->isJTI())
         return false;
-      if (OP.isMBB() && OP.getMBB() == MBB)
+      if (OP->isMBB() && OP->getMBB() == MBB)
         return false;
     }
   }
