@@ -6888,15 +6888,10 @@ def : Pat<(v4i32 (scalar_to_vector GPR32:$Rn)),
 def : Pat<(v2i64 (scalar_to_vector GPR64:$Rn)),
           (INSdx (v2i64 (IMPLICIT_DEF)), $Rn, (i64 0))>;
 
-def : Pat<(v2i32 (scalar_to_vector GPR32:$Rn)),
-          (v2i32 (EXTRACT_SUBREG (v16i8
-            (INSsw (v4i32 (IMPLICIT_DEF)), $Rn, (i64 0))),
-            sub_64))>;
-
-def : Pat<(v2i32 (scalar_to_vector GPR32:$Rn)),
-          (v2i32 (EXTRACT_SUBREG (v16i8
-            (INSsw (v4i32 (IMPLICIT_DEF)), $Rn, (i64 0))),
-            sub_64))>;
+def : Pat<(v2f32 (scalar_to_vector (f32 FPR32:$Rn))),
+          (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)>;
+def : Pat<(v4f32 (scalar_to_vector (f32 FPR32:$Rn))),
+          (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)>;
 
 def : Pat<(v1f64 (scalar_to_vector (f64 FPR64:$Rn))),
           (v1f64 FPR64:$Rn)>;
@@ -7062,6 +7057,11 @@ defm : Concat_Vector_Pattern<v4i32, v2i32>;
 defm : Concat_Vector_Pattern<v2i64, v1i64>;
 defm : Concat_Vector_Pattern<v4f32, v2f32>;
 defm : Concat_Vector_Pattern<v2f64, v1f64>;
+
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rn))),
+          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
+def : Pat<(v2i32 (concat_vectors undef, (v1i32 FPR32:$Rn))),
+          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
 
 //patterns for EXTRACT_SUBVECTOR
 def : Pat<(v8i8 (extract_subvector (v16i8 VPR128:$Rn), (i64 0))),
@@ -8851,6 +8851,12 @@ def : Pat<(v2i64 (sra (v2i64 VPR128:$Rn), (v2i64 VPR128:$Rm))),
 //
 // Patterns for handling half-precision values
 //
+
+// Convert between f16 value and f32 value
+def : Pat<(f32 (f16_to_f32 (i32 GPR32:$Rn))),
+          (FCVTsh (EXTRACT_SUBREG (FMOVsw $Rn), sub_16))>;
+def : Pat<(i32 (f32_to_f16 (f32 FPR32:$Rn))),
+          (FMOVws (SUBREG_TO_REG (i64 0), (f16 (FCVThs $Rn)), sub_16))>;
 
 // Convert f16 value coming in as i16 value to f32
 def : Pat<(f32 (f16_to_f32 (i32 (and (i32 GPR32:$Rn), 65535)))),
