@@ -22,6 +22,7 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/CFG.h"
@@ -42,7 +43,7 @@ namespace {
     }
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.addPreserved<DominatorTree>();
+      AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addRequired<LoopInfo>();
       AU.addPreserved<LoopInfo>();
       AU.addRequired<ScalarEvolution>();

@@ -18,6 +18,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/TypeFinder.h"
 #include "llvm/IR/Instructions.h"
@@ -36,7 +37,6 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/IntrinsicLowering.h"
-#include "llvm/Target/Mangler.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -73,7 +73,7 @@ namespace {
   class CBEMCAsmInfo : public MCAsmInfo {
   public:
     CBEMCAsmInfo() {
-      GlobalPrefix = "";
+      //GlobalPrefix = '\0';
       PrivateGlobalPrefix = "";
     }
   };
@@ -421,8 +421,6 @@ void CWriter::printStructReturnPointerFunctionType(raw_ostream &Out,
 raw_ostream &
 CWriter::printSimpleType(raw_ostream &Out, Type *Ty, bool isSigned,
                          const std::string &NameSoFar) {
-  assert((Ty->isPrimitiveType() || Ty->isIntegerTy() || Ty->isVectorTy()) &&
-         "Invalid type for printSimpleType");
   switch (Ty->getTypeID()) {
   case Type::VoidTyID:   return Out << "void " << NameSoFar;
   case Type::IntegerTyID: {
@@ -478,7 +476,7 @@ raw_ostream &CWriter::printType(raw_ostream &Out, Type *Ty,
                                 bool isSigned, const std::string &NameSoFar,
                                 bool IgnoreName, const AttributeSet &PAL,
 				bool isTypedef) {
-  if (Ty->isPrimitiveType() || Ty->isIntegerTy() || Ty->isVectorTy()) {
+  if (Ty->isVoidTy() || Ty->isIntegerTy() || Ty->isVectorTy() || Ty->isFloatingPointTy()) {
     printSimpleType(Out, Ty, isSigned, NameSoFar);
     return Out;
   }
@@ -1271,7 +1269,7 @@ std::string CWriter::GetValueName(const Value *Operand) {
   // Mangle globals with the standard mangler interface for LLC compatibility.
   if (const GlobalValue *GV = dyn_cast<GlobalValue>(Operand)) {
     SmallString<128> Str;
-    Mang->getNameWithPrefix(Str, GV, false);
+    Mang->getNameWithPrefix(Str, GV);
     return CBEMangle(Str.str().str());
   }
 
@@ -1708,7 +1706,7 @@ bool CWriter::doInitialization(Module &M) {
   TAsm = new CBEMCAsmInfo();
   MRI  = new MCRegisterInfo();
   TCtx = new MCContext(TAsm, MRI, NULL);
-  Mang = new Mangler(targetMachine);
+  Mang = new Mangler(TD);
 
   // Keep track of which functions are static ctors/dtors so they can have
   // an attribute added to their prototypes.
@@ -1795,7 +1793,7 @@ bool CWriter::doInitialization(Module &M) {
 
       if (I->hasExternalLinkage() || I->hasExternalWeakLinkage() || I->hasCommonLinkage())
         Out << "extern ";
-      else if (I->hasDLLImportLinkage())
+      else if (I->hasDLLImportStorageClass())
         Out << "__declspec(dllimport) ";
       else
         continue; // Internal Global
@@ -1934,9 +1932,9 @@ bool CWriter::doInitialization(Module &M) {
 
         if (I->hasLocalLinkage())
           Out << "static ";
-        else if (I->hasDLLImportLinkage())
+        else if (I->hasDLLImportStorageClass())
           Out << "__declspec(dllimport) ";
-        else if (I->hasDLLExportLinkage())
+        else if (I->hasDLLExportStorageClass())
           Out << "__declspec(dllexport) ";
 
         // Thread Local Storage
@@ -2164,7 +2162,7 @@ void CWriter::printModuleTypes() {
 void CWriter::printContainedStructs(Type *Ty,
                                 SmallPtrSet<Type *, 16> &StructPrinted) {
   // Don't walk through pointers.
-  if (Ty->isPointerTy() || Ty->isPrimitiveType() || Ty->isIntegerTy())
+  if (Ty->isPointerTy() || Ty->isIntegerTy() || Ty->isVoidTy() || Ty->isFloatingPointTy())
     return;
 
   // Print all contained types first.
@@ -2187,8 +2185,8 @@ void CWriter::printFunctionSignature(const Function *F, bool Prototype) {
   bool isStructReturn = F->hasStructRetAttr();
 
   if (F->hasLocalLinkage()) Out << "static ";
-  if (F->hasDLLImportLinkage()) Out << "__declspec(dllimport) ";
-  if (F->hasDLLExportLinkage()) Out << "__declspec(dllexport) ";
+  if (F->hasDLLImportStorageClass()) Out << "__declspec(dllimport) ";
+  if (F->hasDLLExportStorageClass()) Out << "__declspec(dllexport) ";
   switch (F->getCallingConv()) {
    case CallingConv::X86_StdCall:
     Out << "__attribute__((stdcall)) ";

@@ -19,13 +19,13 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CodeMetrics.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/CFG.h"
@@ -46,8 +46,8 @@ namespace {
     }
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.addRequired<DominatorTree>();
-      AU.addPreserved<DominatorTree>();
+      AU.addRequired<DominatorTreeWrapperPass>();
+      AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addRequired<ScalarEvolution>();
       // FIXME: For some reason, preserving SE here breaks LSR (even if
       // this pass changes nothing).
@@ -71,7 +71,7 @@ char QPXUnaligned::ID = 0;
 INITIALIZE_PASS_BEGIN(QPXUnaligned, "qpx-unaligned", "QPX Unaligned", false, false)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 INITIALIZE_PASS_END(QPXUnaligned, "qpx-unaligned", "QPX Unaligned", false, false)
 
@@ -111,7 +111,7 @@ namespace {
 
 bool QPXUnaligned::runOnFunction(Function &F) {
   AA = &getAnalysis<AliasAnalysis>();
-  DT = &getAnalysis<DominatorTree>();
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   SE = &getAnalysis<ScalarEvolution>();
   TD = getAnalysisIfAvailable<DataLayout>();
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
