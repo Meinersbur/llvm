@@ -20,10 +20,6 @@ def IIAlu              : InstrItinClass;
 def IILoad             : InstrItinClass;
 def IIStore            : InstrItinClass;
 def IIBranch           : InstrItinClass;
-def IIHiLo             : InstrItinClass;
-def IIImul             : InstrItinClass;
-def IIImult            : InstrItinClass;
-def IIIdiv             : InstrItinClass;
 def IIslt              : InstrItinClass;
 def IIFcvt             : InstrItinClass;
 def IIFmove            : InstrItinClass;
@@ -50,6 +46,12 @@ def II_CLO              : InstrItinClass;
 def II_CLZ              : InstrItinClass;
 def II_DADDIU           : InstrItinClass;
 def II_DADDU            : InstrItinClass;
+def II_DDIV             : InstrItinClass;
+def II_DDIVU            : InstrItinClass;
+def II_DIV              : InstrItinClass;
+def II_DIVU             : InstrItinClass;
+def II_DMULT            : InstrItinClass;
+def II_DMULTU           : InstrItinClass;
 def II_DROTR            : InstrItinClass;
 def II_DROTR32          : InstrItinClass;
 def II_DROTRV           : InstrItinClass;
@@ -64,10 +66,19 @@ def II_DSRL32           : InstrItinClass;
 def II_DSRLV            : InstrItinClass;
 def II_DSUBU            : InstrItinClass;
 def II_LUI              : InstrItinClass;
+def II_MADD             : InstrItinClass;
+def II_MADDU            : InstrItinClass;
+def II_MFHI_MFLO        : InstrItinClass; // mfhi and mflo
+def II_MTHI_MTLO        : InstrItinClass; // mthi and mtlo
 def II_MOVF             : InstrItinClass;
 def II_MOVN             : InstrItinClass;
 def II_MOVT             : InstrItinClass;
 def II_MOVZ             : InstrItinClass;
+def II_MUL              : InstrItinClass;
+def II_MULT             : InstrItinClass;
+def II_MULTU            : InstrItinClass;
+def II_MSUB             : InstrItinClass;
+def II_MSUBU            : InstrItinClass;
 def II_NOR              : InstrItinClass;
 def II_OR               : InstrItinClass;
 def II_ORI              : InstrItinClass;
@@ -132,10 +143,23 @@ def MipsGenericItineraries : ProcessorItineraries<[ALU, IMULDIV], [], [
   InstrItinData<IILoad             , [InstrStage<3,  [ALU]>]>,
   InstrItinData<IIStore            , [InstrStage<1,  [ALU]>]>,
   InstrItinData<IIBranch           , [InstrStage<1,  [ALU]>]>,
-  InstrItinData<IIHiLo             , [InstrStage<1,  [IMULDIV]>]>,
-  InstrItinData<IIImul             , [InstrStage<17, [IMULDIV]>]>,
-  InstrItinData<IIImult            , [InstrStage<17, [IMULDIV]>]>,
-  InstrItinData<IIIdiv             , [InstrStage<38, [IMULDIV]>]>,
+  InstrItinData<II_DMULT           , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_DMULTU          , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MADD            , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MADDU           , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MFHI_MFLO       , [InstrStage<1,  [IMULDIV]>]>,
+  InstrItinData<II_MSUB            , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MSUBU           , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MTHI_MTLO       , [InstrStage<1,  [IMULDIV]>]>,
+  InstrItinData<II_MUL             , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MULT            , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MULTU           , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MSUB            , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_MSUBU           , [InstrStage<17, [IMULDIV]>]>,
+  InstrItinData<II_DIV             , [InstrStage<38, [IMULDIV]>]>,
+  InstrItinData<II_DIVU            , [InstrStage<38, [IMULDIV]>]>,
+  InstrItinData<II_DDIV            , [InstrStage<38, [IMULDIV]>]>,
+  InstrItinData<II_DDIVU           , [InstrStage<38, [IMULDIV]>]>,
   InstrItinData<IIFcvt             , [InstrStage<1,  [ALU]>]>,
   InstrItinData<IIFmove            , [InstrStage<2,  [ALU]>]>,
   InstrItinData<IIFcmp             , [InstrStage<3,  [ALU]>]>,

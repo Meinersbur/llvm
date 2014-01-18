@@ -167,20 +167,22 @@ def TAILCALL64_R : TailCallReg<GPR64Opnd, JR, GPR32Opnd>;
 }
 
 /// Multiply and Divide Instructions.
-def DMULT  : Mult<"dmult", IIImult, GPR64Opnd, [HI0_64, LO0_64]>,
+def DMULT  : Mult<"dmult", II_DMULT, GPR64Opnd, [HI0_64, LO0_64]>,
              MULT_FM<0, 0x1c>;
-def DMULTu : Mult<"dmultu", IIImult, GPR64Opnd, [HI0_64, LO0_64]>,
+def DMULTu : Mult<"dmultu", II_DMULTU, GPR64Opnd, [HI0_64, LO0_64]>,
              MULT_FM<0, 0x1d>;
 def PseudoDMULT  : MultDivPseudo<DMULT, ACC128, GPR64Opnd, MipsMult,
-                                 IIImult>;
+                                 II_DMULT>;
 def PseudoDMULTu : MultDivPseudo<DMULTu, ACC128, GPR64Opnd, MipsMultu,
-                                 IIImult>;
-def DSDIV : Div<"ddiv", IIIdiv, GPR64Opnd, [HI0_64, LO0_64]>, MULT_FM<0, 0x1e>;
-def DUDIV : Div<"ddivu", IIIdiv, GPR64Opnd, [HI0_64, LO0_64]>, MULT_FM<0, 0x1f>;
+                                 II_DMULTU>;
+def DSDIV : Div<"ddiv", II_DDIV, GPR64Opnd, [HI0_64, LO0_64]>,
+            MULT_FM<0, 0x1e>;
+def DUDIV : Div<"ddivu", II_DDIVU, GPR64Opnd, [HI0_64, LO0_64]>,
+            MULT_FM<0, 0x1f>;
 def PseudoDSDIV : MultDivPseudo<DSDIV, ACC128, GPR64Opnd, MipsDivRem,
-                                IIIdiv, 0, 1, 1>;
+                                II_DDIV, 0, 1, 1>;
 def PseudoDUDIV : MultDivPseudo<DUDIV, ACC128, GPR64Opnd, MipsDivRemU,
-                                IIIdiv, 0, 1, 1>;
+                                II_DDIVU, 0, 1, 1>;
 
 let isCodeGenOnly = 1 in {
 def MTHI64 : MoveToLOHI<"mthi", GPR64Opnd, [HI0_64]>, MTLO_FM<0x11>;
