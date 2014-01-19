@@ -13,7 +13,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ARMBuildAttrs.h"
 #include "ARMArchName.h"
 #include "ARMFPUName.h"
 #include "ARMRegisterInfo.h"
@@ -39,6 +38,7 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCValue.h"
+#include "llvm/Support/ARMBuildAttributes.h"
 #include "llvm/Support/ARMEHABI.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
@@ -290,6 +290,7 @@ private:
     if (AttributeItem *Item = getAttributeItem(Attribute)) {
       if (!OverwriteExisting)
         return;
+      Item->Type = AttributeItem::NumericAttribute;
       Item->IntValue = Value;
       return;
     }
@@ -310,6 +311,7 @@ private:
     if (AttributeItem *Item = getAttributeItem(Attribute)) {
       if (!OverwriteExisting)
         return;
+      Item->Type = AttributeItem::TextAttribute;
       Item->StringValue = Value;
       return;
     }
@@ -330,6 +332,7 @@ private:
     if (AttributeItem *Item = getAttributeItem(Attribute)) {
       if (!OverwriteExisting)
         return;
+      Item->Type = AttributeItem::NumericAndTextAttributes;
       Item->IntValue = IntValue;
       Item->StringValue = StringValue;
       return;

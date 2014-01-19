@@ -12,7 +12,6 @@
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "MCTargetDesc/ARMArchName.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
-#include "MCTargetDesc/ARMBuildAttrs.h"
 #include "MCTargetDesc/ARMMCExpr.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/MapVector.h"
@@ -40,6 +39,7 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCTargetAsmParser.h"
+#include "llvm/Support/ARMBuildAttributes.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/MathExtras.h"
@@ -8365,7 +8365,7 @@ bool ARMAsmParser::parseDirectiveEabiAttr(SMLoc L) {
   else if (Tag == ARMBuildAttrs::compatibility) {
     IsStringValue = true;
     IsIntegerValue = true;
-  } else if (Tag == ARMBuildAttrs::nodefaults || Tag < 32 || Tag % 2 == 0)
+  } else if (Tag < 32 || Tag % 2 == 0)
     IsIntegerValue = true;
   else if (Tag % 2 == 1)
     IsStringValue = true;
