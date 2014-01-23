@@ -22,6 +22,8 @@
 
 using namespace llvm;
 
+#ifndef LLI_BUILDING_CHILD
+
 // Static methods
 RemoteTarget *RemoteTarget::createRemoteTarget() {
   return new RemoteTarget;
@@ -43,6 +45,7 @@ bool RemoteTarget::hostSupportsExternalRemoteTarget() {
 #endif
 }
 
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // Simulated remote execution
@@ -62,6 +65,7 @@ bool RemoteTarget::allocateSpace(size_t Size, unsigned Alignment,
     return false;
   }
   Address = reinterpret_cast<uint64_t>(Mem.base());
+  Allocations.push_back(Mem);
   return true;
 }
 

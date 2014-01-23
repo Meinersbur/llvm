@@ -18,11 +18,13 @@
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
@@ -37,6 +39,8 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/system_error.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
 using namespace llvm;
@@ -176,6 +180,8 @@ LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
     delete Ret;
     return NULL;
   }
+
+  Ret->parseMetadata();
 
   return Ret;
 }
@@ -527,9 +533,31 @@ LTOModule::addPotentialUndefinedSymbol(const GlobalValue *decl, bool isFunc) {
 }
 
 namespace {
+
+// Common infrastructure is allowed to assume the existence of a current
+// section. Since this streamer doesn't need one itself, we just provide
+// a dummy one.
+class DummySection : public MCSection {
+public:
+  DummySection() : MCSection(SV_ELF, SectionKind::getText()) {}
+
+  virtual void PrintSwitchToSection(const MCAsmInfo &MAI, raw_ostream &OS,
+                                    const MCExpr *Subsection) const {}
+
+  virtual std::string getLabelBeginName() const { return ""; }
+
+  virtual std::string getLabelEndName() const { return ""; }
+
+  virtual bool UseCodeAlign() const { return false; }
+
+  virtual bool isVirtualSection() const { return false; }
+};
+
   class RecordStreamer : public MCStreamer {
   public:
     enum State { NeverSeen, Global, Defined, DefinedGlobal, Used };
+
+    DummySection TheSection;
 
   private:
     StringMap<State> Symbols;
@@ -616,7 +644,9 @@ namespace {
       return Symbols.end();
     }
 
-    RecordStreamer(MCContext &Context) : MCStreamer(Context, 0) {}
+    RecordStreamer(MCContext &Context) : MCStreamer(Context, 0) {
+      SwitchSection(&TheSection);
+    }
 
     virtual void EmitInstruction(const MCInst &Inst) {
       // Scan for values.
@@ -797,4 +827,28 @@ bool LTOModule::parseSymbols(std::string &errMsg) {
   }
 
   return false;
+}
+
+/// parseMetadata - Parse metadata from the module
+void LTOModule::parseMetadata() {
+  // Linker Options
+  if (Value *Val = _module->getModuleFlag("Linker Options")) {
+    MDNode *LinkerOptions = cast<MDNode>(Val);
+    for (unsigned i = 0, e = LinkerOptions->getNumOperands(); i != e; ++i) {
+      MDNode *MDOptions = cast<MDNode>(LinkerOptions->getOperand(i));
+      for (unsigned ii = 0, ie = MDOptions->getNumOperands(); ii != ie; ++ii) {
+        MDString *MDOption = cast<MDString>(MDOptions->getOperand(ii));
+        StringRef Op = _linkeropt_strings.
+            GetOrCreateValue(MDOption->getString()).getKey();
+        StringRef DepLibName = _target->getTargetLowering()->
+            getObjFileLowering().getDepLibFromLinkerOpt(Op);
+        if (!DepLibName.empty())
+          _deplibs.push_back(DepLibName.data());
+        else if (!Op.empty())
+          _linkeropts.push_back(Op.data());
+      }
+    }
+  }
+
+  // Add other interesting metadata here.
 }

@@ -37,6 +37,7 @@ add_llvm_library(LLVMSupport
   ManagedStatic.cpp
   MemoryBuffer.cpp
   MemoryObject.cpp
+  MD5.cpp
   PluginLoader.cpp
   PrettyStackTrace.cpp
   Regex.cpp
@@ -89,6 +90,8 @@ add_llvm_library(LLVMSupport
   TimeValue.cpp
   Valgrind.cpp
   Watchdog.cpp
+  
+  ADDITIONAL_HEADERS
 #  Unix/Host.inc
 #  Unix/Memory.inc
 #  Unix/Mutex.inc
@@ -116,5 +119,4 @@ add_llvm_library(LLVMSupport
 #  Windows/ThreadLocal.inc
 #  Windows/TimeValue.inc
 #  Windows/Watchdog.inc
-  MD5.cpp
   )

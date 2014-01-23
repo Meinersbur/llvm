@@ -269,7 +269,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
   }
 
   // Unroll the loop.
-  if (!UnrollLoop(L, Count, TripCount, Runtime, TripMultiple, LI, &LPM))
+  if (!UnrollLoop(L, Count, TripCount, Runtime, TripMultiple, LI, this, &LPM))
     return false;
 
   return true;

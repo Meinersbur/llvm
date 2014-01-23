@@ -2923,10 +2923,70 @@ SparcTargetLowering::getConstraintType(const std::string &Constraint) const {
     switch (Constraint[0]) {
     default:  break;
     case 'r': return C_RegisterClass;
+    case 'I': // SIMM13
+      return C_Other;
     }
   }
 
   return TargetLowering::getConstraintType(Constraint);
+}
+
+TargetLowering::ConstraintWeight SparcTargetLowering::
+getSingleConstraintMatchWeight(AsmOperandInfo &info,
+                               const char *constraint) const {
+  ConstraintWeight weight = CW_Invalid;
+  Value *CallOperandVal = info.CallOperandVal;
+  // If we don't have a value, we can't do a match,
+  // but allow it at the lowest weight.
+  if (CallOperandVal == NULL)
+    return CW_Default;
+
+  // Look at the constraint type.
+  switch (*constraint) {
+  default:
+    weight = TargetLowering::getSingleConstraintMatchWeight(info, constraint);
+    break;
+  case 'I': // SIMM13
+    if (ConstantInt *C = dyn_cast<ConstantInt>(info.CallOperandVal)) {
+      if (isInt<13>(C->getSExtValue()))
+        weight = CW_Constant;
+    }
+    break;
+  }
+  return weight;
+}
+
+/// LowerAsmOperandForConstraint - Lower the specified operand into the Ops
+/// vector.  If it is invalid, don't add anything to Ops.
+void SparcTargetLowering::
+LowerAsmOperandForConstraint(SDValue Op,
+                             std::string &Constraint,
+                             std::vector<SDValue> &Ops,
+                             SelectionDAG &DAG) const {
+  SDValue Result(0, 0);
+
+  // Only support length 1 constraints for now.
+  if (Constraint.length() > 1)
+    return;
+
+  char ConstraintLetter = Constraint[0];
+  switch (ConstraintLetter) {
+  default: break;
+  case 'I':
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
+      if (isInt<13>(C->getSExtValue())) {
+        Result = DAG.getTargetConstant(C->getSExtValue(), Op.getValueType());
+        break;
+      }
+      return;
+    }
+  }
+
+  if (Result.getNode()) {
+    Ops.push_back(Result);
+    return;
+  }
+  TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
 }
 
 std::pair<unsigned, const TargetRegisterClass*>
@@ -2936,6 +2996,26 @@ SparcTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
     switch (Constraint[0]) {
     case 'r':
       return std::make_pair(0U, &SP::IntRegsRegClass);
+    }
+  } else  if (!Constraint.empty() && Constraint.size() <= 5
+              && Constraint[0] == '{' && *(Constraint.end()-1) == '}') {
+    // constraint = '{r<d>}'
+    // Remove the braces from around the name.
+    StringRef name(Constraint.data()+1, Constraint.size()-2);
+    // Handle register aliases:
+    //       r0-r7   -> g0-g7
+    //       r8-r15  -> o0-o7
+    //       r16-r23 -> l0-l7
+    //       r24-r31 -> i0-i7
+    uint64_t intVal = 0;
+    if (name.substr(0, 1).equals("r")
+        && !name.substr(1).getAsInteger(10, intVal) && intVal <= 31) {
+      const char regTypes[] = { 'g', 'o', 'l', 'i' };
+      char regType = regTypes[intVal/8];
+      char regIdx = '0' + (intVal % 8);
+      char tmp[] = { '{', regType, regIdx, '}', 0 };
+      std::string newConstraint = std::string(tmp);
+      return TargetLowering::getRegForInlineAsmConstraint(newConstraint, VT);
     }
   }
 

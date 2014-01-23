@@ -21,27 +21,29 @@
 #ifndef LLVM_IR_VERIFIER_H
 #define LLVM_IR_VERIFIER_H
 
+#include "llvm/ADT/StringRef.h"
 #include <string>
 
 namespace llvm {
 
+class Function;
 class FunctionPass;
 class Module;
-class Function;
+class PreservedAnalyses;
 class raw_ostream;
 
 /// \brief Check a function for errors, useful for use when debugging a
 /// pass.
 ///
 /// If there are no errors, the function returns false. If an error is found,
-/// a message describing the error is written to OS (if non-null) and false is
+/// a message describing the error is written to OS (if non-null) and true is
 /// returned.
 bool verifyFunction(const Function &F, raw_ostream *OS = 0);
 
 /// \brief Check a module for errors.
 ///
 /// If there are no errors, the function returns false. If an error is found,
-/// a message describing the error is written to OS (if non-null) and false is
+/// a message describing the error is written to OS (if non-null) and true is
 /// returned.
 bool verifyModule(const Module &M, raw_ostream *OS = 0);
 
@@ -52,7 +54,21 @@ bool verifyModule(const Module &M, raw_ostream *OS = 0);
 /// functionality. When the pass detects a verification error it is always
 /// printed to stderr, and by default they are fatal. You can override that by
 /// passing \c false to \p FatalErrors.
+///
+/// Note that this creates a pass suitable for the legacy pass manager. It has nothing to do with \c VerifierPass.
 FunctionPass *createVerifierPass(bool FatalErrors = true);
+
+class VerifierPass {
+  bool FatalErrors;
+
+public:
+  explicit VerifierPass(bool FatalErrors = true) : FatalErrors(FatalErrors) {}
+
+  PreservedAnalyses run(Module *M);
+  PreservedAnalyses run(Function *F);
+
+  static StringRef name() { return "VerifierPass"; }
+};
 
 } // End llvm namespace
 
