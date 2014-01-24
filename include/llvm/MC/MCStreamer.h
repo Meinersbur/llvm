@@ -75,15 +75,6 @@ public:
 
   // Allow a target to add behavior to the EmitLabel of MCStreamer.
   virtual void emitLabel(MCSymbol *Symbol);
-
-  /// Let the target do anything it needs to do after emitting inlineasm.
-  /// This callback can be used restore the original mode in case the
-  /// inlineasm contains directives to switch modes.
-  /// \p StartInfo - the original subtarget info before inline asm
-  /// \p EndInfo   - the final subtarget info after parsing the inline asm,
-  //                 or NULL if the value is unknown.
-  virtual void emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
-                                MCSubtargetInfo *EndInfo) {}
 };
 
 // FIXME: declared here because it is used from
@@ -114,8 +105,6 @@ public:
   virtual void emitArch(unsigned Arch) = 0;
   virtual void finishAttributeSection() = 0;
   virtual void emitInst(uint32_t Inst, char Suffix = '\0') = 0;
-  virtual void emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
-                                MCSubtargetInfo *EndInfo);
 };
 
 /// MCStreamer - Streaming machine code generation interface.  This interface
@@ -156,8 +145,6 @@ class MCStreamer {
   /// SectionStack - This is stack of current and previous section
   /// values saved by PushSection.
   SmallVector<std::pair<MCSectionSubPair, MCSectionSubPair>, 4> SectionStack;
-
-  bool AutoInitSections;
 
 protected:
   MCStreamer(MCContext &Ctx, MCTargetStreamer *TargetStreamer);
@@ -330,22 +317,11 @@ public:
       SectionStack.back().first = MCSectionSubPair(Section, Subsection);
   }
 
-  /// Initialize the streamer.
-  void InitStreamer() {
-    if (AutoInitSections)
-      InitSections();
-  }
-
-  /// Tell this MCStreamer to call InitSections upon initialization.
-  void setAutoInitSections(bool AutoInitSections) {
-    this->AutoInitSections = AutoInitSections;
-  }
-
-  /// InitSections - Create the default sections and set the initial one.
-  virtual void InitSections() = 0;
-
-  /// InitToTextSection - Create a text section and switch the streamer to it.
-  virtual void InitToTextSection() = 0;
+  /// Create the default sections and set the initial one.
+  ///
+  /// @param Force - If false, a text streamer implementation can be a nop.
+  /// Used by CodeGen to avoid starting every file with '.text'.
+  virtual void InitSections(bool Force = true);
 
   /// AssignSection - Sets the symbol's section.
   ///
@@ -701,16 +677,6 @@ public:
   /// the specified string in the output .s file.  This capability is
   /// indicated by the hasRawTextSupport() predicate.  By default this aborts.
   void EmitRawText(const Twine &String);
-
-  /// EmitInlineAsmEnd - Used to perform any cleanup needed after emitting
-  /// inline assembly. Provides the start and end subtarget info values.
-  /// The end subtarget info may be NULL if it is not know, for example, when
-  /// emitting the inline assembly as raw text.
-  virtual void EmitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
-                                MCSubtargetInfo *EndInfo) {
-    if (TargetStreamer)
-      TargetStreamer->emitInlineAsmEnd(StartInfo, EndInfo);
-  }
 
   /// Flush - Causes any cached state to be written out.
   virtual void Flush() {}

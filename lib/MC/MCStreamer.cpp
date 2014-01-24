@@ -14,6 +14,7 @@
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -28,8 +29,7 @@ void MCTargetStreamer::emitLabel(MCSymbol *Symbol) {}
 
 MCStreamer::MCStreamer(MCContext &Ctx, MCTargetStreamer *TargetStreamer)
     : Context(Ctx), TargetStreamer(TargetStreamer), EmitEHFrame(true),
-      EmitDebugFrame(false), CurrentW64UnwindInfo(0), LastSymbol(0),
-      AutoInitSections(false) {
+      EmitDebugFrame(false), CurrentW64UnwindInfo(0), LastSymbol(0) {
   SectionStack.push_back(std::pair<MCSectionSubPair, MCSectionSubPair>());
   if (TargetStreamer)
     TargetStreamer->setStreamer(this);
@@ -198,6 +198,10 @@ void MCStreamer::EnsureValidFrame() {
 
 void MCStreamer::EmitEHSymAttributes(const MCSymbol *Symbol,
                                      MCSymbol *EHSymbol) {
+}
+
+void MCStreamer::InitSections(bool Force) {
+  SwitchSection(getContext().getObjectFileInfo()->getTextSection());
 }
 
 void MCStreamer::AssignSection(MCSymbol *Symbol, const MCSection *Section) {

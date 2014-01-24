@@ -391,7 +391,7 @@ private:
         break;
       }
     }
-    void onInteger(int64_t TmpInt) {
+    bool onInteger(int64_t TmpInt, StringRef &ErrMsg) {
       IntelExprState CurrState = State;
       switch (State) {
       default:
@@ -410,6 +410,10 @@ private:
           assert (!IndexReg && "IndexReg already set!");
           IndexReg = TmpReg;
           Scale = TmpInt;
+          if(Scale != 1 && Scale != 2 && Scale != 4 && Scale != 8) {
+            ErrMsg = "scale factor in address must be 1, 2, 4 or 8";
+            return true;
+          }
           // Get the scale and replace the 'Register * Scale' with '0'.
           IC.popOperator();
         } else if ((PrevState == IES_PLUS || PrevState == IES_MINUS ||
@@ -426,6 +430,7 @@ private:
         break;
       }
       PrevState = CurrState;
+      return false;
     }
     void onStar() {
       PrevState = State;
@@ -1147,6 +1152,44 @@ struct X86Operand : public MCParsedAsmOperand {
 
 } // end anonymous namespace.
 
+static bool CheckBaseRegAndIndexReg(unsigned BaseReg, unsigned IndexReg,
+                                    StringRef &ErrMsg) {
+  // If we have both a base register and an index register make sure they are
+  // both 64-bit or 32-bit registers.
+  // To support VSIB, IndexReg can be 128-bit or 256-bit registers.
+  if (BaseReg != 0 && IndexReg != 0) {
+    if (X86MCRegisterClasses[X86::GR64RegClassID].contains(BaseReg) &&
+        (X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg) ||
+         X86MCRegisterClasses[X86::GR32RegClassID].contains(IndexReg)) &&
+        IndexReg != X86::RIZ) {
+      ErrMsg = "base register is 64-bit, but index register is not";
+      return true;
+    }
+    if (X86MCRegisterClasses[X86::GR32RegClassID].contains(BaseReg) &&
+        (X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg) ||
+         X86MCRegisterClasses[X86::GR64RegClassID].contains(IndexReg)) &&
+        IndexReg != X86::EIZ){
+      ErrMsg = "base register is 32-bit, but index register is not";
+      return true;
+    }
+    if (X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg)) {
+      if (X86MCRegisterClasses[X86::GR32RegClassID].contains(IndexReg) ||
+          X86MCRegisterClasses[X86::GR64RegClassID].contains(IndexReg)) {
+        ErrMsg = "base register is 16-bit, but index register is not";
+        return true;
+      }
+      if (((BaseReg == X86::BX || BaseReg == X86::BP) &&
+           IndexReg != X86::SI && IndexReg != X86::DI) ||
+          ((BaseReg == X86::SI || BaseReg == X86::DI) &&
+           IndexReg != X86::BX && IndexReg != X86::BP)) {
+        ErrMsg = "invalid 16-bit base/index register combination";
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool X86AsmParser::doSrcDstMatch(X86Operand &Op1, X86Operand &Op2)
 {
   // Return true and let a normal complaint about bogus operands happen.
@@ -1465,6 +1508,7 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
       return Error(Tok.getLoc(), "Unexpected identifier!");
     }
     case AsmToken::Integer: {
+      StringRef ErrMsg;
       if (isParsingInlineAsm() && SM.getAddImmPrefix())
         InstInfo->AsmRewrites->push_back(AsmRewrite(AOK_ImmPrefix,
                                                     Tok.getLoc()));
@@ -1488,10 +1532,12 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
           SM.onIdentifierExpr(Val, Identifier);
           End = consumeToken();
         } else {
-          SM.onInteger(IntVal);
+          if (SM.onInteger(IntVal, ErrMsg))
+            return Error(Loc, ErrMsg);
         }
       } else {
-        SM.onInteger(IntVal);
+        if (SM.onInteger(IntVal, ErrMsg))
+          return Error(Loc, ErrMsg);
       }
       break;
     }
@@ -1566,6 +1612,11 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg, SMLoc Start,
         return X86Operand::CreateMem(Disp, Start, End, Size);
       else
         return X86Operand::CreateMem(SegReg, Disp, 0, 0, 1, Start, End, Size);
+    }
+    StringRef ErrMsg;
+    if (CheckBaseRegAndIndexReg(BaseReg, IndexReg, ErrMsg)) {
+      Error(StartInBrac, ErrMsg);
+      return 0;
     }
     return X86Operand::CreateMem(SegReg, Disp, BaseReg, IndexReg, Scale, Start,
                                  End, Size);
@@ -2072,38 +2123,11 @@ X86Operand *X86AsmParser::ParseMemOperand(unsigned SegReg, SMLoc MemStart) {
     Error(IndexLoc, "16-bit memory operand may not include only index register");
     return 0;
   }
-  // If we have both a base register and an index register make sure they are
-  // both 64-bit or 32-bit registers.
-  // To support VSIB, IndexReg can be 128-bit or 256-bit registers.
-  if (BaseReg != 0 && IndexReg != 0) {
-    if (X86MCRegisterClasses[X86::GR64RegClassID].contains(BaseReg) &&
-        (X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg) ||
-         X86MCRegisterClasses[X86::GR32RegClassID].contains(IndexReg)) &&
-        IndexReg != X86::RIZ) {
-      Error(BaseLoc, "base register is 64-bit, but index register is not");
-      return 0;
-    }
-    if (X86MCRegisterClasses[X86::GR32RegClassID].contains(BaseReg) &&
-        (X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg) ||
-         X86MCRegisterClasses[X86::GR64RegClassID].contains(IndexReg)) &&
-        IndexReg != X86::EIZ){
-      Error(BaseLoc, "base register is 32-bit, but index register is not");
-      return 0;
-    }
-    if (X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg)) {
-      if (X86MCRegisterClasses[X86::GR32RegClassID].contains(IndexReg) ||
-          X86MCRegisterClasses[X86::GR64RegClassID].contains(IndexReg)) {
-        Error(BaseLoc, "base register is 16-bit, but index register is not");
-        return 0;
-      }
-      if (((BaseReg == X86::BX || BaseReg == X86::BP) &&
-           IndexReg != X86::SI && IndexReg != X86::DI) ||
-          ((BaseReg == X86::SI || BaseReg == X86::DI) &&
-           IndexReg != X86::BX && IndexReg != X86::BP)) {
-        Error(BaseLoc, "invalid 16-bit base/index register combination");
-        return 0;
-      }
-    }
+
+  StringRef ErrMsg;
+  if (CheckBaseRegAndIndexReg(BaseReg, IndexReg, ErrMsg)) {
+    Error(BaseLoc, ErrMsg);
+    return 0;
   }
 
   return X86Operand::CreateMem(SegReg, Disp, BaseReg, IndexReg, Scale,
