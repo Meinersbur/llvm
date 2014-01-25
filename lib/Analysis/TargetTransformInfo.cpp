@@ -189,8 +189,10 @@ unsigned TargetTransformInfo::getIntImmCost(const APInt &Imm, Type *Ty) const {
 }
 
 unsigned TargetTransformInfo::getIntImmCost(unsigned Opcode, const APInt &Imm,
-                                            Type *Ty) const {
+  Type *Ty) const {
   return PrevTTI->getIntImmCost(Opcode, Imm, Ty);
+}
+
 bool TargetTransformInfo::useSoftwarePrefetching(bool &PrefWrites,
                                                  unsigned &Dist) const {
   return PrevTTI->useSoftwarePrefetching(PrefWrites, Dist);
@@ -623,16 +625,11 @@ struct NoTTI LLVM_FINAL : ImmutablePass, TargetTransformInfo {
     return PostIncPrep;
   }
 
-  unsigned getIntImmCost(const APInt &Imm, Type *Ty) const {
-    return 1;
-  }
-
   unsigned getNumberOfRegisters(bool Vector) const {
     return 8;
   }
 
-
-    unsigned getIntImmCost(unsigned Opcode, const APInt &Imm,
+  unsigned getIntImmCost(unsigned Opcode, const APInt &Imm,
                          Type *Ty) const LLVM_OVERRIDE {
     return TCC_Free;
   }
@@ -640,10 +637,6 @@ struct NoTTI LLVM_FINAL : ImmutablePass, TargetTransformInfo {
   unsigned getIntImmCost(Intrinsic::ID IID, const APInt &Imm,
                          Type *Ty) const LLVM_OVERRIDE {
     return TCC_Free;
-  }
-
-  unsigned getNumberOfRegisters(bool Vector) const LLVM_OVERRIDE {
-    return 8;
   }
 
   unsigned  getRegisterBitWidth(bool Vector) const LLVM_OVERRIDE {
