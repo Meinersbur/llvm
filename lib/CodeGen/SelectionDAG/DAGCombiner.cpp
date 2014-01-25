@@ -50,11 +50,28 @@ STATISTIC(SlicedLoads, "Number of load sliced");
 namespace {
   static cl::opt<bool>
     CombinerAA("combiner-alias-analysis", cl::Hidden,
-               cl::desc("Turn on alias analysis during testing"));
+               cl::desc("Enable DAG combiner alias-analysis heuristics"));
 
   static cl::opt<bool>
     CombinerGlobalAA("combiner-global-alias-analysis", cl::Hidden,
-               cl::desc("Include global information in alias analysis"));
+               cl::desc("Enable DAG combiner's use of IR alias analysis"));
+
+// FIXME: Enable the use of TBAA. There are two known issues preventing this:
+//   1. Stack coloring does not update TBAA when merging allocas
+//   2. CGP inserts ptrtoint/inttoptr pairs when sinking address computations.
+//      Because BasicAA does not handle inttoptr, we'll often miss basic type
+//      punning idioms that we need to catch so we don't miscompile real-world
+//      code.
+  static cl::opt<bool>
+    UseTBAA("combiner-use-tbaa", cl::Hidden, cl::init(false),
+               cl::desc("Enable DAG combiner's use of TBAA"));
+
+#ifndef NDEBUG
+  static cl::opt<std::string>
+    CombinerAAOnlyFunc("combiner-aa-only-func", cl::Hidden,
+               cl::desc("Only use DAG-combiner alias analysis in this"
+                        " function"));
+#endif
 
   /// Hidden option to stress test load slicing, i.e., when this option
   /// is enabled, load slicing bypasses most of its profitability guards.
@@ -3212,11 +3229,14 @@ SDValue DAGCombiner::visitOR(SDNode *N) {
   if (N1C && N0.getOpcode() == ISD::AND && N0.getNode()->hasOneUse() &&
              isa<ConstantSDNode>(N0.getOperand(1))) {
     ConstantSDNode *C1 = cast<ConstantSDNode>(N0.getOperand(1));
-    if ((C1->getAPIntValue() & N1C->getAPIntValue()) != 0)
+    if ((C1->getAPIntValue() & N1C->getAPIntValue()) != 0) {
+      SDValue COR = DAG.FoldConstantArithmetic(ISD::OR, VT, N1C, C1);
+      if (!COR.getNode())
+        return SDValue();
       return DAG.getNode(ISD::AND, SDLoc(N), VT,
                          DAG.getNode(ISD::OR, SDLoc(N0), VT,
-                                     N0.getOperand(0), N1),
-                         DAG.FoldConstantArithmetic(ISD::OR, VT, N1C, C1));
+                                     N0.getOperand(0), N1), COR);
+    }
   }
   // fold (or (setcc x), (setcc y)) -> (setcc (or x, y))
   if (isSetCCEquivalent(N0, LL, LR, CC0) && isSetCCEquivalent(N1, RL, RR, CC1)){
@@ -7726,7 +7746,12 @@ SDValue DAGCombiner::visitLOAD(SDNode *N) {
 
   bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA :
     TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
-  if (UseAA) {
+#ifndef NDEBUG
+  if (CombinerAAOnlyFunc.getNumOccurrences() &&
+      CombinerAAOnlyFunc != DAG.getMachineFunction().getName())
+    UseAA = false;
+#endif
+  if (UseAA && LD->isUnindexed()) {
     // Walk up chain skipping non-aliasing memory nodes.
     SDValue BetterChain = FindBetterChain(N, Chain);
 
@@ -9314,7 +9339,12 @@ SDValue DAGCombiner::visitSTORE(SDNode *N) {
 
   bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA :
     TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
-  if (UseAA) {
+#ifndef NDEBUG
+  if (CombinerAAOnlyFunc.getNumOccurrences() &&
+      CombinerAAOnlyFunc != DAG.getMachineFunction().getName())
+    UseAA = false;
+#endif
+  if (UseAA && ST->isUnindexed()) {
     // Walk up chain skipping non-aliasing memory nodes.
     SDValue BetterChain = FindBetterChain(N, Chain);
 
@@ -11053,14 +11083,21 @@ bool DAGCombiner::isAlias(SDValue Ptr1, int64_t Size1, bool IsVolatile1,
 
   bool UseAA = CombinerGlobalAA.getNumOccurrences() > 0 ? CombinerGlobalAA :
     TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
+#ifndef NDEBUG
+  if (CombinerAAOnlyFunc.getNumOccurrences() &&
+      CombinerAAOnlyFunc != DAG.getMachineFunction().getName())
+    UseAA = false;
+#endif
   if (UseAA && SrcValue1 && SrcValue2) {
     // Use alias analysis information.
     int64_t MinOffset = std::min(SrcValueOffset1, SrcValueOffset2);
     int64_t Overlap1 = Size1 + SrcValueOffset1 - MinOffset;
     int64_t Overlap2 = Size2 + SrcValueOffset2 - MinOffset;
     AliasAnalysis::AliasResult AAResult =
-      AA.alias(AliasAnalysis::Location(SrcValue1, Overlap1, TBAAInfo1),
-               AliasAnalysis::Location(SrcValue2, Overlap2, TBAAInfo2));
+      AA.alias(AliasAnalysis::Location(SrcValue1, Overlap1,
+                                       UseTBAA ? TBAAInfo1 : 0),
+               AliasAnalysis::Location(SrcValue2, Overlap2,
+                                       UseTBAA ? TBAAInfo2 : 0));
     if (AAResult == AliasAnalysis::NoAlias)
       return false;
   }
@@ -11147,7 +11184,7 @@ void DAGCombiner::GatherAllAliases(SDNode *N, SDValue OriginalChain,
     if (Depth > 6 || Aliases.size() == 2) {
       Aliases.clear();
       Aliases.push_back(OriginalChain);
-      break;
+      return;
     }
 
     // Don't bother if we've been before.
@@ -11208,6 +11245,63 @@ void DAGCombiner::GatherAllAliases(SDNode *N, SDValue OriginalChain,
       Aliases.push_back(Chain);
       break;
     }
+  }
+
+  // We need to be careful here to also search for aliases through the
+  // value operand of a store, etc. Consider the following situation:
+  //   Token1 = ...
+  //   L1 = load Token1, %52
+  //   S1 = store Token1, L1, %51
+  //   L2 = load Token1, %52+8
+  //   S2 = store Token1, L2, %51+8
+  //   Token2 = Token(S1, S2)
+  //   L3 = load Token2, %53
+  //   S3 = store Token2, L3, %52
+  //   L4 = load Token2, %53+8
+  //   S4 = store Token2, L4, %52+8
+  // If we search for aliases of S3 (which loads address %52), and we look
+  // only through the chain, then we'll miss the trivial dependence on L1
+  // (which also loads from %52). We then might change all loads and
+  // stores to use Token1 as their chain operand, which could result in
+  // copying %53 into %52 before copying %52 into %51 (which should
+  // happen first).
+  //
+  // The problem is, however, that searching for such data dependencies
+  // can become expensive, and the cost is not directly related to the
+  // chain depth. Instead, we'll rule out such configurations here by
+  // insisting that we've visited all chain users (except for users
+  // of the original chain, which is not necessary). When doing this,
+  // we need to look through nodes we don't care about (otherwise, things
+  // like register copies will interfere with trivial cases).
+
+  SmallVector<const SDNode *, 16> Worklist;
+  for (SmallPtrSet<SDNode *, 16>::iterator I = Visited.begin(),
+       IE = Visited.end(); I != IE; ++I)
+    if (*I != OriginalChain.getNode())
+      Worklist.push_back(*I);
+
+  while (!Worklist.empty()) {
+    const SDNode *M = Worklist.pop_back_val();
+
+    // We have already visited M, and want to make sure we've visited any uses
+    // of M that we care about. For uses that we've not visisted, and don't
+    // care about, queue them to the worklist.
+
+    for (SDNode::use_iterator UI = M->use_begin(),
+         UIE = M->use_end(); UI != UIE; ++UI)
+      if (UI.getUse().getValueType() == MVT::Other && Visited.insert(*UI)) {
+        if (isa<MemIntrinsicSDNode>(*UI) || isa<MemSDNode>(*UI)) {
+          // We've not visited this use, and we care about it (it could have an
+          // ordering dependency with the original node).
+          Aliases.clear();
+          Aliases.push_back(OriginalChain);
+          return;
+        }
+
+        // We've not visited this use, but we don't care about it. Mark it as
+        // visited and enqueue it to the worklist.
+        Worklist.push_back(*UI);
+      }
   }
 }
 
