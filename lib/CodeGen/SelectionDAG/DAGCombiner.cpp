@@ -4577,6 +4577,62 @@ SDValue DAGCombiner::visitSETCC(SDNode *N) {
                        SDLoc(N));
 }
 
+// tryToFoldExtendOfConstant - Try to fold a sext/zext/aext
+// dag node into a ConstantSDNode or a build_vector of constants.
+// This function is called by the DAGCombiner when visiting sext/zext/aext
+// dag nodes (see for example method DAGCombiner::visitSIGN_EXTEND). 
+// Vector extends are not folded if operations are legal; this is to
+// avoid introducing illegal build_vector dag nodes.
+static SDNode *tryToFoldExtendOfConstant(SDNode *N, SelectionDAG &DAG,
+                                         bool LegalOperations) {
+  unsigned Opcode = N->getOpcode();
+  SDValue N0 = N->getOperand(0);
+  EVT VT = N->getValueType(0);
+
+  assert((Opcode == ISD::SIGN_EXTEND || Opcode == ISD::ZERO_EXTEND ||
+         Opcode == ISD::ANY_EXTEND) && "Expected EXTEND dag node in input!");
+
+  // fold (sext c1) -> c1
+  // fold (zext c1) -> c1
+  // fold (aext c1) -> c1
+  if (isa<ConstantSDNode>(N0))
+    return DAG.getNode(Opcode, SDLoc(N), VT, N0).getNode();
+
+  // fold (sext (build_vector AllConstants) -> (build_vector AllConstants)
+  // fold (zext (build_vector AllConstants) -> (build_vector AllConstants)
+  // fold (aext (build_vector AllConstants) -> (build_vector AllConstants)
+  if (!(VT.isVector() && !LegalOperations &&
+      ISD::isBuildVectorOfConstantSDNodes(N0.getNode())))
+    return 0;
+  
+  // We can fold this node into a build_vector.
+  unsigned VTBits = VT.getScalarType().getSizeInBits();
+  unsigned EVTBits = N0->getValueType(0).getScalarType().getSizeInBits();
+  unsigned ShAmt = VTBits - EVTBits;
+  SmallVector<SDValue, 8> Elts;
+  unsigned NumElts = N0->getNumOperands();
+  SDLoc DL(N);
+
+  for (unsigned i=0; i != NumElts; ++i) {
+    SDValue Op = N0->getOperand(i);
+    if (Op->getOpcode() == ISD::UNDEF) {
+      Elts.push_back(DAG.getUNDEF(VT.getScalarType()));
+      continue;
+    }
+
+    ConstantSDNode *CurrentND = cast<ConstantSDNode>(Op);
+    const APInt &C = APInt(VTBits, CurrentND->getAPIntValue().getZExtValue());
+    if (Opcode == ISD::SIGN_EXTEND)
+      Elts.push_back(DAG.getConstant(C.shl(ShAmt).ashr(ShAmt).getZExtValue(),
+                                     VT.getScalarType()));
+    else
+      Elts.push_back(DAG.getConstant(C.shl(ShAmt).lshr(ShAmt).getZExtValue(),
+                                     VT.getScalarType()));
+  }
+
+  return DAG.getNode(ISD::BUILD_VECTOR, DL, VT, &Elts[0], NumElts).getNode();
+}
+
 // ExtendUsesToFormExtLoad - Trying to extend uses of a load to enable this:
 // "fold ({s|z|a}ext (load x)) -> ({s|z|a}ext (truncate ({s|z|a}extload x)))"
 // transformation. Returns true if extension are possible and the above
@@ -4667,9 +4723,8 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
 
-  // fold (sext c1) -> c1
-  if (isa<ConstantSDNode>(N0))
-    return DAG.getNode(ISD::SIGN_EXTEND, SDLoc(N), VT, N0);
+  if (SDNode *Res = tryToFoldExtendOfConstant(N, DAG, LegalOperations))
+    return SDValue(Res, 0);
 
   // fold (sext (sext x)) -> (sext x)
   // fold (sext (aext x)) -> (sext x)
@@ -4846,7 +4901,7 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
       }
     }
 
-    // sext(setcc x, y, cc) -> (select_cc x, y, -1, 0, cc)
+    // sext(setcc x, y, cc) -> (select (setcc x, y, cc), -1, 0)
     unsigned ElementWidth = VT.getScalarType().getSizeInBits();
     SDValue NegOne =
       DAG.getConstant(APInt::getAllOnesValue(ElementWidth), VT);
@@ -4855,15 +4910,21 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
                        NegOne, DAG.getConstant(0, VT),
                        cast<CondCodeSDNode>(N0.getOperand(2))->get(), true);
     if (SCC.getNode()) return SCC;
-    if (!VT.isVector() &&
-        (!LegalOperations ||
-         TLI.isOperationLegal(ISD::SETCC, getSetCCResultType(VT)))) {
-      return DAG.getSelect(SDLoc(N), VT,
-                           DAG.getSetCC(SDLoc(N),
-                           getSetCCResultType(VT),
-                           N0.getOperand(0), N0.getOperand(1),
-                           cast<CondCodeSDNode>(N0.getOperand(2))->get()),
-                           NegOne, DAG.getConstant(0, VT));
+
+    if (!VT.isVector()) {
+      EVT SetCCVT = getSetCCResultType(N0.getOperand(0).getValueType());
+      if (!LegalOperations || TLI.isOperationLegal(ISD::SETCC, SetCCVT)) {
+        SDLoc DL(N);
+        ISD::CondCode CC = cast<CondCodeSDNode>(N0.getOperand(2))->get();
+        SDValue SetCC = DAG.getSetCC(DL,
+                                     SetCCVT,
+                                     N0.getOperand(0), N0.getOperand(1), CC);
+        EVT SelectVT = getSetCCResultType(VT);
+        return DAG.getSelect(DL, VT,
+                             DAG.getSExtOrTrunc(SetCC, DL, SelectVT),
+                             NegOne, DAG.getConstant(0, VT));
+
+      }
     }
   }
 
@@ -4917,9 +4978,9 @@ SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
 
-  // fold (zext c1) -> c1
-  if (isa<ConstantSDNode>(N0))
-    return DAG.getNode(ISD::ZERO_EXTEND, SDLoc(N), VT, N0);
+  if (SDNode *Res = tryToFoldExtendOfConstant(N, DAG, LegalOperations))
+    return SDValue(Res, 0);
+
   // fold (zext (zext x)) -> (zext x)
   // fold (zext (aext x)) -> (zext x)
   if (N0.getOpcode() == ISD::ZERO_EXTEND || N0.getOpcode() == ISD::ANY_EXTEND)
@@ -5186,9 +5247,9 @@ SDValue DAGCombiner::visitANY_EXTEND(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
 
-  // fold (aext c1) -> c1
-  if (isa<ConstantSDNode>(N0))
-    return DAG.getNode(ISD::ANY_EXTEND, SDLoc(N), VT, N0);
+  if (SDNode *Res = tryToFoldExtendOfConstant(N, DAG, LegalOperations))
+    return SDValue(Res, 0);
+
   // fold (aext (aext x)) -> (aext x)
   // fold (aext (zext x)) -> (zext x)
   // fold (aext (sext x)) -> (sext x)
@@ -8761,7 +8822,10 @@ struct MemOpLink {
 // base ptr.
 struct ConsecutiveMemoryChainSorter {
   bool operator()(MemOpLink LHS, MemOpLink RHS) {
-    return LHS.OffsetFromBase < RHS.OffsetFromBase;
+    return
+        LHS.OffsetFromBase < RHS.OffsetFromBase ||
+        (LHS.OffsetFromBase == RHS.OffsetFromBase &&
+         LHS.SequenceNum > RHS.SequenceNum);
   }
 };
 

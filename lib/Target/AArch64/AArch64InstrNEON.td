@@ -6211,6 +6211,101 @@ defm : NeonI_SDUP<Neon_Low2D, Neon_High2D, v1i64, v2i64>;
 defm : NeonI_SDUP<Neon_Low4float, Neon_High4float, v2f32, v4f32>;
 defm : NeonI_SDUP<Neon_Low2double, Neon_High2double, v1f64, v2f64>;
 
+// The following is for sext/zext from v1xx to v1xx
+multiclass NeonI_ext<string prefix, SDNode ExtOp> {
+  // v1i32 -> v1i64
+  def : Pat<(v1i64 (ExtOp (v1i32 FPR32:$Rn))),
+            (EXTRACT_SUBREG 
+              (v2i64 (!cast<Instruction>(prefix # "_2S")
+                (v2i32 (SUBREG_TO_REG (i64 0), $Rn, sub_32)), 0)),
+              sub_64)>;
+  
+  // v1i16 -> v1i32
+  def : Pat<(v1i32 (ExtOp (v1i16 FPR16:$Rn))),
+            (EXTRACT_SUBREG 
+              (v4i32 (!cast<Instruction>(prefix # "_4H")
+                (v4i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)), 0)),
+              sub_32)>;
+  
+  // v1i8 -> v1i16
+  def : Pat<(v1i16 (ExtOp (v1i8 FPR8:$Rn))),
+            (EXTRACT_SUBREG 
+              (v8i16 (!cast<Instruction>(prefix # "_8B")
+                (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+              sub_16)>;
+}
+
+defm NeonI_zext : NeonI_ext<"USHLLvvi", zext>;
+defm NeonI_sext : NeonI_ext<"SSHLLvvi", sext>;
+
+// zext v1i8 -> v1i32
+def : Pat<(v1i32 (zext (v1i8 FPR8:$Rn))),
+          (v1i32 (EXTRACT_SUBREG
+            (v1i64 (SUBREG_TO_REG (i64 0),
+              (v1i8 (DUPbv_B
+                (v16i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)),
+                0)),
+              sub_8)),
+            sub_32))>;
+
+// zext v1i8 -> v1i64
+def : Pat<(v1i64 (zext (v1i8 FPR8:$Rn))),
+          (v1i64 (SUBREG_TO_REG (i64 0),
+            (v1i8 (DUPbv_B
+              (v16i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)),
+              0)),
+            sub_8))>;
+
+// zext v1i16 -> v1i64
+def : Pat<(v1i64 (zext (v1i16 FPR16:$Rn))),
+          (v1i64 (SUBREG_TO_REG (i64 0),
+            (v1i16 (DUPhv_H
+              (v8i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)),
+              0)),
+            sub_16))>;
+
+// sext v1i8 -> v1i32
+def : Pat<(v1i32 (sext (v1i8 FPR8:$Rn))),
+          (EXTRACT_SUBREG
+            (v4i32 (SSHLLvvi_4H
+              (v4i16 (SUBREG_TO_REG (i64 0),
+                (v1i16 (EXTRACT_SUBREG 
+                  (v8i16 (SSHLLvvi_8B
+                    (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+                  sub_16)),
+                sub_16)), 0)),
+            sub_32)>;
+              
+// sext v1i8 -> v1i64
+def : Pat<(v1i64 (sext (v1i8 FPR8:$Rn))),
+          (EXTRACT_SUBREG 
+            (v2i64 (SSHLLvvi_2S
+              (v2i32 (SUBREG_TO_REG (i64 0),
+                (v1i32 (EXTRACT_SUBREG
+                  (v4i32 (SSHLLvvi_4H
+                    (v4i16 (SUBREG_TO_REG (i64 0),
+                      (v1i16 (EXTRACT_SUBREG 
+                        (v8i16 (SSHLLvvi_8B
+                          (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+                        sub_16)),
+                      sub_16)), 0)),
+                  sub_32)),
+                sub_32)), 0)),
+            sub_64)>;
+
+  
+// sext v1i16 -> v1i64
+def : Pat<(v1i64 (sext (v1i16 FPR16:$Rn))),
+          (EXTRACT_SUBREG
+            (v2i64 (SSHLLvvi_2S
+              (v2i32 (SUBREG_TO_REG (i64 0),
+                (v1i32 (EXTRACT_SUBREG 
+                  (v4i32 (SSHLLvvi_4H
+                    (v4i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)), 0)),
+                  sub_32)),
+                sub_32)), 0)),
+            sub_64)>;
+
 //===----------------------------------------------------------------------===//
 // Non-Instruction Patterns
 //===----------------------------------------------------------------------===//
@@ -7074,9 +7169,17 @@ defm : Concat_Vector_Pattern<v2i64, v1i64>;
 defm : Concat_Vector_Pattern<v4f32, v2f32>;
 defm : Concat_Vector_Pattern<v2f64, v1f64>;
 
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), undef)),
+          (v2i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32))>;
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rm))),
+          (EXTRACT_SUBREG 
+            (v4i32 (INSELs
+              (v4i32 (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)),
+              (v4i32 (SUBREG_TO_REG (i64 0), FPR32:$Rm, sub_32)),
+              (i64 1),
+              (i64 0))),
+            sub_64)>;
 def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rn))),
-          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
-def : Pat<(v2i32 (concat_vectors undef, (v1i32 FPR32:$Rn))),
           (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
 
 //patterns for EXTRACT_SUBVECTOR

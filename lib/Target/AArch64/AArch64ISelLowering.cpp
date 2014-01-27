@@ -4153,45 +4153,50 @@ AArch64TargetLowering::isFMAFasterThanFMulAndFAdd(EVT VT) const {
 
   return false;
 }
-
 // Check whether a shuffle_vector could be presented as concat_vector.
-bool AArch64TargetLowering::isConcatVector(SDValue Op,SelectionDAG &DAG,
+bool AArch64TargetLowering::isConcatVector(SDValue Op, SelectionDAG &DAG,
                                            SDValue V0, SDValue V1,
-                                           const int* Mask,
+                                           const int *Mask,
                                            SDValue &Res) const {
   SDLoc DL(Op);
   EVT VT = Op.getValueType();
+  if (VT.getSizeInBits() != 128)
+    return false;
+  if (VT.getVectorElementType() != V0.getValueType().getVectorElementType() ||
+      VT.getVectorElementType() != V1.getValueType().getVectorElementType())
+    return false;
+
   unsigned NumElts = VT.getVectorNumElements();
-  unsigned V0NumElts = V0.getValueType().getVectorNumElements();
   bool isContactVector = true;
   bool splitV0 = false;
-  int offset = 0;
-  for (int I = 0, E = NumElts; I != E; I++){
-    if (Mask[I] != I + offset) {
-      if(I && !splitV0 && Mask[I] == I + (int)V0NumElts / 2) {
-        splitV0 = true;
-        offset = V0NumElts / 2;
-      } else {
+  if (V0.getValueType().getSizeInBits() == 128)
+    splitV0 = true;
+
+  for (int I = 0, E = NumElts / 2; I != E; I++) {
+    if (Mask[I] != I) {
+      isContactVector = false;
+      break;
+    }
+  }
+
+  if (isContactVector) {
+    int offset = NumElts / 2;
+    for (int I = NumElts / 2, E = NumElts; I != E; I++) {
+      if (Mask[I] != I + splitV0 * offset) {
         isContactVector = false;
         break;
       }
     }
   }
-  if (isContactVector) {
-    EVT CastVT = EVT::getVectorVT(*DAG.getContext(),
-                                  VT.getVectorElementType(), NumElts / 2);
-    if(CastVT.getSizeInBits() < 64)
-      return false;
 
+  if (isContactVector) {
+    EVT CastVT = EVT::getVectorVT(*DAG.getContext(), VT.getVectorElementType(),
+                                  NumElts / 2);
     if (splitV0) {
-      assert(V0NumElts >= NumElts / 2 &&
-             "invalid operand for extract_subvector!");
       V0 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, CastVT, V0,
                        DAG.getConstant(0, MVT::i64));
     }
-    if (NumElts != V1.getValueType().getVectorNumElements() * 2) {
-      assert(V1.getValueType().getVectorNumElements() >= NumElts / 2 &&
-             "invalid operand for extract_subvector!");
+    if (V1.getValueType().getSizeInBits() == 128) {
       V1 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, CastVT, V1,
                        DAG.getConstant(0, MVT::i64));
     }
@@ -4459,13 +4464,13 @@ AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
     if (V1.getNode() && NumElts == V0NumElts &&
         V0NumElts == V1.getValueType().getVectorNumElements()) {
       SDValue Shuffle = DAG.getVectorShuffle(VT, DL, V0, V1, Mask);
-      if(Shuffle.getOpcode() != ISD::VECTOR_SHUFFLE)
+      if (Shuffle.getOpcode() != ISD::VECTOR_SHUFFLE)
         return Shuffle;
       else
         return LowerVECTOR_SHUFFLE(Shuffle, DAG);
     } else {
       SDValue Res;
-      if(isConcatVector(Op, DAG, V0, V1, Mask, Res))
+      if (isConcatVector(Op, DAG, V0, V1, Mask, Res))
         return Res;
     }
   }

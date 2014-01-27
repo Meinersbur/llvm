@@ -240,6 +240,7 @@ function(add_llvm_symbol_exports target_name export_file)
   endif()
 
   add_custom_target(${target_name}_exports DEPENDS ${native_export_file})
+  set_target_properties(${target_name}_exports PROPERTIES FOLDER "Misc")
 
   get_property(srcs TARGET ${target_name} PROPERTY SOURCES)
   foreach(src ${srcs})
@@ -536,11 +537,15 @@ function(configure_lit_site_cfg input output)
     set(LLVM_BUILD_MODE "%(build_mode)s")
   endif ()
 
+  # They below might not be the build tree but provided binary tree.
   set(LLVM_SOURCE_DIR ${LLVM_MAIN_SRC_DIR})
   set(LLVM_BINARY_DIR ${LLVM_BINARY_DIR})
   string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} LLVM_TOOLS_DIR ${LLVM_TOOLS_BINARY_DIR})
   string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} LLVM_LIBS_DIR  ${LLVM_LIBRARY_DIR})
-  string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} SHLIBDIR       ${LLVM_LIBRARY_DIR})
+
+  # SHLIBDIR points the build tree.
+  string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} SHLIBDIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
+
   set(PYTHON_EXECUTABLE ${PYTHON_EXECUTABLE})
   set(ENABLE_SHARED ${LLVM_SHARED_LIBS_ENABLED})
   set(SHLIBPATH_VAR ${SHLIBPATH_VAR})

@@ -3,8 +3,17 @@
 # Adds the name of the generated file to TABLEGEN_OUTPUT.
 
 macro(tablegen project ofn)
-  file(GLOB local_tds "*.td")
-  file(GLOB_RECURSE global_tds "${LLVM_MAIN_INCLUDE_DIR}/llvm/*.td")
+  # Use the list by include_directories().
+  get_property(include_dirs DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
+
+  # Collect possible dependent *.td(s).
+  # FIXME: It is far from optimal.
+  file(GLOB dependent_tds "*.td")
+  foreach(inc ${include_dirs})
+    file(GLOB tds "${inc}/*.td")
+    list(APPEND dependent_tds ${tds})
+  endforeach()
+
   parse_arguments( EX "DEPENDS" "" ${ARGN} )
 
   if (IS_ABSOLUTE ${LLVM_TARGET_DEFINITIONS})
@@ -13,16 +22,20 @@ macro(tablegen project ofn)
     set(LLVM_TARGET_DEFINITIONS_ABSOLUTE 
       ${CMAKE_CURRENT_SOURCE_DIR}/${LLVM_TARGET_DEFINITIONS})
   endif()
+  foreach(inc ${include_dirs})
+    list(APPEND TABLEGEN_INCLUDE_DIRECTORIES -I ${inc})
+  endforeach()
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # Generate tablegen output in a temporary file.
     COMMAND ${${project}_TABLEGEN_EXE} ${EX_DEFAULT_ARGS} -I ${CMAKE_CURRENT_SOURCE_DIR}
-    -I ${LLVM_MAIN_SRC_DIR}/lib/Target -I ${LLVM_MAIN_INCLUDE_DIR}
+    -I ${CMAKE_CURRENT_SOURCE_DIR} -I ${LLVM_MAIN_SRC_DIR}/lib/Target -I ${LLVM_MAIN_INCLUDE_DIR}
+    ${TABLEGEN_INCLUDE_DIRECTORIES}
     ${LLVM_TARGET_DEFINITIONS_ABSOLUTE} 
     -o ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # The file in LLVM_TARGET_DEFINITIONS may be not in the current
     # directory and local_tds may not contain it, so we must
     # explicitly list it here:
-    DEPENDS ${${project}_TABLEGEN_EXE} ${local_tds} ${global_tds} ${EX_DEPENDS}
+    DEPENDS ${${project}_TABLEGEN_EXE} ${dependent_tds} ${EX_DEPENDS}
     ${LLVM_TARGET_DEFINITIONS_ABSOLUTE}
     COMMENT "Building ${ofn}..."
     )
@@ -41,7 +54,7 @@ macro(tablegen project ofn)
   set_property(DIRECTORY APPEND
     PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${ofn}.tmp ${ofn})
 
-  set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn})
+  set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn} PARENT_SCOPE)
   set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn} 
     PROPERTIES GENERATED 1)
   set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn} PROPERTIES HEADER_FILE_ONLY ON)

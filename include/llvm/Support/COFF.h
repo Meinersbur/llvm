@@ -488,8 +488,6 @@ namespace COFF {
     uint32_t NumberOfRvaAndSize;
   };
 
-  typedef PE32Header PEHeader;
-
   struct DataDirectory {
     uint32_t RelativeVirtualAddress;
     uint32_t Size;
@@ -533,6 +531,8 @@ namespace COFF {
   };
 
   enum DLLCharacteristics {
+    /// ASLR with 64 bit address space.
+    IMAGE_DLL_CHARACTERISTICS_HIGH_ENTROPY_VA = 0x0020,
     /// DLL can be relocated at load time.
     IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE = 0x0040,
     /// Code integrity checks are enforced.

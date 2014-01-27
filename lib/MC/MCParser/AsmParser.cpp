@@ -836,7 +836,8 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
         Variant = MCSymbolRefExpr::VK_None;
       } else {
         Variant = MCSymbolRefExpr::VK_None;
-        return TokError("invalid variant '" + Split.second + "'");
+        return Error(SMLoc::getFromPointer(Split.second.begin()),
+                     "invalid variant '" + Split.second + "'");
       }
     }
 
@@ -2795,9 +2796,14 @@ bool AsmParser::parseDirectiveCFISections() {
 }
 
 /// parseDirectiveCFIStartProc
-/// ::= .cfi_startproc
+/// ::= .cfi_startproc [simple]
 bool AsmParser::parseDirectiveCFIStartProc() {
-  getStreamer().EmitCFIStartProc();
+  StringRef Simple;
+  if (getLexer().isNot(AsmToken::EndOfStatement))
+    if (parseIdentifier(Simple) || Simple != "simple")
+      return TokError("unexpected token in .cfi_startproc directive");
+
+  getStreamer().EmitCFIStartProc(!Simple.empty());
   return false;
 }
 

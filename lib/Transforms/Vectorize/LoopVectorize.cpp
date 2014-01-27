@@ -56,6 +56,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -78,6 +79,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PatternMatch.h"
@@ -139,11 +141,36 @@ static const unsigned RuntimeMemoryCheckThreshold = 8;
 /// Maximum simd width.
 static const unsigned MaxVectorWidth = 64;
 
+static cl::opt<unsigned> ForceTargetNumScalarRegs(
+    "force-target-num-scalar-regs", cl::init(0), cl::Hidden,
+    cl::desc("A flag that overrides the target's number of scalar registers."));
+
+static cl::opt<unsigned> ForceTargetNumVectorRegs(
+    "force-target-num-vector-regs", cl::init(0), cl::Hidden,
+    cl::desc("A flag that overrides the target's number of vector registers."));
+
 /// Maximum vectorization unroll count.
 static const unsigned MaxUnrollFactor = 16;
 
-/// The cost of a loop that is considered 'small' by the unroller.
-static const unsigned SmallLoopCost = 20;
+static cl::opt<unsigned> ForceTargetMaxScalarUnrollFactor(
+    "force-target-max-scalar-unroll", cl::init(0), cl::Hidden,
+    cl::desc("A flag that overrides the target's max unroll factor for scalar "
+             "loops."));
+
+static cl::opt<unsigned> ForceTargetMaxVectorUnrollFactor(
+    "force-target-max-vector-unroll", cl::init(0), cl::Hidden,
+    cl::desc("A flag that overrides the target's max unroll factor for "
+             "vectorized loops."));
+
+static cl::opt<unsigned> ForceTargetInstructionCost(
+    "force-target-instruction-cost", cl::init(0), cl::Hidden,
+    cl::desc("A flag that overrides the target's expected cost for "
+             "an instruction to a single constant value. Mostly "
+             "useful for getting consistent testing."));
+
+static cl::opt<unsigned> SmallLoopCost(
+    "small-loop-cost", cl::init(20), cl::Hidden,
+    cl::desc("The cost of a loop that is considered 'small' by the unroller."));
 
 namespace {
 
@@ -955,9 +982,12 @@ struct LoopVectorize : public FunctionPass {
   LoopInfo *LI;
   TargetTransformInfo *TTI;
   DominatorTree *DT;
+  BlockFrequencyInfo *BFI;
   TargetLibraryInfo *TLI;
   bool DisableUnrolling;
   bool AlwaysVectorize;
+
+  BlockFrequency ColdEntryFreq;
 
   virtual bool runOnFunction(Function &F) {
     SE = &getAnalysis<ScalarEvolution>();
@@ -965,7 +995,13 @@ struct LoopVectorize : public FunctionPass {
     LI = &getAnalysis<LoopInfo>();
     TTI = &getAnalysis<TargetTransformInfo>();
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    BFI = &getAnalysis<BlockFrequencyInfo>();
     TLI = getAnalysisIfAvailable<TargetLibraryInfo>();
+
+    // Compute some weights outside of the loop over the loops. Compute this
+    // using a BranchProbability to re-use its scaling math.
+    const BranchProbability ColdProb(1, 5); // 20%
+    ColdEntryFreq = BlockFrequency(BFI->getEntryFreq()) * ColdProb;
 
     // If the target claims to have no vector registers don't attempt
     // vectorization.
@@ -1036,14 +1072,21 @@ struct LoopVectorize : public FunctionPass {
     // Check the function attributes to find out if this function should be
     // optimized for size.
     Function *F = L->getHeader()->getParent();
-    Attribute::AttrKind SzAttr = Attribute::OptimizeForSize;
-    Attribute::AttrKind FlAttr = Attribute::NoImplicitFloat;
-    unsigned FnIndex = AttributeSet::FunctionIndex;
-    bool OptForSize = Hints.Force != 1 &&
-                      F->getAttributes().hasAttribute(FnIndex, SzAttr);
-    bool NoFloat = F->getAttributes().hasAttribute(FnIndex, FlAttr);
+    bool OptForSize =
+        Hints.Force != 1 && F->hasFnAttribute(Attribute::OptimizeForSize);
 
-    if (NoFloat) {
+    // Compute the weighted frequency of this loop being executed and see if it
+    // is less than 20% of the function entry baseline frequency. Note that we
+    // always have a canonical loop here because we think we *can* vectoriez.
+    BlockFrequency LoopEntryFreq = BFI->getBlockFreq(L->getLoopPreheader());
+    if (Hints.Force != 1 && LoopEntryFreq < ColdEntryFreq)
+      OptForSize = true;
+
+    // Check the function attributes to see if implicit floats are allowed.a
+    // FIXME: This check doesn't seem possibly correct -- what if the loop is
+    // an integer loop and the vector instructions selected are purely integer
+    // vector instructions?
+    if (F->hasFnAttribute(Attribute::NoImplicitFloat)) {
       DEBUG(dbgs() << "LV: Can't vectorize when the NoImplicitFloat"
             "attribute is used.\n");
       return false;
@@ -1084,6 +1127,7 @@ struct LoopVectorize : public FunctionPass {
   virtual void getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequiredID(LoopSimplifyID);
     AU.addRequiredID(LCSSAID);
+    AU.addRequired<BlockFrequencyInfo>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfo>();
     AU.addRequired<ScalarEvolution>();
@@ -5037,9 +5081,17 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   if (TC > 1 && TC < TinyTripCountUnrollThreshold)
     return 1;
 
-  unsigned TargetVectorRegisters = TTI.getNumberOfRegisters(true);
-  DEBUG(dbgs() << "LV: The target has " << TargetVectorRegisters <<
-        " vector registers\n");
+  unsigned TargetNumRegisters = TTI.getNumberOfRegisters(VF > 1);
+  DEBUG(dbgs() << "LV: The target has " << TargetNumRegisters <<
+        " registers\n");
+
+  if (VF == 1) {
+    if (ForceTargetNumScalarRegs.getNumOccurrences() > 0)
+      TargetNumRegisters = ForceTargetNumScalarRegs;
+  } else {
+    if (ForceTargetNumVectorRegs.getNumOccurrences() > 0)
+      TargetNumRegisters = ForceTargetNumVectorRegs;
+  }
 
   LoopVectorizationCostModel::RegisterUsage R = calculateRegisterUsage();
   // We divide by these constants so assume that we have at least one
@@ -5052,11 +5104,23 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   // registers. These registers are used by all of the unrolled instances.
   // Next, divide the remaining registers by the number of registers that is
   // required by the loop, in order to estimate how many parallel instances
-  // fit without causing spills.
-  unsigned UF = (TargetVectorRegisters - R.LoopInvariantRegs) / R.MaxLocalUsers;
+  // fit without causing spills. All of this is rounded down if necessary to be
+  // a power of two. We want power of two unroll factors to simplify any
+  // addressing operations or alignment considerations.
+  unsigned UF = PowerOf2Floor((TargetNumRegisters - R.LoopInvariantRegs) /
+                              R.MaxLocalUsers);
 
   // Clamp the unroll factor ranges to reasonable factors.
   unsigned MaxUnrollSize = TTI.getMaximumUnrollFactor();
+
+  // Check if the user has overridden the unroll max.
+  if (VF == 1) {
+    if (ForceTargetMaxScalarUnrollFactor.getNumOccurrences() > 0)
+      MaxUnrollSize = ForceTargetMaxScalarUnrollFactor;
+  } else {
+    if (ForceTargetMaxVectorUnrollFactor.getNumOccurrences() > 0)
+      MaxUnrollSize = ForceTargetMaxVectorUnrollFactor;
+  }
 
   // If we did not calculate the cost for VF (because the user selected the VF)
   // then we calculate the cost of VF here.
@@ -5070,19 +5134,9 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   else if (UF < 1)
     UF = 1;
 
-  bool HasReductions = Legal->getReductionVars()->size();
-
-  // Decide if we want to unroll if we decided that it is legal to vectorize
-  // but not profitable.
-  if (VF == 1) {
-    if (TheLoop->getNumBlocks() > 1 || !HasReductions ||
-        LoopCost > SmallLoopCost)
-      return 1;
-
-    return UF;
-  }
-
-  if (HasReductions) {
+  // Unroll if we vectorized this loop and there is a reduction that could
+  // benefit from unrolling.
+  if (VF > 1 && Legal->getReductionVars()->size()) {
     DEBUG(dbgs() << "LV: Unrolling because of reductions.\n");
     return UF;
   }
@@ -5094,7 +5148,7 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   DEBUG(dbgs() << "LV: Loop cost is " << LoopCost << '\n');
   if (LoopCost < SmallLoopCost) {
     DEBUG(dbgs() << "LV: Unrolling to reduce branch cost.\n");
-    unsigned NewUF = SmallLoopCost / (LoopCost + 1);
+    unsigned NewUF = PowerOf2Floor(SmallLoopCost / LoopCost);
     return std::min(NewUF, UF);
   }
 
@@ -5231,6 +5285,11 @@ unsigned LoopVectorizationCostModel::expectedCost(unsigned VF) {
         continue;
 
       unsigned C = getInstructionCost(it, VF);
+
+      // Check if we should override the cost.
+      if (ForceTargetInstructionCost.getNumOccurrences() > 0)
+        C = ForceTargetInstructionCost;
+
       BlockCost += C;
       DEBUG(dbgs() << "LV: Found an estimated cost of " << C << " for VF " <<
             VF << " For instruction: " << *it << '\n');
@@ -5504,6 +5563,7 @@ char LoopVectorize::ID = 0;
 static const char lv_name[] = "Loop Vectorization";
 INITIALIZE_PASS_BEGIN(LoopVectorize, LV_NAME, lv_name, false, false)
 INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
+INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfo)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
