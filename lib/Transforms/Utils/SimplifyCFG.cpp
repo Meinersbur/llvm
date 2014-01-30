@@ -748,21 +748,22 @@ static void GetBranchWeights(TerminatorInst *TI,
   }
 }
 
-/// Sees if any of the weights are too big for a uint32_t, and halves all the
-/// weights if any are.
+/// Keep halving the weights until all can fit in uint32_t.
 static void FitWeights(MutableArrayRef<uint64_t> Weights) {
-  bool Halve = false;
-  for (unsigned i = 0; i < Weights.size(); ++i)
-    if (Weights[i] > UINT_MAX) {
-      Halve = true;
-      break;
-    }
+  while (true) {
+    bool Halve = false;
+    for (unsigned i = 0; i < Weights.size(); ++i)
+      if (Weights[i] > UINT_MAX) {
+        Halve = true;
+        break;
+      }
 
-  if (! Halve)
-    return;
+    if (! Halve)
+      return;
 
-  for (unsigned i = 0; i < Weights.size(); ++i)
-    Weights[i] /= 2;
+    for (unsigned i = 0; i < Weights.size(); ++i)
+      Weights[i] /= 2;
+  }
 }
 
 /// FoldValueComparisonIntoPredecessors - The specified terminator is a value
@@ -2153,6 +2154,14 @@ bool llvm::FoldBranchToCommonDest(BranchInst *BI) {
     Instruction *NewBonus = 0;
     if (BonusInst) {
       NewBonus = BonusInst->clone();
+
+      // If we moved a load, we cannot any longer claim any knowledge about
+      // its potential value. The previous information might have been valid
+      // only given the branch precondition.
+      // For an analogous reason, we must also drop all the metadata whose
+      // semantics we don't understand.
+      NewBonus->dropUnknownMetadata(LLVMContext::MD_dbg);
+
       PredBlock->getInstList().insert(PBI, NewBonus);
       NewBonus->takeName(BonusInst);
       BonusInst->setName(BonusInst->getName()+".old");

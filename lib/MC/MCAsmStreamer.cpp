@@ -104,7 +104,7 @@ public:
   virtual void AddComment(const Twine &T);
 
   /// AddEncodingComment - Add a comment showing the encoding of an instruction.
-  virtual void AddEncodingComment(const MCInst &Inst);
+  virtual void AddEncodingComment(const MCInst &Inst, const MCSubtargetInfo &);
 
   /// GetCommentOS - Return a raw_ostream that comments can be written to.
   /// Unlike AddComment, you are required to terminate comments with \n if you
@@ -246,7 +246,7 @@ public:
   virtual void EmitWin64EHPushFrame(bool Code);
   virtual void EmitWin64EHEndProlog();
 
-  virtual void EmitInstruction(const MCInst &Inst);
+  virtual void EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI);
 
   virtual void EmitBundleAlignMode(unsigned AlignPow2);
   virtual void EmitBundleLock(bool AlignToEnd);
@@ -1234,12 +1234,13 @@ void MCAsmStreamer::EmitWin64EHEndProlog(void) {
   EmitEOL();
 }
 
-void MCAsmStreamer::AddEncodingComment(const MCInst &Inst) {
+void MCAsmStreamer::AddEncodingComment(const MCInst &Inst,
+                                       const MCSubtargetInfo &STI) {
   raw_ostream &OS = GetCommentOS();
   SmallString<256> Code;
   SmallVector<MCFixup, 4> Fixups;
   raw_svector_ostream VecOS(Code);
-  Emitter->EncodeInstruction(Inst, VecOS, Fixups);
+  Emitter->EncodeInstruction(Inst, VecOS, Fixups, STI);
   VecOS.flush();
 
   // If we are showing fixups, create symbolic markers in the encoded
@@ -1318,13 +1319,13 @@ void MCAsmStreamer::AddEncodingComment(const MCInst &Inst) {
   }
 }
 
-void MCAsmStreamer::EmitInstruction(const MCInst &Inst) {
+void MCAsmStreamer::EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) {
   assert(getCurrentSection().first &&
          "Cannot emit contents before setting section!");
 
   // Show the encoding in a comment if we have a code emitter.
   if (Emitter)
-    AddEncodingComment(Inst);
+    AddEncodingComment(Inst, STI);
 
   // Show the MCInst if enabled.
   if (ShowInst) {

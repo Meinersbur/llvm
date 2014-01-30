@@ -56,6 +56,7 @@ message("new_llvm_target(${name} ${ARGN})")
   endif()
   
   llvm_process_sources( ALL_FILES ${PARM_SOURCES} )
+  llvm_update_compile_flags(${name})
   set (_srcs)
   set (_additional_srcs)
   foreach (_src IN LISTS ALL_FILES)
@@ -184,20 +185,45 @@ endmacro(new_llvm_target name)
 
 
 function(llvm_update_compile_flags name)
-  get_property(target_compile_flags TARGET ${name} PROPERTY COMPILE_FLAGS)
-  if(NOT "${LLVM_COMPILE_FLAGS}" STREQUAL "")
-    set(target_compile_flags "${target_compile_flags} ${LLVM_COMPILE_FLAGS}")
+  get_property(sources TARGET ${name} PROPERTY SOURCES)
+  if("${sources}" MATCHES "\\.c(;|$)")
+    set(update_src_props ON)
   endif()
-  if(LLVM_NO_RTTI)
+
+  if(LLVM_REQUIRES_EH)
+    set(LLVM_REQUIRES_RTTI ON)
+  else()
+    if(LLVM_COMPILER_IS_GCC_COMPATIBLE)
+      set(target_compile_flags "${target_compile_flags} -fno-exceptions")
+    elseif(MSVC)
+      list(APPEND LLVM_COMPILE_DEFINITIONS _HAS_EXCEPTIONS=0)
+      set(target_compile_flags "${target_compile_flags} /EHs-c-")
+    endif()
+  endif()
+
+  if(NOT LLVM_REQUIRES_RTTI)
     list(APPEND LLVM_COMPILE_DEFINITIONS GTEST_HAS_RTTI=0)
     if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
       set(target_compile_flags "${target_compile_flags} -fno-rtti")
     elseif (MSVC)
-      llvm_replace_compiler_option(target_compile_flags "/GR" "/GR-")
+      set(target_compile_flags "${target_compile_flags} /GR-")
     endif ()
   endif()
 
-  set_property(TARGET ${name} PROPERTY COMPILE_FLAGS "${target_compile_flags}")
+  if(update_src_props)
+    foreach(fn ${sources})
+      get_filename_component(suf ${fn} EXT)
+      if("${suf}" STREQUAL ".cpp")
+	set_property(SOURCE ${fn} APPEND_STRING PROPERTY
+	  COMPILE_FLAGS "${target_compile_flags}")
+      endif()
+    endforeach()
+  else()
+    # Update target props, since all sources are C++.
+    set_property(TARGET ${name} APPEND_STRING PROPERTY
+      COMPILE_FLAGS "${target_compile_flags}")
+  endif()
+
   set_property(TARGET ${name} APPEND PROPERTY COMPILE_DEFINITIONS ${LLVM_COMPILE_DEFINITIONS})
 endfunction()
 
@@ -281,21 +307,12 @@ function(add_llvm_symbol_exports target_name export_file)
 endfunction(add_llvm_symbol_exports)
 
 function(add_dead_strip target_name)
-  # FIXME: With MSVS, consider compiling with /Gy and linking with /OPT:REF?
-  # But MinSizeRel seems to add that automatically, so maybe disable these
-  # flags instead if LLVM_NO_DEAD_STRIP is set.
-  if(NOT CYGWIN AND NOT MINGW AND NOT MSVC)
-    if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-       SET(CMAKE_CXX_FLAGS
-           "${CMAKE_CXX_FLAGS}  -ffunction-sections -fdata-sections"
-           PARENT_SCOPE)
-    endif()
-  endif()
   if(NOT LLVM_NO_DEAD_STRIP)
     if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                    LINK_FLAGS " -Wl,-dead_strip")
     elseif(NOT WIN32)
+      # Object files are compiled with -ffunction-data-sections.
       set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                    LINK_FLAGS " -Wl,--gc-sections")
     endif()
@@ -351,6 +368,7 @@ ${name} ignored.")
 
     add_library( ${name} ${libkind} ${ALL_FILES} )
     set_target_properties( ${name} PROPERTIES PREFIX "" )
+    llvm_update_compile_flags(${name})
 
     llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
     link_system_libs( ${name} )
@@ -376,6 +394,7 @@ ${name} ignored.")
 endmacro(add_llvm_loadable_module name)
 
 
+  llvm_update_compile_flags(${name})
 set (LLVM_TOOLCHAIN_TOOLS
   llvm-ar
   llvm-objdump
@@ -501,7 +520,7 @@ function(add_unittest test_suite test_name)
      set(LLVM_COMPILE_FLAGS "-Wno-variadic-macros")
   endif ()
   
-  set(LLVM_NO_RTTI ON)
+  set(LLVM_REQUIRES_RTTI OFF)
 
   add_llvm_executable(${test_name} ${ARGN} LINK_LIBS2 gtest gtest_main LLVMSupport)
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
@@ -512,7 +531,6 @@ function(add_unittest test_suite test_name)
   if (NOT ${test_suite_folder} STREQUAL "NOTFOUND")
     set_property(TARGET ${test_name} PROPERTY FOLDER "${test_suite_folder}")
   endif ()
-  llvm_update_compile_flags(${test_name})
 endfunction()
 
 # This function provides an automatic way to 'configure'-like generate a file

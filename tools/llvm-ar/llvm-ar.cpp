@@ -703,7 +703,8 @@ static void writeSymbolTable(
        I != E; ++I, ++MemberNum) {
     MemoryBuffer *MemberBuffer = Buffers[MemberNum];
     ErrorOr<object::ObjectFile *> ObjOrErr =
-        object::ObjectFile::createObjectFile(MemberBuffer, false);
+        object::ObjectFile::createObjectFile(MemberBuffer, false,
+                                             sys::fs::file_magic::unknown);
     if (!ObjOrErr)
       continue;  // FIXME: check only for "not an object file" errors.
     object::ObjectFile *Obj = ObjOrErr.get();
@@ -715,10 +716,9 @@ static void writeSymbolTable(
       print32BE(Out, 0);
     }
 
-    error_code Err;
     for (object::symbol_iterator I = Obj->begin_symbols(),
                                  E = Obj->end_symbols();
-         I != E; I.increment(Err), failIfError(Err)) {
+         I != E; ++I) {
       uint32_t Symflags;
       failIfError(I->getFlags(Symflags));
       if (Symflags & object::SymbolRef::SF_FormatSpecific)

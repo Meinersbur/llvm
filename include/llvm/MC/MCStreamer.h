@@ -33,6 +33,7 @@ class MCInstPrinter;
 class MCSection;
 class MCStreamer;
 class MCSymbol;
+class MCSymbolRefExpr;
 class MCSubtargetInfo;
 class StringRef;
 class Twine;
@@ -92,6 +93,7 @@ public:
   virtual void emitHandlerData() = 0;
   virtual void emitSetFP(unsigned FpReg, unsigned SpReg,
                          int64_t Offset = 0) = 0;
+  virtual void emitMovSP(unsigned Reg, int64_t Offset = 0) = 0;
   virtual void emitPad(int64_t Offset) = 0;
   virtual void emitRegSave(const SmallVectorImpl<unsigned> &RegList,
                            bool isVector) = 0;
@@ -105,8 +107,11 @@ public:
                                     StringRef StringValue = "") = 0;
   virtual void emitFPU(unsigned FPU) = 0;
   virtual void emitArch(unsigned Arch) = 0;
+  virtual void emitObjectArch(unsigned Arch) = 0;
   virtual void finishAttributeSection() = 0;
   virtual void emitInst(uint32_t Inst, char Suffix = '\0') = 0;
+
+  virtual void AnnotateTLSDescriptorSequence(const MCSymbolRefExpr *SRE) = 0;
 };
 
 /// MCStreamer - Streaming machine code generation interface.  This interface
@@ -663,7 +668,7 @@ public:
 
   /// EmitInstruction - Emit the given @p Instruction into the current
   /// section.
-  virtual void EmitInstruction(const MCInst &Inst) = 0;
+  virtual void EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) = 0;
 
   /// \brief Set the bundle alignment mode from now on in the section.
   /// The argument is the power of 2 to which the alignment is set. The
