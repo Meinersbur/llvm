@@ -56,7 +56,6 @@ message("new_llvm_target(${name} ${ARGN})")
   endif()
   
   llvm_process_sources( ALL_FILES ${PARM_SOURCES} )
-  llvm_update_compile_flags(${name})
   set (_srcs)
   set (_additional_srcs)
   foreach (_src IN LISTS ALL_FILES)
@@ -181,6 +180,8 @@ endif()
 #message("target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})")
     target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})
   endif ()
+  
+  llvm_update_compile_flags(${name})
 endmacro(new_llvm_target name)
 
 
@@ -394,7 +395,6 @@ ${name} ignored.")
 endmacro(add_llvm_loadable_module name)
 
 
-  llvm_update_compile_flags(${name})
 set (LLVM_TOOLCHAIN_TOOLS
   llvm-ar
   llvm-objdump
