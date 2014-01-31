@@ -233,6 +233,12 @@ static MCFixupKind getImmFixupKind(uint64_t TSFlags) {
   unsigned Size = X86II::getSizeOfImm(TSFlags);
   bool isPCRel = X86II::isImmPCRel(TSFlags);
 
+  if (X86II::isImmSigned(TSFlags)) {
+    switch (Size) {
+    default: llvm_unreachable("Unsupported signed fixup size!");
+    case 4: return MCFixupKind(X86::reloc_signed_4byte);
+    }
+  }
   return MCFixup::getKindForSize(Size, isPCRel);
 }
 
@@ -645,7 +651,7 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   //  0b01000: XOP map select - 08h instructions with imm byte
   //  0b01001: XOP map select - 09h instructions with no imm byte
   //  0b01010: XOP map select - 0Ah instructions with imm dword
-  unsigned char VEX_5M = 0x1;
+  unsigned char VEX_5M = 0;
 
   // VEX_4V (VEX vvvv field): a register specifier
   // (in 1's complement form) or 1111 if unused.
@@ -701,56 +707,22 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   if (HasEVEX && ((TSFlags >> X86II::VEXShift) & X86II::EVEX_B))
     EVEX_b = 1;
 
-  switch (TSFlags & X86II::Op0Mask) {
-  default: llvm_unreachable("Invalid prefix!");
-  case X86II::T8:  // 0F 38
-    VEX_5M = 0x2;
-    break;
-  case X86II::TA:  // 0F 3A
-    VEX_5M = 0x3;
-    break;
-  case X86II::T8PD: // 66 0F 38
-    VEX_PP = 0x1;
-    VEX_5M = 0x2;
-    break;
-  case X86II::T8XS: // F3 0F 38
-    VEX_PP = 0x2;
-    VEX_5M = 0x2;
-    break;
-  case X86II::T8XD: // F2 0F 38
-    VEX_PP = 0x3;
-    VEX_5M = 0x2;
-    break;
-  case X86II::TAPD: // 66 0F 3A
-    VEX_PP = 0x1;
-    VEX_5M = 0x3;
-    break;
-  case X86II::TAXD: // F2 0F 3A
-    VEX_PP = 0x3;
-    VEX_5M = 0x3;
-    break;
-  case X86II::PD:  // 66 0F
-    VEX_PP = 0x1;
-    break;
-  case X86II::XS:  // F3 0F
-    VEX_PP = 0x2;
-    break;
-  case X86II::XD:  // F2 0F
-    VEX_PP = 0x3;
-    break;
-  case X86II::XOP8:
-    VEX_5M = 0x8;
-    break;
-  case X86II::XOP9:
-    VEX_5M = 0x9;
-    break;
-  case X86II::XOPA:
-    VEX_5M = 0xA;
-    break;
-  case X86II::TB: // VEX_5M/VEX_PP already correct
-    break;
+  switch (TSFlags & X86II::OpPrefixMask) {
+  default: break; // VEX_PP already correct
+  case X86II::PD: VEX_PP = 0x1; break; // 66
+  case X86II::XS: VEX_PP = 0x2; break; // F3
+  case X86II::XD: VEX_PP = 0x3; break; // F2
   }
 
+  switch (TSFlags & X86II::OpMapMask) {
+  default: llvm_unreachable("Invalid prefix!");
+  case X86II::TB:   VEX_5M = 0x1; break; // 0F
+  case X86II::T8:   VEX_5M = 0x2; break; // 0F 38
+  case X86II::TA:   VEX_5M = 0x3; break; // 0F 3A
+  case X86II::XOP8: VEX_5M = 0x8; break;
+  case X86II::XOP9: VEX_5M = 0x9; break;
+  case X86II::XOPA: VEX_5M = 0xA; break;
+  }
 
   // Classify VEX_B, VEX_4V, VEX_R, VEX_X
   unsigned NumOps = Desc.getNumOperands();
@@ -960,10 +932,6 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
     break;
   }
 
-  // Emit segment override opcode prefix as needed.
-  if (MemOperand >= 0)
-    EmitSegmentOverridePrefix(CurByte, MemOperand+X86::AddrSegmentReg, MI, OS);
-
   if (!HasEVEX) {
     // VEX opcode prefix can have 2 or 3 bytes
     //
@@ -1146,91 +1114,19 @@ void X86MCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
                                         const MCSubtargetInfo &STI,
                                         raw_ostream &OS) const {
 
-  // Emit the lock opcode prefix as needed.
-  if (TSFlags & X86II::LOCK)
-    EmitByte(0xF0, CurByte, OS);
-
-  // Emit segment override opcode prefix as needed.
-  if (MemOperand >= 0)
-    EmitSegmentOverridePrefix(CurByte, MemOperand+X86::AddrSegmentReg, MI, OS);
-
-  // Emit the repeat opcode prefix as needed.
-  if ((TSFlags & X86II::Op0Mask) == X86II::REP)
-    EmitByte(0xF3, CurByte, OS);
-
-  // Emit the address size opcode prefix as needed.
-  bool need_address_override;
-  // The AdSize prefix is only for 32-bit and 64-bit modes. Hm, perhaps we
-  // should introduce an AdSize16 bit instead of having seven special cases?
-  if ((!is16BitMode(STI) && TSFlags & X86II::AdSize) ||
-      (is16BitMode(STI) && (MI.getOpcode() == X86::JECXZ_32 ||
-                         MI.getOpcode() == X86::MOV8o8a ||
-                         MI.getOpcode() == X86::MOV16o16a ||
-                         MI.getOpcode() == X86::MOV32o32a ||
-                         MI.getOpcode() == X86::MOV8ao8 ||
-                         MI.getOpcode() == X86::MOV16ao16 ||
-                         MI.getOpcode() == X86::MOV32ao32))) {
-    need_address_override = true;
-  } else if (MemOperand == -1) {
-    need_address_override = false;
-  } else if (is64BitMode(STI)) {
-    assert(!Is16BitMemOperand(MI, MemOperand, STI));
-    need_address_override = Is32BitMemOperand(MI, MemOperand);
-  } else if (is32BitMode(STI)) {
-    assert(!Is64BitMemOperand(MI, MemOperand));
-    need_address_override = Is16BitMemOperand(MI, MemOperand, STI);
-  } else {
-    assert(is16BitMode(STI));
-    assert(!Is64BitMemOperand(MI, MemOperand));
-    need_address_override = !Is16BitMemOperand(MI, MemOperand, STI);
-  }
-
-  if (need_address_override)
-    EmitByte(0x67, CurByte, OS);
-
   // Emit the operand size opcode prefix as needed.
   if (TSFlags & (is16BitMode(STI) ? X86II::OpSize16 : X86II::OpSize))
     EmitByte(0x66, CurByte, OS);
 
-  bool Need0FPrefix = false;
-  switch (TSFlags & X86II::Op0Mask) {
-  default: llvm_unreachable("Invalid prefix!");
-  case 0: break;  // No prefix!
-  case X86II::REP: break; // already handled.
-  case X86II::TB:  // Two-byte opcode prefix
-  case X86II::T8:  // 0F 38
-  case X86II::TA:  // 0F 3A
-  case X86II::A6:  // 0F A6
-  case X86II::A7:  // 0F A7
-    Need0FPrefix = true;
-    break;
-  case X86II::PD:   // 66 0F
-  case X86II::T8PD: // 66 0F 38
-  case X86II::TAPD: // 66 0F 3A
+  switch (TSFlags & X86II::OpPrefixMask) {
+  case X86II::PD:   // 66
     EmitByte(0x66, CurByte, OS);
-    Need0FPrefix = true;
     break;
-  case X86II::XS:   // F3 0F
-  case X86II::T8XS: // F3 0F 38
+  case X86II::XS:   // F3
     EmitByte(0xF3, CurByte, OS);
-    Need0FPrefix = true;
     break;
-  case X86II::XD:   // F2 0F
-  case X86II::T8XD: // F2 0F 38
-  case X86II::TAXD: // F2 0F 3A
+  case X86II::XD:   // F2
     EmitByte(0xF2, CurByte, OS);
-    Need0FPrefix = true;
-    break;
-  case X86II::D8:
-  case X86II::D9:
-  case X86II::DA:
-  case X86II::DB:
-  case X86II::DC:
-  case X86II::DD:
-  case X86II::DE:
-  case X86II::DF:
-    EmitByte(0xD8+(((TSFlags & X86II::Op0Mask) - X86II::D8) >> X86II::Op0Shift),
-             CurByte, OS);
     break;
   }
 
@@ -1242,19 +1138,25 @@ void X86MCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   }
 
   // 0x0F escape code must be emitted just before the opcode.
-  if (Need0FPrefix)
+  switch (TSFlags & X86II::OpMapMask) {
+  case X86II::TB:  // Two-byte opcode map
+  case X86II::T8:  // 0F 38
+  case X86II::TA:  // 0F 3A
+  case X86II::A6:  // 0F A6
+  case X86II::A7:  // 0F A7
     EmitByte(0x0F, CurByte, OS);
+    break;
+  case X86II::D8: case X86II::D9: case X86II::DA: case X86II::DB:
+  case X86II::DC: case X86II::DD: case X86II::DE: case X86II::DF:
+    EmitByte(0xD8+(((TSFlags & X86II::OpMapMask) - X86II::D8) >>
+                   X86II::OpMapShift), CurByte, OS);
+    break;
+  }
 
-  // FIXME: Pull this up into previous switch if REX can be moved earlier.
-  switch (TSFlags & X86II::Op0Mask) {
-  case X86II::T8PD:  // 66 0F 38
-  case X86II::T8XS:  // F3 0F 38
-  case X86II::T8XD:  // F2 0F 38
+  switch (TSFlags & X86II::OpMapMask) {
   case X86II::T8:    // 0F 38
     EmitByte(0x38, CurByte, OS);
     break;
-  case X86II::TAPD:  // 66 0F 3A
-  case X86II::TAXD:  // F2 0F 3A
   case X86II::TA:    // 0F 3A
     EmitByte(0x3A, CurByte, OS);
     break;
@@ -1302,6 +1204,49 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
   // Determine where the memory operand starts, if present.
   int MemoryOperand = X86II::getMemoryOperandNo(TSFlags, Opcode);
   if (MemoryOperand != -1) MemoryOperand += CurOp;
+
+  // Emit the lock opcode prefix as needed.
+  if (TSFlags & X86II::LOCK)
+    EmitByte(0xF0, CurByte, OS);
+
+  // Emit segment override opcode prefix as needed.
+  if (MemoryOperand >= 0)
+    EmitSegmentOverridePrefix(CurByte, MemoryOperand+X86::AddrSegmentReg,
+                              MI, OS);
+
+  // Emit the repeat opcode prefix as needed.
+  if (TSFlags & X86II::REP)
+    EmitByte(0xF3, CurByte, OS);
+
+  // Emit the address size opcode prefix as needed.
+  bool need_address_override;
+  // The AdSize prefix is only for 32-bit and 64-bit modes. Hm, perhaps we
+  // should introduce an AdSize16 bit instead of having seven special cases?
+  if ((!is16BitMode(STI) && TSFlags & X86II::AdSize) ||
+      (is16BitMode(STI) && (MI.getOpcode() == X86::JECXZ_32 ||
+                         MI.getOpcode() == X86::MOV8o8a ||
+                         MI.getOpcode() == X86::MOV16o16a ||
+                         MI.getOpcode() == X86::MOV32o32a ||
+                         MI.getOpcode() == X86::MOV8ao8 ||
+                         MI.getOpcode() == X86::MOV16ao16 ||
+                         MI.getOpcode() == X86::MOV32ao32))) {
+    need_address_override = true;
+  } else if (MemoryOperand < 0) {
+    need_address_override = false;
+  } else if (is64BitMode(STI)) {
+    assert(!Is16BitMemOperand(MI, MemoryOperand, STI));
+    need_address_override = Is32BitMemOperand(MI, MemoryOperand);
+  } else if (is32BitMode(STI)) {
+    assert(!Is64BitMemOperand(MI, MemoryOperand));
+    need_address_override = Is16BitMemOperand(MI, MemoryOperand, STI);
+  } else {
+    assert(is16BitMode(STI));
+    assert(!Is64BitMemOperand(MI, MemoryOperand));
+    need_address_override = !Is16BitMemOperand(MI, MemoryOperand, STI);
+  }
+
+  if (need_address_override)
+    EmitByte(0x67, CurByte, OS);
 
   if (!HasVEXPrefix)
     EmitOpcodePrefix(TSFlags, CurByte, MemoryOperand, MI, Desc, STI, OS);
@@ -1566,17 +1511,8 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
       EmitImmediate(MCOperand::CreateImm(RegNum), MI.getLoc(), 1, FK_Data_1,
                     CurByte, OS, Fixups);
     } else {
-      unsigned FixupKind;
-      // FIXME: Is there a better way to know that we need a signed relocation?
-      if (MI.getOpcode() == X86::ADD64ri32 ||
-          MI.getOpcode() == X86::MOV64ri32 ||
-          MI.getOpcode() == X86::MOV64mi32 ||
-          MI.getOpcode() == X86::PUSH64i32)
-        FixupKind = X86::reloc_signed_4byte;
-      else
-        FixupKind = getImmFixupKind(TSFlags);
       EmitImmediate(MI.getOperand(CurOp++), MI.getLoc(),
-                    X86II::getSizeOfImm(TSFlags), MCFixupKind(FixupKind),
+                    X86II::getSizeOfImm(TSFlags), getImmFixupKind(TSFlags),
                     CurByte, OS, Fixups);
     }
   }

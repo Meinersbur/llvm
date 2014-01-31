@@ -44,11 +44,7 @@ using namespace llvm;
 using namespace object;
 
 namespace {
-enum OutputFormatTy {
-  bsd,
-  sysv,
-  posix
-};
+enum OutputFormatTy { bsd, sysv, posix };
 cl::opt<OutputFormatTy> OutputFormat(
     "format", cl::desc("Specify output format"),
     cl::values(clEnumVal(bsd, "BSD format"), clEnumVal(sysv, "System V format"),
@@ -219,15 +215,15 @@ static void sortAndPrintSymbolList() {
     char SymbolAddrStr[10] = "";
     char SymbolSizeStr[10] = "";
 
-    if (OutputFormat == sysv || I->Address == object::UnknownAddressOrSize)
+    if (OutputFormat == sysv || I->Address == UnknownAddressOrSize)
       strcpy(SymbolAddrStr, "        ");
     if (OutputFormat == sysv)
       strcpy(SymbolSizeStr, "        ");
 
-    if (I->Address != object::UnknownAddressOrSize)
+    if (I->Address != UnknownAddressOrSize)
       format("%08" PRIx64, I->Address)
           .print(SymbolAddrStr, sizeof(SymbolAddrStr));
-    if (I->Size != object::UnknownAddressOrSize)
+    if (I->Size != UnknownAddressOrSize)
       format("%08" PRIx64, I->Size).print(SymbolSizeStr, sizeof(SymbolSizeStr));
 
     if (OutputFormat == posix) {
@@ -238,7 +234,7 @@ static void sortAndPrintSymbolList() {
         outs() << SymbolAddrStr << ' ';
       if (PrintSize) {
         outs() << SymbolSizeStr;
-        if (I->Size != object::UnknownAddressOrSize)
+        if (I->Size != UnknownAddressOrSize)
           outs() << ' ';
       }
       outs() << I->TypeChar << " " << I->Name << "\n";
@@ -291,8 +287,8 @@ static void dumpSymbolNameForGlobalValue(GlobalValue &GV) {
     return;
 
   NMSymbol S;
-  S.Address = object::UnknownAddressOrSize;
-  S.Size = object::UnknownAddressOrSize;
+  S.Address = UnknownAddressOrSize;
+  S.Size = UnknownAddressOrSize;
   S.TypeChar = TypeChar;
   S.Name = GV.getName();
   SymbolList.push_back(S);
@@ -531,12 +527,38 @@ static char getNMTypeChar(ObjectFile *Obj, symbol_iterator I) {
   return Res;
 }
 
+static void getDynamicSymbolIterators(ObjectFile *Obj, symbol_iterator &Begin,
+                                      symbol_iterator &End) {
+  if (ELF32LEObjectFile *ELF = dyn_cast<ELF32LEObjectFile>(Obj)) {
+    Begin = ELF->begin_dynamic_symbols();
+    End = ELF->end_dynamic_symbols();
+    return;
+  }
+  if (ELF64LEObjectFile *ELF = dyn_cast<ELF64LEObjectFile>(Obj)) {
+    Begin = ELF->begin_dynamic_symbols();
+    End = ELF->end_dynamic_symbols();
+    return;
+  }
+  if (ELF32BEObjectFile *ELF = dyn_cast<ELF32BEObjectFile>(Obj)) {
+    Begin = ELF->begin_dynamic_symbols();
+    End = ELF->end_dynamic_symbols();
+    return;
+  }
+  ELF64BEObjectFile *ELF = cast<ELF64BEObjectFile>(Obj);
+  Begin = ELF->begin_dynamic_symbols();
+  End = ELF->end_dynamic_symbols();
+  return;
+}
+
 static void dumpSymbolNamesFromObject(ObjectFile *Obj) {
   symbol_iterator IBegin = Obj->begin_symbols();
   symbol_iterator IEnd = Obj->end_symbols();
   if (DynamicSyms) {
-    IBegin = Obj->begin_dynamic_symbols();
-    IEnd = Obj->end_dynamic_symbols();
+    if (!Obj->isELF()) {
+      error("File format has no dynamic symbol table", Obj->getFileName());
+      return;
+    }
+    getDynamicSymbolIterators(Obj, IBegin, IEnd);
   }
   for (symbol_iterator I = IBegin; I != IEnd; ++I) {
     uint32_t SymFlags;
@@ -545,8 +567,8 @@ static void dumpSymbolNamesFromObject(ObjectFile *Obj) {
     if (!DebugSyms && (SymFlags & SymbolRef::SF_FormatSpecific))
       continue;
     NMSymbol S;
-    S.Size = object::UnknownAddressOrSize;
-    S.Address = object::UnknownAddressOrSize;
+    S.Size = UnknownAddressOrSize;
+    S.Address = UnknownAddressOrSize;
     if (PrintSize || SizeSort) {
       if (error(I->getSize(S.Size)))
         break;
@@ -581,69 +603,64 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
       dumpSymbolNamesFromModule(Result);
       delete Result;
     }
-  } else if (Magic == sys::fs::file_magic::archive) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), Magic);
-    if (error(BinaryOrErr.getError(), Filename))
-      return;
-    OwningPtr<Binary> Arch(BinaryOrErr.get());
+    return;
+  }
 
-    if (object::Archive *A = dyn_cast<object::Archive>(Arch.get())) {
-      if (ArchiveMap) {
-        object::Archive::symbol_iterator I = A->symbol_begin();
-        object::Archive::symbol_iterator E = A->symbol_end();
-        if (I != E) {
-          outs() << "Archive map"
-                 << "\n";
-          for (; I != E; ++I) {
-            object::Archive::child_iterator C;
-            StringRef SymName;
-            StringRef FileName;
-            if (error(I->getMember(C)))
-              return;
-            if (error(I->getName(SymName)))
-              return;
-            if (error(C->getName(FileName)))
-              return;
-            outs() << SymName << " in " << FileName << "\n";
-          }
-          outs() << "\n";
-        }
-      }
+  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer.take(), Magic);
+  if (error(BinaryOrErr.getError(), Filename))
+    return;
+  OwningPtr<Binary> Bin(BinaryOrErr.get());
 
-      for (object::Archive::child_iterator I = A->child_begin(),
-                                           E = A->child_end();
-           I != E; ++I) {
-        OwningPtr<Binary> Child;
-        if (I->getAsBinary(Child)) {
-          // Try opening it as a bitcode file.
-          OwningPtr<MemoryBuffer> Buff;
-          if (error(I->getMemoryBuffer(Buff)))
+  if (Archive *A = dyn_cast<Archive>(Bin.get())) {
+    if (ArchiveMap) {
+      Archive::symbol_iterator I = A->symbol_begin();
+      Archive::symbol_iterator E = A->symbol_end();
+      if (I != E) {
+        outs() << "Archive map\n";
+        for (; I != E; ++I) {
+          Archive::child_iterator C;
+          StringRef SymName;
+          StringRef FileName;
+          if (error(I->getMember(C)))
             return;
-
-          ErrorOr<Module *> ModuleOrErr = parseBitcodeFile(Buff.get(), Context);
-          if (ModuleOrErr) {
-            Module *Result = ModuleOrErr.get();
-            dumpSymbolNamesFromModule(Result);
-            delete Result;
-          }
-          continue;
+          if (error(I->getName(SymName)))
+            return;
+          if (error(C->getName(FileName)))
+            return;
+          outs() << SymName << " in " << FileName << "\n";
         }
-        if (object::ObjectFile *O = dyn_cast<ObjectFile>(Child.get())) {
-          outs() << O->getFileName() << ":\n";
-          dumpSymbolNamesFromObject(O);
-        }
+        outs() << "\n";
       }
     }
-  } else if (Magic == sys::fs::file_magic::macho_universal_binary) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), Magic);
-    if (error(BinaryOrErr.getError(), Filename))
-      return;
-    OwningPtr<Binary> Bin(BinaryOrErr.get());
 
-    object::MachOUniversalBinary *UB =
-        cast<object::MachOUniversalBinary>(Bin.get());
-    for (object::MachOUniversalBinary::object_iterator I = UB->begin_objects(),
-                                                       E = UB->end_objects();
+    for (Archive::child_iterator I = A->child_begin(), E = A->child_end();
+         I != E; ++I) {
+      OwningPtr<Binary> Child;
+      if (I->getAsBinary(Child)) {
+        // Try opening it as a bitcode file.
+        OwningPtr<MemoryBuffer> Buff;
+        if (error(I->getMemoryBuffer(Buff)))
+          return;
+
+        ErrorOr<Module *> ModuleOrErr = parseBitcodeFile(Buff.get(), Context);
+        if (ModuleOrErr) {
+          Module *Result = ModuleOrErr.get();
+          dumpSymbolNamesFromModule(Result);
+          delete Result;
+        }
+        continue;
+      }
+      if (ObjectFile *O = dyn_cast<ObjectFile>(Child.get())) {
+        outs() << O->getFileName() << ":\n";
+        dumpSymbolNamesFromObject(O);
+      }
+    }
+    return;
+  }
+  if (MachOUniversalBinary *UB =
+          dyn_cast<object::MachOUniversalBinary>(Bin.get())) {
+    for (MachOUniversalBinary::object_iterator I = UB->begin_objects(),
+                                               E = UB->end_objects();
          I != E; ++I) {
       OwningPtr<ObjectFile> Obj;
       if (!I->getAsObjectFile(Obj)) {
@@ -651,17 +668,14 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
         dumpSymbolNamesFromObject(Obj.get());
       }
     }
-  } else if (Magic.is_object()) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), Magic);
-    if (error(BinaryOrErr.getError(), Filename))
-      return;
-    OwningPtr<Binary> Obj(BinaryOrErr.get());
-    if (object::ObjectFile *O = dyn_cast<ObjectFile>(Obj.get()))
-      dumpSymbolNamesFromObject(O);
-  } else {
-    error("unrecognizable file type", Filename);
     return;
   }
+  if (ObjectFile *O = dyn_cast<ObjectFile>(Bin.get())) {
+    dumpSymbolNamesFromObject(O);
+    return;
+  }
+  error("unrecognizable file type", Filename);
+  return;
 }
 
 int main(int argc, char **argv) {
