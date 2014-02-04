@@ -65,7 +65,7 @@ protected:
   error_code getSymbolAlignment(DataRefImpl Symb, uint32_t &Res) const
       LLVM_OVERRIDE;
   error_code getSymbolSize(DataRefImpl Symb, uint64_t &Res) const LLVM_OVERRIDE;
-  error_code getSymbolFlags(DataRefImpl Symb, uint32_t &Res) const;
+  uint32_t getSymbolFlags(DataRefImpl Symb) const LLVM_OVERRIDE;
   error_code getSymbolType(DataRefImpl Symb, SymbolRef::Type &Res) const
       LLVM_OVERRIDE;
   error_code getSymbolSection(DataRefImpl Symb, section_iterator &Res) const
@@ -378,11 +378,11 @@ error_code ELFObjectFile<ELFT>::getSymbolType(DataRefImpl Symb,
 }
 
 template <class ELFT>
-error_code ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb,
-                                               uint32_t &Result) const {
-  const Elf_Sym *ESym = getSymbol(Symb);
+uint32_t ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb) const {
+  Elf_Sym_Iter EIter = toELFSymIter(Symb);
+  const Elf_Sym *ESym = &*EIter;
 
-  Result = SymbolRef::SF_None;
+  uint32_t Result = SymbolRef::SF_None;
 
   if (ESym->getBinding() != ELF::STB_LOCAL)
     Result |= SymbolRef::SF_Global;
@@ -394,7 +394,7 @@ error_code ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb,
     Result |= SymbolRef::SF_Absolute;
 
   if (ESym->getType() == ELF::STT_FILE || ESym->getType() == ELF::STT_SECTION ||
-      ESym == &*EF.begin_symbols())
+      EIter == EF.begin_symbols() || EIter == EF.begin_dynamic_symbols())
     Result |= SymbolRef::SF_FormatSpecific;
 
   if (EF.getSymbolTableIndex(ESym) == ELF::SHN_UNDEF)
@@ -407,7 +407,7 @@ error_code ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb,
   if (ESym->getType() == ELF::STT_TLS)
     Result |= SymbolRef::SF_ThreadLocal;
 
-  return object_error::success;
+  return Result;
 }
 
 template <class ELFT>

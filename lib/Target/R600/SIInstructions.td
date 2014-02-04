@@ -1671,7 +1671,12 @@ def : BitConvert <i128, v4i32,  VReg_128>;
 def : BitConvert <v8i32, v32i8, SReg_256>;
 def : BitConvert <v32i8, v8i32, SReg_256>;
 def : BitConvert <v8i32, v32i8, VReg_256>;
+def : BitConvert <v8i32, v8f32, VReg_256>;
+def : BitConvert <v8f32, v8i32, VReg_256>;
 def : BitConvert <v32i8, v8i32, VReg_256>;
+
+def : BitConvert <v16i32, v16f32, VReg_512>;
+def : BitConvert <v16f32, v16i32, VReg_512>;
 
 /********** =================== **********/
 /********** Src & Dst modifiers **********/
@@ -1683,16 +1688,30 @@ def : Pat <
    0 /* ABS */, 1 /* CLAMP */, 0 /* OMOD */, 0 /* NEG */)
 >;
 
+/********** ================================ **********/
+/********** Floating point absolute/negative **********/
+/********** ================================ **********/
+
+// Manipulate the sign bit directly, as e.g. using the source negation modifier
+// in V_ADD_F32_e64 $src, 0, [...] does not result in -0.0 for $src == +0.0,
+// breaking the piglit *s-floatBitsToInt-neg* tests
+
+// TODO: Look into not implementing isFNegFree/isFAbsFree for SI, and possibly
+// removing these patterns
+
+def : Pat <
+  (fneg (fabs f32:$src)),
+  (V_OR_B32_e32 $src, (V_MOV_B32_e32 0x80000000)) /* Set sign bit */
+>;
+
 def : Pat <
   (fabs f32:$src),
-  (V_ADD_F32_e64 $src, (i32 0 /* SRC1 */),
-   1 /* ABS */, 0 /* CLAMP */, 0 /* OMOD */, 0 /* NEG */)
+  (V_AND_B32_e32 $src, (V_MOV_B32_e32 0x7fffffff)) /* Clear sign bit */
 >;
 
 def : Pat <
   (fneg f32:$src),
-  (V_ADD_F32_e64 $src, (i32 0 /* SRC1 */),
-   0 /* ABS */, 0 /* CLAMP */, 0 /* OMOD */, 1 /* NEG */)
+  (V_XOR_B32_e32 $src, (V_MOV_B32_e32 0x80000000)) /* Toggle sign bit */
 >;
 
 /********** ================== **********/
@@ -2064,7 +2083,7 @@ def : MTBUF_StoreResource <v4i32, 4, TBUFFER_STORE_FORMAT_XYZW>;
 /**********   Indirect adressing   **********/
 /********** ====================== **********/
 
-multiclass SI_INDIRECT_Pattern <ValueType vt, SI_INDIRECT_DST IndDst> {
+multiclass SI_INDIRECT_Pattern <ValueType vt, ValueType eltvt, SI_INDIRECT_DST IndDst> {
 
   // 1. Extract with offset
   def : Pat<
@@ -2080,21 +2099,26 @@ multiclass SI_INDIRECT_Pattern <ValueType vt, SI_INDIRECT_DST IndDst> {
 
   // 3. Insert with offset
   def : Pat<
-    (vector_insert vt:$vec, f32:$val, (add i32:$idx, imm:$off)),
+    (vector_insert vt:$vec, eltvt:$val, (add i32:$idx, imm:$off)),
     (IndDst (IMPLICIT_DEF), $vec, $idx, imm:$off, $val)
   >;
 
   // 4. Insert without offset
   def : Pat<
-    (vector_insert vt:$vec, f32:$val, i32:$idx),
+    (vector_insert vt:$vec, eltvt:$val, i32:$idx),
     (IndDst (IMPLICIT_DEF), $vec, $idx, 0, $val)
   >;
 }
 
-defm : SI_INDIRECT_Pattern <v2f32, SI_INDIRECT_DST_V2>;
-defm : SI_INDIRECT_Pattern <v4f32, SI_INDIRECT_DST_V4>;
-defm : SI_INDIRECT_Pattern <v8f32, SI_INDIRECT_DST_V8>;
-defm : SI_INDIRECT_Pattern <v16f32, SI_INDIRECT_DST_V16>;
+defm : SI_INDIRECT_Pattern <v2f32, f32, SI_INDIRECT_DST_V2>;
+defm : SI_INDIRECT_Pattern <v4f32, f32, SI_INDIRECT_DST_V4>;
+defm : SI_INDIRECT_Pattern <v8f32, f32, SI_INDIRECT_DST_V8>;
+defm : SI_INDIRECT_Pattern <v16f32, f32, SI_INDIRECT_DST_V16>;
+
+defm : SI_INDIRECT_Pattern <v2i32, i32, SI_INDIRECT_DST_V2>;
+defm : SI_INDIRECT_Pattern <v4i32, i32, SI_INDIRECT_DST_V4>;
+defm : SI_INDIRECT_Pattern <v8i32, i32, SI_INDIRECT_DST_V8>;
+defm : SI_INDIRECT_Pattern <v16i32, i32, SI_INDIRECT_DST_V16>;
 
 /********** =============== **********/
 /**********   Conditions    **********/

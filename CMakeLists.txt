@@ -1,7 +1,7 @@
 # See docs/CMake.html for instructions about how to build LLVM with CMake.
 
-project(LLVM)
 cmake_minimum_required(VERSION 2.8.8)
+project(LLVM)
 
 # Add path for custom modules
 set(CMAKE_MODULE_PATH
@@ -273,6 +273,14 @@ option (LLVM_BUILD_DOCS "Build the llvm documentation." OFF)
 option (LLVM_INCLUDE_DOCS "Generate build targets for llvm documentation." ON)
 option (LLVM_ENABLE_DOXYGEN "Use doxygen to generate llvm documentation." OFF)
 
+if( CMAKE_COMPILER_IS_GNUCXX )
+  set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
+elseif( MSVC )
+  set(LLVM_COMPILER_IS_GCC_COMPATIBLE OFF)
+elseif( "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
+  set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
+endif()
+
 # All options referred to from HandleLLVMOptions have to be specified
 # BEFORE this include, otherwise options will not be correctly set on
 # first cmake run
@@ -473,6 +481,10 @@ add_subdirectory(utils/not)
 add_subdirectory(utils/llvm-lit)
 add_subdirectory(utils/yaml-bench)
 
+if(LLVM_INCLUDE_TESTS)
+  add_subdirectory(utils/unittest)
+endif()
+
 add_subdirectory(projects)
 
 if( LLVM_INCLUDE_TOOLS )
@@ -485,7 +497,6 @@ endif()
 
 if( LLVM_INCLUDE_TESTS )
   add_subdirectory(test)
-  add_subdirectory(utils/unittest)
   add_subdirectory(unittests)
   if (MSVC)
     # This utility is used to prevent crashing tests from calling Dr. Watson on

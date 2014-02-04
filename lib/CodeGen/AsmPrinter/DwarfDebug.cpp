@@ -849,8 +849,7 @@ void DwarfDebug::constructSubprogramDIE(DwarfCompileUnit *TheCU,
 void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
                                             const MDNode *N) {
   DIImportedEntity Module(N);
-  if (!Module.Verify())
-    return;
+  assert(Module.Verify());
   if (DIE *D = TheCU->getOrCreateContextDIE(Module.getContext()))
     constructImportedEntityDIE(TheCU, Module, D);
 }
@@ -858,8 +857,7 @@ void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
 void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
                                             const MDNode *N, DIE *Context) {
   DIImportedEntity Module(N);
-  if (!Module.Verify())
-    return;
+  assert(Module.Verify());
   return constructImportedEntityDIE(TheCU, Module, Context);
 }
 
@@ -3016,6 +3014,11 @@ void DwarfDebug::emitDebugStrDWO() {
 void DwarfDebug::addDwarfTypeUnitType(DICompileUnit CUNode,
                                       StringRef Identifier, DIE *RefDie,
                                       DICompositeType CTy) {
+  // Flag the type unit reference as a declaration so that if it contains
+  // members (implicit special members, static data member definitions, member
+  // declarations for definitions in this CU, etc) consumers don't get confused
+  // and think this is a full definition.
+  CUMap.begin()->second->addFlag(RefDie, dwarf::DW_AT_declaration);
 
   const DwarfTypeUnit *&TU = DwarfTypeUnits[CTy];
   if (TU) {
