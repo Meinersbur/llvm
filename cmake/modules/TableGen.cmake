@@ -19,14 +19,14 @@ function(tablegen project ofn)
   if (IS_ABSOLUTE ${LLVM_TARGET_DEFINITIONS})
     set(LLVM_TARGET_DEFINITIONS_ABSOLUTE ${LLVM_TARGET_DEFINITIONS})
   else()
-    set(LLVM_TARGET_DEFINITIONS_ABSOLUTE 
+    set(LLVM_TARGET_DEFINITIONS_ABSOLUTE
       ${CMAKE_CURRENT_SOURCE_DIR}/${LLVM_TARGET_DEFINITIONS})
   endif()
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # Generate tablegen output in a temporary file.
     COMMAND ${${project}_TABLEGEN_EXE} ${EX_DEFAULT_ARGS} -I ${CMAKE_CURRENT_SOURCE_DIR}
     -I ${LLVM_MAIN_SRC_DIR}/lib/Target -I ${LLVM_MAIN_INCLUDE_DIR}
-    ${LLVM_TARGET_DEFINITIONS_ABSOLUTE} 
+    ${LLVM_TARGET_DEFINITIONS_ABSOLUTE}
     -o ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # The file in LLVM_TARGET_DEFINITIONS may be not in the current
     # directory and local_tds may not contain it, so we must
@@ -54,7 +54,7 @@ function(tablegen project ofn)
   list(APPEND TABLEGEN_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${ofn}")
   #set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn} PARENT_SCOPE)
 #message("TABLEGEN_OUTPUT=${TABLEGEN_OUTPUT}")
-  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn} 
+  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn}
     PROPERTIES GENERATED 1)
   set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn} PROPERTIES HEADER_FILE_ONLY ON)
   #set_source_files_properties(${LLVM_TARGET_DEFINITIONS} PROPERTIES HEADER_FILE_ONLY ON)
@@ -112,7 +112,7 @@ macro(add_tablegen target project)
           FORCE)
     endif()
   endif()
-      
+
   # Effective tblgen executable to be used:
   set(${project}_TABLEGEN_EXE ${${project}_TABLEGEN} PARENT_SCOPE)
 
@@ -144,6 +144,9 @@ macro(add_tablegen target project)
   endif()
 
   if (${project} STREQUAL LLVM AND NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
-    install(TARGETS ${target} RUNTIME DESTINATION bin)
+    install(TARGETS ${target}
+            EXPORT LLVMExports
+            RUNTIME DESTINATION bin)
   endif()
+  set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${target})
 endmacro()

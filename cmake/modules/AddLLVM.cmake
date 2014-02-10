@@ -345,18 +345,120 @@ function(set_output_directory target bindir libdir)
   endif()
 endfunction()
 
+# llvm_add_library(name sources...
+#   MODULE;SHARED;STATIC
+#     STATIC by default w/o BUILD_SHARED_LIBS.
+#     SHARED by default w/  BUILD_SHARED_LIBS.
+#   OUTPUT_NAME name
+#     Corresponds to OUTPUT_NAME in target properties.
+#   DEPENDS targets...
+#     Same semantics as add_dependencies().
+#   LINK_COMPONENTS components...
+#     Same as the variable LLVM_LINK_COMPONENTS.
+#   LINK_LIBS lib_targets...
+#     Same semantics as target_link_libraries().
+#   ADDITIONAL_HEADERS (implemented in LLVMProcessSources)
+#     May specify header files for IDE generators.
+#   )
+function(llvm_add_library name)
+  cmake_parse_arguments(ARG
+    "MODULE;SHARED;STATIC"
+    "OUTPUT_NAME"
+    "DEPENDS;LINK_COMPONENTS;LINK_LIBS"
+    ${ARGN})
+  list(APPEND LLVM_COMMON_DEPENDS ${ARG_DEPENDS})
+  llvm_process_sources(ALL_FILES ${ARG_UNPARSED_ARGUMENTS})
 
-macro (add_llvm_library name)
-  new_llvm_target(${name} ${ARGN})
+  if(ARG_MODULE)
+    if(ARG_SHARED OR ARG_STATIC)
+      message(WARNING "MODULE with SHARED|STATIC doesn't make sense.")
+    endif()
+  else()
+    if(BUILD_SHARED_LIBS AND NOT ARG_STATIC)
+      set(ARG_SHARED TRUE)
+    endif()
+    if(NOT ARG_SHARED)
+      set(ARG_STATIC TRUE)
+    endif()
+  endif()
+
+  if(ARG_MODULE)
+    new_llvm_target(${name} MODULE ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+  elseif(ARG_SHARED)
+    new_llvm_target(${name} SHARED ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+  else()
+    new_llvm_target(${name} STATIC ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+  endif()
+  set_output_directory(${name} ${LLVM_RUNTIME_OUTPUT_INTDIR} ${LLVM_LIBRARY_OUTPUT_INTDIR})
+  llvm_update_compile_flags(${name})
+  add_dead_strip( ${name} )
+  if(ARG_OUTPUT_NAME)
+    set_target_properties(${name}
+      PROPERTIES
+      OUTPUT_NAME ${ARG_OUTPUT_NAME}
+      )
+  endif()
+
+  if(ARG_MODULE)
+    set_property(TARGET ${name} PROPERTY SUFFIX ${LLVM_PLUGIN_EXT})
+  endif()
+
+  if(ARG_SHARED)
+    if (MSVC)
+      set_target_properties(${name}
+        PROPERTIES
+        IMPORT_SUFFIX ".imp")
+    endif ()
+  endif()
+
+  if(ARG_MODULE OR ARG_SHARED)
+    if (LLVM_EXPORTED_SYMBOL_FILE)
+      add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
+    endif()
+  endif()
+
+  #target_link_libraries(${name} ${ARG_LINK_LIBS})
+
+  llvm_config(${name} ${ARG_LINK_COMPONENTS} ${LLVM_LINK_COMPONENTS})
+
+  # Ensure that the system libraries always comes last on the
+  # list. Without this, linking the unit tests on MinGW fails.
+  link_system_libs( ${name} )
+
+  if(LLVM_COMMON_DEPENDS)
+    add_dependencies(${name} ${LLVM_COMMON_DEPENDS})
+  endif()
+endfunction()
+
+macro(add_llvm_library name)
+  if( BUILD_SHARED_LIBS )
+    llvm_add_library(${name} SHARED ${ARGN})
+  else()
+    llvm_add_library(${name} ${ARGN})
+  endif()
   set_property( GLOBAL APPEND PROPERTY LLVM_LIBS ${name} )
-  set_target_properties( ${name} PROPERTIES FOLDER "Libraries" )
-endmacro (add_llvm_library name)
 
+  if( EXCLUDE_FROM_ALL )
+    set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
+  else()
+    if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
+      install(TARGETS ${name}
+        EXPORT LLVMExports
+        LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+        ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+    endif()
+    set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
+  endif()
+  set_target_properties(${name} PROPERTIES FOLDER "Libraries")
 
-macro (add_llvm_executable name)
-  new_llvm_target(${name} EXE ${ARGN})
-endmacro (add_llvm_executable)
-
+  # Add the explicit dependency information for this library.
+  #
+  # It would be nice to verify that we have the dependencies for this library
+  # name, but using get_property(... SET) doesn't suffice to determine if a
+  # property has been set to an empty value.
+  get_property(lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
+  target_link_libraries(${name} ${lib_deps})
+endmacro(add_llvm_library name)
 
 macro(add_llvm_loadable_module name)
   if( NOT LLVM_ON_UNIX OR CYGWIN )
@@ -365,19 +467,8 @@ ${name} ignored.")
     # Add empty "phony" target
     add_custom_target(${name})
   else()
-    llvm_process_sources( ALL_FILES ${ARGN} )
-    if (MODULE)
-      set(libkind MODULE)
-    else()
-      set(libkind SHARED)
-    endif()
-
-    add_library( ${name} ${libkind} ${ALL_FILES} )
+    llvm_add_library(${name} MODULE ${ARGN})
     set_target_properties( ${name} PROPERTIES PREFIX "" )
-    llvm_update_compile_flags(${name})
-
-    llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
-    link_system_libs( ${name} )
 
     if (APPLE)
       # Darwin-specific linker flags for loadable modules.
@@ -390,9 +481,11 @@ ${name} ignored.")
     else()
       if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
         install(TARGETS ${name}
+          EXPORT LLVMExports
           LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
           ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
       endif()
+      set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
     endif()
   endif()
 
@@ -414,8 +507,13 @@ macro(add_llvm_tool name)
   list(FIND LLVM_TOOLCHAIN_TOOLS ${name} LLVM_IS_${name}_TOOLCHAIN_TOOL)
   if (LLVM_IS_${name}_TOOLCHAIN_TOOL GREATER -1 OR NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     if( LLVM_BUILD_TOOLS )
-      install(TARGETS ${name} RUNTIME DESTINATION bin)
+      install(TARGETS ${name}
+              EXPORT LLVMExports
+              RUNTIME DESTINATION bin)
     endif()
+  endif()
+  if( LLVM_BUILD_TOOLS )
+    set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
   endif()
   set_target_properties(${name} PROPERTIES FOLDER "Tools")
 endmacro(add_llvm_tool name)
