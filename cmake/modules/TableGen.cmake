@@ -58,7 +58,7 @@ function(tablegen project ofn)
     PROPERTIES GENERATED 1)
   set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${ofn} PROPERTIES HEADER_FILE_ONLY ON)
   #set_source_files_properties(${LLVM_TARGET_DEFINITIONS} PROPERTIES HEADER_FILE_ONLY ON)
-endmacro(tablegen)
+endfunction(tablegen)
 
 macro(add_public_tablegen_target target)
 message("macro(add_public_tablegen_target ${target}) TABLEGEN_OUTPUT=${TABLEGEN_OUTPUT}")
