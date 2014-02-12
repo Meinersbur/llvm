@@ -374,7 +374,8 @@ void DwarfUnit::addSourceLine(DIE *Die, unsigned Line, StringRef File,
 void DwarfUnit::addSourceLine(DIE *Die, DIVariable V) {
   assert(V.isVariable());
 
-  addSourceLine(Die, V.getLineNumber(), V.getContext().getFilename(), V.getContext().getDirectory());
+  addSourceLine(Die, V.getLineNumber(), V.getContext().getFilename(),
+                V.getContext().getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
@@ -470,8 +471,9 @@ void DwarfUnit::addRegisterOp(DIEBlock *TheDie, unsigned Reg) {
       addUInt(TheDie, dwarf::DW_FORM_data1, Size);
       addUInt(TheDie, dwarf::DW_FORM_data1, Offset);
     } else {
+      unsigned ByteSize = Size / 8; // Assuming 8 bits per byte.
       addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_piece);
-      addUInt(TheDie, dwarf::DW_FORM_data1, Size);
+      addUInt(TheDie, dwarf::DW_FORM_data1, ByteSize);
     }
   }
 }
@@ -1007,21 +1009,24 @@ void DwarfUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
 // to reference is in the string table. We do this since the names we
 // add may not only be identical to the names in the DIE.
 void DwarfUnit::addAccelName(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNames[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelObjC(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelObjC[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNamespace[Name];
   DIEs.push_back(Die);
@@ -1029,7 +1034,8 @@ void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
 
 void DwarfUnit::addAccelType(StringRef Name,
                              std::pair<const DIE *, unsigned> Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<std::pair<const DIE *, unsigned> > &DIEs = AccelTypes[Name];
   DIEs.push_back(Die);
