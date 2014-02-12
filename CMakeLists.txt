@@ -551,3 +551,7 @@ if(MSVC_VERSION EQUAL 1600)
   endif()
 endif()
 
+# BEGIN Molly
+#include(NewTarget)
+#new_postprocess()
+# END Molly

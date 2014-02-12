@@ -2,188 +2,11 @@ include(LLVMParseArguments)
 include(LLVMProcessSources)
 include(LLVM-Config)
 
-option(BUILD_OBJECT_LIBS "Use object libraries instead of static ones (Enables MSVC to link dynamically)" OFF)
-
+# BEGIN MOlly
 if (LLVM_EXTERNAL_MOLLY_BUILD)
   add_definitions("-DMOLLY")
 endif ()
-
-macro(new_llvm_target name)
-message("new_llvm_target(${name} ${ARGN})")
-  parse_arguments(PARM "LINK_LIBS;LINK_LIBS2;LINK_COMPONENTS;TARGET_DEPENDS;EXTERNAL_LIBS;EXTERNAL_LIBS2;SOURCES;SOURCES2" "EXCLUDE_FROM_ALL;MODULE;SHARED;STATIC;EXE" ${ARGN})
-  list(APPEND PARM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS} ${LLVM_NEXT_LINK_COMPONENTS})
-  set(LLVM_NEXT_LINK_COMPONENTS)
-  
-  list(APPEND PARM_TARGET_DEPENDS ${LLVM_COMMON_DEPENDS} ${LLVM_NEXT_DEPENDS})
-  set(LLVM_NEXT_DEPENDS)
-  
-  get_property(_lib_deps GLOBAL PROPERTY LLVMBUILD_LIB_DEPS_${name})
-  list(APPEND PARM_LINK_LIBS ${PARM_LINK_LIBS2} ${LLVM_LINK_LIBS} ${LLVM_NEXT_LINK_LIBS} ${_lib_deps})
-  set(LLVM_LINK_LIBS) #TODO: Remove LLVM_LINK_LIBS, replace all occurences by LLVM_NEXT_LINK_LIBS
-  set(LLVM_NEXT_LINK_LIBS) #TODO: LLVM's native name: LLVM_USED_LIBS
- 
-  list(APPEND PARM_SOURCES ${PARM_DEFAULT_ARGS} ${PARM_SOURCES2})
-  
-  list(APPEND PARM_EXTERNAL_LIBS ${PARM_EXTERNAL_LIBS2} ${LLVM_NEXT_EXTERNAL_LIBS})
-  set(LLVM_NEXT_EXTERNAL_LIBS)
-  
-  if (EXCLUDE_FROM_ALL)
-    set(PARM_EXCLUDE_FROM_ALL TRUE)
-    set(EXCLUDE_FROM_ALL FALSE)
-  endif ()
-  
-
-  # Decide what to build
-  set(_isexe FALSE)
-  set(_isobjlib FALSE)
-  set(_issharedlib FALSE)
-  if (PARM_EXE)
-    set(_libtype)
-    set(_isexe TRUE)
-  elseif (PARM_MODULE OR MODULE)
-    set(_libtype MODULE)
-  elseif (PARM_SHARED OR SHARED_LIBRARY)
-    set(_libtype SHARED)
-    set(_issharedlib TRUE)
-  elseif (BUILD_OBJECT_LIBS AND NOT BUILD_SHARED_LIBS)
-    set(_isobjlib TRUE)
-    set(_libtype OBJECT)
-  elseif (PARM_STATIC)
-    set(_libtype STATIC)
-  else()
-    # Static or shared, determined by BUILD_SHARED_LIBS
-    set(_libtype)
-  endif()
-  
-  llvm_process_sources( ALL_FILES ${PARM_SOURCES} )
-  set (_srcs)
-  set (_additional_srcs)
-  foreach (_src IN LISTS ALL_FILES)
-    if (_src MATCHES ".*\\.inc")
-      list(APPEND _additional_srcs "${_src}")
-    else ()
-      list(APPEND _srcs "${_src}")
-    endif ()
-  endforeach()
-if (_additional_srcs)
-message("_srcs: ${_srcs}")
-message("_additional_srcs: ${_additional_srcs}")
-endif()
-
-  explicit_map_components_to_libraries(_resolved_components ${PARM_LINK_COMPONENTS})
-  set(_syslibs)
-  if (NOT _isobjlib)
-    get_system_libs(_syslibs)
-  endif ()
-  
-  # Search inherited dependencies
-  set(_inherited_external_libs)
-  set(_inherited_objlibs)
-  set(_inherited_link_libs)
-  
-  set(_searchlist ${PARM_LINK_LIBS} ${_resolved_components})
-  set(_worklist ${_searchlist})
-  set(_done)
-  list(LENGTH _worklist _len)
-  while( _len GREATER 0 )
-    list(GET _worklist 0 _lib)
-    list(REMOVE_AT _worklist 0)
-    list(FIND _done "${_lib}" _found)
-    if (_found EQUAL -1)
-      list(APPEND _done ${_lib})
-
-      get_target_property(_target_type ${_lib} "TYPE")
-      if (_target_type STREQUAL "OBJECT_LIBRARY")
-        # For adding to the target's sources
-        list(APPEND _inherited_objlibs "$<TARGET_OBJECTS:${_lib}>")
-      else ()
-        # For target_link_libraries(${name} ${_inherited_link_libs})
-        list(APPEND _inherited_link_libs ${_lib})
-      endif ()
-      
-      # For target_link_libraries(${name} ${_externallibdeps})
-      get_target_property(_externallibdeps ${_lib} "INDIRECT_EXTERNAL_LIBS") 
-      if (_externallibdeps)
-        list(APPEND _inherited_external_libs ${_externallibdeps})
-      endif ()
-      
-      # For add_dependencies(${name} ${deps})
-      #get_target_property(_deps ${_lib} "INDIRECT_TARGET_DEPENDS") 
-      #list(APPEND _inherited_target_depends ${_deps})
-      
-      get_target_property(_libdeps ${_lib} "INDIRECT_LINK_LIBS")
-      if (_libdeps)
-        list(APPEND _worklist ${_libdeps})
-      endif ()
-    endif ()
-    list(LENGTH _worklist _len)
-  endwhile ()
-
-  # Add the target
-  if (_isexe)
-    if (PARM_EXCLUDE_FROM_ALL)
-#message("add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES} ${_inherited_objlibs})")
-      add_executable(${name} EXCLUDE_FROM_ALL ${_srcs} ${_inherited_objlibs})
-    else ()
-      add_executable(${name} ${_srcs} ${_inherited_objlibs})
-    endif ()
-  else ()
-    if (_isobjlib)
-      add_library(${name} OBJECT ${_srcs})
-    else ()
-      add_library(${name} ${_libtype} ${_srcs} ${_inherited_objlibs})
-    endif ()
-    if (PARM_EXCLUDE_FROM_ALL)
-      set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
-    else () 
-      if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
-        if (NOT _isobjlib)
-          install(TARGETS ${name}
-            LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-            ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-            RUNTIME DESTINATION bin)
-        endif()
-      endif()
-    endif()
-  endif()
-
-  if (PARM_TARGET_DEPENDS)
-    add_dependencies(${name} ${PARM_TARGET_DEPENDS} ${_additional_srcs})
-  endif ()
-
-  add_dead_strip( ${name} )
-
-  if (_isexe)
-    if (LLVM_EXPORTED_SYMBOL_FILE)
-      add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
-    endif(LLVM_EXPORTED_SYMBOL_FILE)
-  endif ()
-
-  if (_issharedlib)
-    llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
-    if (MSVC)
-      set_target_properties(${name}
-        PROPERTIES
-        IMPORT_SUFFIX ".imp")
-    endif ()
-
-    if (LLVM_EXPORTED_SYMBOL_FILE)
-      add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
-    endif()
-  endif ()
-
-  if (_isobjlib)
-    # Cannot link something to OBJECT libraries; must forward link dependencies ourselves
-    set_property(TARGET ${name} PROPERTY "INDIRECT_LINK_LIBS" ${PARM_LINK_LIBS} ${_resolved_components})
-    set_property(TARGET ${name} PROPERTY "INDIRECT_EXTERNAL_LIBS" ${PARM_EXTERNAL_LIBS})
-  else ()
-#message("target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})")
-    target_link_libraries(${name} ${_inherited_link_libs} ${_inherited_external_libs} ${PARM_EXTERNAL_LIBS} ${_syslibs})
-  endif ()
-  
-  llvm_update_compile_flags(${name})
-endmacro(new_llvm_target name)
-
+# END Molly
 
 function(llvm_update_compile_flags name)
   get_property(sources TARGET ${name} PROPERTY SOURCES)
@@ -383,11 +206,11 @@ function(llvm_add_library name)
   endif()
 
   if(ARG_MODULE)
-    new_llvm_target(${name} MODULE ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+    add_library(${name} MODULE ${ALL_FILES})
   elseif(ARG_SHARED)
-    new_llvm_target(${name} SHARED ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+    add_library(${name} SHARED ${ALL_FILES})
   else()
-    new_llvm_target(${name} STATIC ${ALL_FILES} LINK_LIBS ${ARG_LINK_LIBS})
+    add_library(${name} STATIC ${ALL_FILES})
   endif()
   set_output_directory(${name} ${LLVM_RUNTIME_OUTPUT_INTDIR} ${LLVM_LIBRARY_OUTPUT_INTDIR})
   llvm_update_compile_flags(${name})
@@ -417,7 +240,7 @@ function(llvm_add_library name)
     endif()
   endif()
 
-  #target_link_libraries(${name} ${ARG_LINK_LIBS})
+  target_link_libraries(${name} ${ARG_LINK_LIBS})
 
   llvm_config(${name} ${ARG_LINK_COMPONENTS} ${LLVM_LINK_COMPONENTS})
 
@@ -430,20 +253,24 @@ macro(add_llvm_library name)
   if( BUILD_SHARED_LIBS )
     llvm_add_library(${name} SHARED ${ARGN})
   else()
-    llvm_add_library(${name} ${ARGN})
+    llvm_add_library(${name} STATIC ${ARGN})
   endif()
   set_property( GLOBAL APPEND PROPERTY LLVM_LIBS ${name} )
 
   if( EXCLUDE_FROM_ALL )
     set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
   else()
-    if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
-      install(TARGETS ${name}
-        EXPORT LLVMExports
-        LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-        ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
-    endif()
+    get_target_property(_target_type ${name} "TYPE")
+    if (_target_type STREQUAL "OBJECT_LIBRARY")
+    else()
+      if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "LTO")
+        install(TARGETS ${name}
+          EXPORT LLVMExports
+          LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+          ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+      endif()
     set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
+    endif()
   endif()
   set_target_properties(${name} PROPERTIES FOLDER "Libraries")
 
@@ -468,8 +295,8 @@ ${name} ignored.")
 
     if (APPLE)
       # Darwin-specific linker flags for loadable modules.
-      set_target_properties(${name} PROPERTIES
-        LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+      set_property(TARGET ${name} APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
     endif()
 
     if( EXCLUDE_FROM_ALL )
@@ -487,6 +314,36 @@ ${name} ignored.")
 
   set_target_properties(${name} PROPERTIES FOLDER "Loadable modules")
 endmacro(add_llvm_loadable_module name)
+
+
+macro(add_llvm_executable name)
+ cmake_parse_arguments(ARG
+    ""
+    ""
+    "LINK_LIBS"
+    ${ARGN})
+
+  llvm_process_sources( ALL_FILES ${ARG_UNPARSED_ARGUMENTS} )
+  if( EXCLUDE_FROM_ALL )
+    add_executable(${name} EXCLUDE_FROM_ALL ${ALL_FILES})
+  else()
+    add_executable(${name} ${ALL_FILES})
+  endif()
+  target_link_libraries(${name} ${ARG_LINK_LIBS})
+  llvm_update_compile_flags(${name})
+  add_dead_strip( ${name} )
+
+  if (LLVM_EXPORTED_SYMBOL_FILE)
+    add_llvm_symbol_exports( ${name} ${LLVM_EXPORTED_SYMBOL_FILE} )
+  endif(LLVM_EXPORTED_SYMBOL_FILE)
+
+  set(EXCLUDE_FROM_ALL OFF)
+  set_output_directory(${name} ${LLVM_RUNTIME_OUTPUT_INTDIR} ${LLVM_LIBRARY_OUTPUT_INTDIR})
+  llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
+  if( LLVM_COMMON_DEPENDS )
+    add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
+  endif( LLVM_COMMON_DEPENDS )
+endmacro(add_llvm_executable name)
 
 
 set (LLVM_TOOLCHAIN_TOOLS
@@ -516,8 +373,6 @@ endmacro(add_llvm_tool name)
 
 
 macro(add_llvm_example name)
-  set(_old_CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_EXAMPLES_BINARY_DIR})
   if( NOT LLVM_BUILD_EXAMPLES )
     set(EXCLUDE_FROM_ALL ON)
   endif()
@@ -526,7 +381,6 @@ macro(add_llvm_example name)
     install(TARGETS ${name} RUNTIME DESTINATION examples)
   endif()
   set_target_properties(${name} PROPERTIES FOLDER "Examples")
-   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${_old_CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endmacro(add_llvm_example name)
 
 
@@ -599,7 +453,6 @@ endfunction(add_llvm_implicit_external_projects)
 
 # Generic support for adding a unittest.
 function(add_unittest test_suite test_name)
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   if( NOT LLVM_BUILD_TESTS )
     set(EXCLUDE_FROM_ALL ON)
   endif()
@@ -618,13 +471,18 @@ function(add_unittest test_suite test_name)
   if (SUPPORTS_NO_VARIADIC_MACROS_FLAG)
     list(APPEND LLVM_COMPILE_FLAGS "-Wno-variadic-macros")
   endif ()
-  
+
   set(LLVM_REQUIRES_RTTI OFF)
 
-  add_llvm_executable(${test_name} ${ARGN} LINK_LIBS2 gtest gtest_main LLVMSupport)
+  add_llvm_executable(${test_name} ${ARGN})
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   set_output_directory(${test_name} ${outdir} ${outdir})
-  
+  target_link_libraries(${test_name}
+    gtest
+    gtest_main
+    LLVMSupport # gtest needs it for raw_ostream.
+    )
+
   add_dependencies(${test_suite} ${test_name})
   get_target_property(test_suite_folder ${test_suite} FOLDER)
   if (NOT ${test_suite_folder} STREQUAL "NOTFOUND")

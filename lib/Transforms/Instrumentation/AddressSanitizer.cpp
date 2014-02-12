@@ -278,7 +278,7 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
       (LongSize == 32 ?
         (IsMIPS32 ? kMIPS32_ShadowOffset32 :
           (IsFreeBSD ? kFreeBSD_ShadowOffset32 : kDefaultShadowOffset32)) :
-       IsPPC64 ? (isBGQ ? ((uint64_t) -1) : kDefaultShadowOffset64));
+       IsPPC64 ? (isBGQ ? ((uint64_t) -1) : kPPC64_ShadowOffset64) : kDefaultShadowOffset64);
   if (!IsAndroid && ClShort64BitOffset && IsX86_64 && !IsMacOSX) {
     assert(LongSize == 64);
     Mapping.Offset = (IsFreeBSD ?
