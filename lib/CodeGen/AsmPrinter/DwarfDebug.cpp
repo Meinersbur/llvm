@@ -751,9 +751,6 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
   InfoHolder.addUnit(NewCU);
 
   FileIDCUMap[NewCU->getUniqueID()] = 0;
-  // Call this to emit a .file directive if it wasn't emitted for the source
-  // file this CU comes from yet.
-  getOrCreateSourceID(FN, CompilationDir, NewCU->getUniqueID());
 
   NewCU->addString(Die, dwarf::DW_AT_producer, DIUnit.getProducer());
   NewCU->addUInt(Die, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
@@ -771,7 +768,6 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
       Asm->OutStreamer.hasRawTextSupport() || (NewCU->getUniqueID() == 0);
 
   if (!useSplitDwarf()) {
-    NewCU->setStatementListIndex(Die->getValues().size());
     // DW_AT_stmt_list is a offset of line number information for this
     // compile unit in debug_line section. For split dwarf this is
     // left in the skeleton CU and so not included.
@@ -779,7 +775,7 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
     // is not okay to use line_table_start here.
     if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
       NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list,
-                             UseTheFirstCU ? Asm->GetTempSymbol("section_line")
+                             UseTheFirstCU ? DwarfLineSectionSym
                                            : LineTableStartSym);
     else if (UseTheFirstCU)
       NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
@@ -2969,11 +2965,11 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
 
 // This DIE has the following attributes: DW_AT_comp_dir, DW_AT_dwo_name,
 // DW_AT_addr_base.
-DwarfTypeUnit *DwarfDebug::constructSkeletonTU(const DwarfTypeUnit *TU) {
+DwarfTypeUnit *DwarfDebug::constructSkeletonTU(DwarfTypeUnit *TU) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_type_unit);
-  DwarfTypeUnit *NewTU = new DwarfTypeUnit(
-      TU->getUniqueID(), Die, TU->getCUNode(), Asm, this, &SkeletonHolder);
+  DwarfTypeUnit *NewTU = new DwarfTypeUnit(TU->getUniqueID(), Die, TU->getCU(),
+                                           Asm, this, &SkeletonHolder);
   NewTU->setTypeSignature(TU->getTypeSignature());
   NewTU->setType(NULL);
   NewTU->initSection(
@@ -3011,29 +3007,29 @@ void DwarfDebug::emitDebugStrDWO() {
                          OffSec, StrSym);
 }
 
-void DwarfDebug::addDwarfTypeUnitType(DICompileUnit CUNode,
+void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
                                       StringRef Identifier, DIE *RefDie,
                                       DICompositeType CTy) {
   // Flag the type unit reference as a declaration so that if it contains
   // members (implicit special members, static data member definitions, member
   // declarations for definitions in this CU, etc) consumers don't get confused
   // and think this is a full definition.
-  CUMap.begin()->second->addFlag(RefDie, dwarf::DW_AT_declaration);
+  CU.addFlag(RefDie, dwarf::DW_AT_declaration);
 
   const DwarfTypeUnit *&TU = DwarfTypeUnits[CTy];
   if (TU) {
-    CUMap.begin()->second->addDIETypeSignature(RefDie, *TU);
+    CU.addDIETypeSignature(RefDie, *TU);
     return;
   }
 
   DIE *UnitDie = new DIE(dwarf::DW_TAG_type_unit);
-  DwarfTypeUnit *NewTU = new DwarfTypeUnit(
-      InfoHolder.getUnits().size(), UnitDie, CUNode, Asm, this, &InfoHolder);
+  DwarfTypeUnit *NewTU = new DwarfTypeUnit(InfoHolder.getUnits().size(),
+                                           UnitDie, CU, Asm, this, &InfoHolder);
   TU = NewTU;
   InfoHolder.addUnit(NewTU);
 
   NewTU->addUInt(UnitDie, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
-                 CUNode.getLanguage());
+                 CU.getLanguage());
 
   MD5 Hash;
   Hash.update(Identifier);
@@ -3054,5 +3050,5 @@ void DwarfDebug::addDwarfTypeUnitType(DICompileUnit CUNode,
           ? Asm->getObjFileLowering().getDwarfTypesDWOSection(Signature)
           : Asm->getObjFileLowering().getDwarfTypesSection(Signature));
 
-  CUMap.begin()->second->addDIETypeSignature(RefDie, *NewTU);
+  CU.addDIETypeSignature(RefDie, *NewTU);
 }

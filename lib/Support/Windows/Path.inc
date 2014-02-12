@@ -19,12 +19,13 @@
 #include "llvm/ADT/STLExtras.h"
 #include <fcntl.h>
 #include <io.h>
-#include <shlobj.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
-// The Windows.h header must be the last one included.
+// These two headers must be included last, and make sure shlobj is required
+// after Windows.h to make sure it picks up our definition of _WIN32_WINNT
 #include "Windows.h"
+#include <shlobj.h>
 
 #undef max
 
@@ -112,25 +113,13 @@ static error_code createUniqueEntity(const Twine &model, int &result_fd,
   // needed if the randomly chosen path already exists.
   SmallVector<wchar_t, 128> random_path_utf16;
 
-  // Get a Crypto Provider for CryptGenRandom.
-  HCRYPTPROV HCPC;
-  if (!::CryptAcquireContextW(&HCPC,
-                              NULL,
-                              NULL,
-                              PROV_RSA_FULL,
-                              CRYPT_VERIFYCONTEXT))
-    return windows_error(::GetLastError());
-  ScopedCryptContext CryptoProvider(HCPC);
-
 retry_random_path:
   random_path_utf16.set_size(0);
   for (SmallVectorImpl<wchar_t>::const_iterator i = model_utf16.begin(),
                                                 e = model_utf16.end();
                                                 i != e; ++i) {
     if (*i == L'%') {
-      BYTE val = 0;
-      if (!::CryptGenRandom(CryptoProvider, 1, &val))
-          return windows_error(::GetLastError());
+      unsigned val = sys::Process::GetRandomNumber();
       random_path_utf16.push_back(L"0123456789abcdef"[val & 15]);
     }
     else

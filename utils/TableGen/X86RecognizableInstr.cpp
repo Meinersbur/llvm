@@ -180,7 +180,6 @@ RecognizableInstr::RecognizableInstr(DisassemblerTables &tables,
   HasEVEX_K        = Rec->getValueAsBit("hasEVEX_K");
   HasEVEX_KZ       = Rec->getValueAsBit("hasEVEX_Z");
   HasEVEX_B        = Rec->getValueAsBit("hasEVEX_B");
-  HasLockPrefix    = Rec->getValueAsBit("hasLockPrefix");
   HasREPPrefix     = Rec->getValueAsBit("hasREPPrefix");
   IsCodeGenOnly    = Rec->getValueAsBit("isCodeGenOnly");
   ForceDisassemble = Rec->getValueAsBit("ForceDisassemble");
@@ -403,20 +402,9 @@ RecognizableInstr::filter_ret RecognizableInstr::filter() const {
   //
 
 
-  // Filter out instructions with a LOCK prefix;
-  //   prefer forms that do not have the prefix
-  if (HasLockPrefix)
-    return FILTER_WEAK;
-
   // Special cases.
 
   if (Name == "VMASKMOVDQU64")
-    return FILTER_WEAK;
-
-  // XACQUIRE and XRELEASE reuse REPNE and REP respectively.
-  // For now, just prefer the REP versions.
-  if (Name == "XACQUIRE_PREFIX" ||
-      Name == "XRELEASE_PREFIX")
     return FILTER_WEAK;
 
   return FILTER_NORMAL;
