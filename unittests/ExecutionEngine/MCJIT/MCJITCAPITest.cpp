@@ -173,7 +173,7 @@ protected:
     
     LLVMSetTarget(Module, HostTriple.c_str());
     
-    // build a global variable initialized to "Hello World!"
+    // build a global int32 variable initialized to 42.
     LLVMValueRef GlobalVar = LLVMAddGlobal(Module, LLVMInt32Type(), "intVal");    
     LLVMSetInitializer(GlobalVar, LLVMConstInt(LLVMInt32Type(), 42, 0));
     
@@ -322,6 +322,6 @@ TEST_F(MCJITCAPITest, reserve_allocation_space) {
   EXPECT_LE(MM->UsedDataSizeRO, MM->ReservedDataSizeRO);
   EXPECT_LE(MM->UsedDataSizeRW, MM->ReservedDataSizeRW);
   EXPECT_TRUE(MM->UsedCodeSize > 0); 
-  EXPECT_TRUE(MM->UsedDataSizeRO > 0);
+  EXPECT_TRUE(MM->UsedDataSizeRO >= 0);
   EXPECT_TRUE(MM->UsedDataSizeRW > 0);
 }
