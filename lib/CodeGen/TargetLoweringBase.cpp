@@ -1510,6 +1510,8 @@ bool TargetLoweringBase::isLegalAddressingMode(const AddrMode &AM,
       return false;
     // Allow 2*r as r+r.
     break;
+  default: // Don't allow n * r
+    return false;
   }
 
   return true;
