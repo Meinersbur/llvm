@@ -273,29 +273,6 @@ static void AddStandardLinkPasses(PassManagerBase &PM) {
 //===----------------------------------------------------------------------===//
 // CodeGen-related helper functions.
 //
-static TargetOptions GetTargetOptions() {
-  TargetOptions Options;
-  Options.LessPreciseFPMADOption = EnableFPMAD;
-  Options.NoFramePointerElim = DisableFPElim;
-  Options.AllowFPOpFusion = FuseFPOps;
-  Options.UnsafeFPMath = EnableUnsafeFPMath;
-  Options.NoInfsFPMath = EnableNoInfsFPMath;
-  Options.NoNaNsFPMath = EnableNoNaNsFPMath;
-  Options.HonorSignDependentRoundingFPMathOption =
-  EnableHonorSignDependentRoundingFPMath;
-  Options.UseSoftFloat = GenerateSoftFloatCalls;
-  if (FloatABIForCalls != FloatABI::Default)
-    Options.FloatABIType = FloatABIForCalls;
-  Options.NoZerosInBSS = DontPlaceZerosInBSS;
-  Options.GuaranteedTailCallOpt = EnableGuaranteedTailCallOpt;
-  Options.DisableTailCalls = DisableTailCalls;
-  Options.StackAlignmentOverride = OverrideStackAlignment;
-  Options.TrapFuncName = TrapFuncName;
-  Options.PositionIndependentExecutable = EnablePIE;
-  Options.EnableSegmentedStacks = SegmentedStacks;
-  Options.UseInitArray = UseInitArray;
-  return Options;
-}
 
 CodeGenOpt::Level GetCodeGenOptLevel() {
   if (OptLevelO1)
@@ -327,7 +304,8 @@ static TargetMachine* GetTargetMachine(Triple TheTriple) {
   }
 
   return TheTarget->createTargetMachine(TheTriple.getTriple(),
-                                        MCPU, FeaturesStr, GetTargetOptions(),
+                                        MCPU, FeaturesStr,
+                                        InitTargetOptionsFromCodeGenFlags(),
                                         RelocModel, CMModel,
                                         GetCodeGenOptLevel());
 }
@@ -447,15 +425,15 @@ int main(int argc, char **argv) {
   Passes.add(TLI);
 
   // Add an appropriate DataLayout instance for this module.
-  DataLayout *TD = 0;
+  DataLayout *DL = 0;
   const std::string &ModuleDataLayout = M.get()->getDataLayout();
   if (!ModuleDataLayout.empty())
-    TD = new DataLayout(ModuleDataLayout);
+    DL = new DataLayout(ModuleDataLayout);
   else if (!DefaultDataLayout.empty())
-    TD = new DataLayout(DefaultDataLayout);
+    DL = new DataLayout(DefaultDataLayout);
 
-  if (TD)
-    Passes.add(TD);
+  if (DL)
+    Passes.add(DL);
 
   Triple ModuleTriple(M->getTargetTriple());
   TargetMachine *Machine = 0;
@@ -470,8 +448,8 @@ int main(int argc, char **argv) {
   OwningPtr<FunctionPassManager> FPasses;
   if (OptLevelO1 || OptLevelO2 || OptLevelOs || OptLevelOz || OptLevelO3) {
     FPasses.reset(new FunctionPassManager(M.get()));
-    if (TD)
-      FPasses->add(new DataLayout(*TD));
+    if (DL)
+      FPasses->add(new DataLayout(*DL));
     if (TM.get())
       TM->addAnalysisPasses(*FPasses);
 

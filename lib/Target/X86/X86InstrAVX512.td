@@ -956,11 +956,16 @@ let Predicates = [HasAVX512] in {
             (COPY_TO_REGCLASS (KMOVWkm addr:$src), VK8)>;
 
   def : Pat<(i1 (trunc (i32 GR32:$src))),
-            (COPY_TO_REGCLASS (KMOVWkr $src), VK1)>;
+            (COPY_TO_REGCLASS (KMOVWkr (AND32ri $src, (i32 1))), VK1)>;
 
   def : Pat<(i1 (trunc (i8 GR8:$src))),
-            (COPY_TO_REGCLASS
-             (KMOVWkr (SUBREG_TO_REG (i32 0), GR8:$src, sub_8bit)), VK1)>;
+       (COPY_TO_REGCLASS
+        (KMOVWkr (AND32ri (SUBREG_TO_REG (i32 0), GR8:$src, sub_8bit), (i32 1))),
+       VK1)>;
+  def : Pat<(i1 (trunc (i16 GR16:$src))),
+       (COPY_TO_REGCLASS
+        (KMOVWkr (AND32ri (SUBREG_TO_REG (i32 0), $src, sub_16bit), (i32 1))),
+       VK1)>;
             
   def : Pat<(i32 (zext VK1:$src)), (KMOVWrk (COPY_TO_REGCLASS VK1:$src, VK16))>;
   def : Pat<(i8 (zext VK1:$src)),
@@ -3275,25 +3280,25 @@ multiclass avx512_sqrt_packed<bits<8> opc, string OpcodeStr, SDNode OpNode,
                               Intrinsic V16F32Int, Intrinsic V8F64Int,
                               OpndItins itins_s, OpndItins itins_d> {
   def PSZrr :AVX512PSI<opc, MRMSrcReg, (outs VR512:$dst), (ins VR512:$src),
-             !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
+             !strconcat(OpcodeStr, "ps\t{$src, $dst|$dst, $src}"),
              [(set VR512:$dst, (v16f32 (OpNode VR512:$src)))], itins_s.rr>,
              EVEX, EVEX_V512;
 
   let mayLoad = 1 in
   def PSZrm : AVX512PSI<opc, MRMSrcMem, (outs VR512:$dst), (ins f512mem:$src),
-              !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
+              !strconcat(OpcodeStr, "ps\t{$src, $dst|$dst, $src}"),
               [(set VR512:$dst, 
                 (OpNode (v16f32 (bitconvert (memopv16f32 addr:$src)))))],
               itins_s.rm>, EVEX, EVEX_V512, EVEX_CD8<32, CD8VF>;
 
   def PDZrr : AVX512PDI<opc, MRMSrcReg, (outs VR512:$dst), (ins VR512:$src),
-              !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
+              !strconcat(OpcodeStr, "pd\t{$src, $dst|$dst, $src}"),
               [(set VR512:$dst, (v8f64 (OpNode VR512:$src)))], itins_d.rr>,
               EVEX, EVEX_V512;
 
   let mayLoad = 1 in
     def PDZrm : AVX512PDI<opc, MRMSrcMem, (outs VR512:$dst), (ins f512mem:$src),
-                !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
+                !strconcat(OpcodeStr, "pd\t{$src, $dst|$dst, $src}"),
                 [(set VR512:$dst, (OpNode
                   (v8f64 (bitconvert (memopv16f32 addr:$src)))))],
                 itins_d.rm>, EVEX, EVEX_V512, EVEX_CD8<64, CD8VF>;

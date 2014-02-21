@@ -48,8 +48,10 @@ namespace llvm {
   class MachineFunction;
   class MachineInstr;
   class MachineJumpTableInfo;
+  class Mangler;
   class MCContext;
   class MCExpr;
+  class MCSymbol;
   template<typename T> class SmallVectorImpl;
   class DataLayout;
   class TargetRegisterClass;
