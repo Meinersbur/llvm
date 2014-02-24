@@ -340,12 +340,6 @@ FunctionPass *createConstantHoistingPass();
 
 //===----------------------------------------------------------------------===//
 //
-// CodeGenPrepare - This pass prepares a function for instruction selection.
-//
-FunctionPass *createCodeGenPreparePass(const TargetMachine *TM = 0);
-
-//===----------------------------------------------------------------------===//
-//
 // InstructionNamer - Give any unnamed non-void instructions "tmp" names.
 //
 FunctionPass *createInstructionNamerPass();
