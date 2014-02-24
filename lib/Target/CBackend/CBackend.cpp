@@ -1269,7 +1269,7 @@ std::string CWriter::GetValueName(const Value *Operand) {
   // Mangle globals with the standard mangler interface for LLC compatibility.
   if (const GlobalValue *GV = dyn_cast<GlobalValue>(Operand)) {
     SmallString<128> Str;
-    Mang->getNameWithPrefix(Str, GV);
+    Mang->getNameWithPrefix(Str, GV, false);
     return CBEMangle(Str.str().str());
   }
 
