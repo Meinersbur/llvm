@@ -369,7 +369,7 @@ struct AddressSanitizer : public FunctionPass {
   SmallString<64> BlacklistFile;
 
   LLVMContext *C;
-  DataLayout *DL;
+  const DataLayout *DL;
   int LongSize;
   Type *IntptrTy;
   ShadowMapping Mapping;
@@ -418,7 +418,7 @@ class AddressSanitizerModule : public ModulePass {
   SetOfDynamicallyInitializedGlobals DynamicallyInitializedGlobals;
   Type *IntptrTy;
   LLVMContext *C;
-  DataLayout *DL;
+  const DataLayout *DL;
   ShadowMapping Mapping;
   Function *AsanPoisonGlobals;
   Function *AsanUnpoisonGlobals;
