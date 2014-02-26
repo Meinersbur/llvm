@@ -344,7 +344,7 @@ public:
   typedef SmallPtrSet<Value *, 16> ValueSet;
   typedef SmallVector<StoreInst *, 8> StoreList;
 
-  BoUpSLP(Function *Func, ScalarEvolution *Se, DataLayout *Dl,
+  BoUpSLP(Function *Func, ScalarEvolution *Se, const DataLayout *Dl,
           TargetTransformInfo *Tti, AliasAnalysis *Aa, LoopInfo *Li,
           DominatorTree *Dt) :
     F(Func), SE(Se), DL(Dl), TTI(Tti), AA(Aa), LI(Li), DT(Dt),
@@ -533,7 +533,7 @@ private:
   // Analysis and block reference.
   Function *F;
   ScalarEvolution *SE;
-  DataLayout *DL;
+  const DataLayout *DL;
   TargetTransformInfo *TTI;
   AliasAnalysis *AA;
   LoopInfo *LI;
@@ -1784,7 +1784,7 @@ struct SLPVectorizer : public FunctionPass {
   }
 
   ScalarEvolution *SE;
-  DataLayout *DL;
+  const DataLayout *DL;
   TargetTransformInfo *TTI;
   AliasAnalysis *AA;
   LoopInfo *LI;
@@ -1795,7 +1795,8 @@ struct SLPVectorizer : public FunctionPass {
       return false;
 
     SE = &getAnalysis<ScalarEvolution>();
-    DL = getAnalysisIfAvailable<DataLayout>();
+    DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+    DL = DLP ? &DLP->getDataLayout() : 0;
     TTI = &getAnalysis<TargetTransformInfo>();
     AA = &getAnalysis<AliasAnalysis>();
     LI = &getAnalysis<LoopInfo>();
@@ -2234,7 +2235,7 @@ public:
 
   /// \brief Try to find a reduction tree.
   bool matchAssociativeReduction(PHINode *Phi, BinaryOperator *B,
-                                 DataLayout *DL) {
+                                 const DataLayout *DL) {
     assert((!Phi ||
             std::find(Phi->op_begin(), Phi->op_end(), B) != Phi->op_end()) &&
            "Thi phi needs to use the binary operator");

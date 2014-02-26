@@ -963,9 +963,12 @@ void AddressSanitizerModule::initializeCallbacks(Module &M) {
 // redzones and inserts this function into llvm.global_ctors.
 bool AddressSanitizerModule::runOnModule(Module &M) {
   if (!ClGlobals) return false;
-  DL = getAnalysisIfAvailable<DataLayout>();
-  if (!DL)
+
+  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+  if (!DLP)
     return false;
+  DL = &DLP->getDataLayout();
+
   BL.reset(SpecialCaseList::createOrDie(BlacklistFile));
   if (BL->isIn(M)) return false;
   C = &(M.getContext());
@@ -1139,10 +1142,11 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
 // virtual
 bool AddressSanitizer::doInitialization(Module &M) {
   // Initialize the private fields. No one has accessed them before.
-  DL = getAnalysisIfAvailable<DataLayout>();
-
-  if (!DL)
+  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+  if (!DLP)
     return false;
+  DL = &DLP->getDataLayout();
+
   BL.reset(SpecialCaseList::createOrDie(BlacklistFile));
   DynamicallyInitializedGlobals.Init(M);
 

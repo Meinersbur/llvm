@@ -2519,7 +2519,8 @@ bool InstCombiner::runOnFunction(Function &F) {
   if (skipOptnoneFunction(F))
     return false;
 
-  DL = getAnalysisIfAvailable<DataLayout>();
+  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+  DL = DLP ? &DLP->getDataLayout() : 0;
   TLI = &getAnalysis<TargetLibraryInfo>();
   // Minimizing size?
   MinimizeSize = F.getAttributes().hasAttribute(AttributeSet::FunctionIndex,
