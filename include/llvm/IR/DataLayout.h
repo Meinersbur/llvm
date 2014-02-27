@@ -451,6 +451,7 @@ public:
 class DataLayoutPass : public ImmutablePass {
   DataLayout DL;
 
+
 public:
   /// This has to exist, because this is a pass, but it should never be used.
   DataLayoutPass();

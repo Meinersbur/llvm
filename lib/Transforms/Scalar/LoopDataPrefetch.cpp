@@ -58,7 +58,7 @@ namespace {
   private:
     LoopInfo *LI;
     ScalarEvolution *SE;
-    DataLayout *TD;
+    const DataLayout *TD;
   };
 }
 
@@ -74,7 +74,8 @@ Pass *llvm::createLoopDataPrefetchPass() { return new LoopDataPrefetch(); }
 bool LoopDataPrefetch::runOnLoop(Loop *L, LPPassManager &LPM) {
   LI = &getAnalysis<LoopInfo>();
   SE = &getAnalysis<ScalarEvolution>();
-  TD = getAnalysisIfAvailable<DataLayout>();
+  auto TDPass = getAnalysisIfAvailable<DataLayoutPass>();
+  TD = TDPass ? &TDPass->getDataLayout() : NULL;
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   bool MadeChange = false;
 
