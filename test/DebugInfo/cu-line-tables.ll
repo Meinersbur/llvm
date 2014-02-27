@@ -2,15 +2,15 @@
 ; RUN: %llc_dwarf -O0 -filetype=obj -generate-dwarf-cu-ranges %s -o %t
 ; RUN: llvm-dwarfdump %t | FileCheck %s
 
-; Check that we emit ranges for this when the -generate-dwarf-cu-ranges flag is passed.
+; Check that we don't emit ranges even if the option is passed if we're emitting line tables only.
 
 ; CHECK: DW_TAG_compile_unit
-; CHECK: DW_AT_ranges
+; CHECK-NOT: DW_AT_ranges
 ; CHECK: DW_TAG_subprogram
 
+; FIXME: We probably want to avoid printing out anything if the section isn't there.
 ; CHECK: .debug_ranges contents:
-; FIXME: When we get better dumping facilities we'll want to elaborate here.
-; CHECK: 00000000 <End of list>
+; CHECK-NOT: 00000000 <End of list>
 
 ; Function Attrs: nounwind uwtable
 define i32 @f(i32 %a) #0 {
@@ -33,7 +33,7 @@ attributes #1 = { nounwind readnone }
 !llvm.module.flags = !{!9, !10}
 !llvm.ident = !{!11}
 
-!0 = metadata !{i32 786449, metadata !1, i32 12, metadata !"clang version 3.5 (trunk 197756) (llvm/trunk 197768)", i1 false, metadata !"", i32 0, metadata !2, metadata !2, metadata !3, metadata !2, metadata !2, metadata !"", i32 1} ; [ DW_TAG_compile_unit ] [/usr/local/google/home/echristo/tmp/foo.c] [DW_LANG_C99]
+!0 = metadata !{i32 786449, metadata !1, i32 12, metadata !"clang version 3.5 (trunk 197756) (llvm/trunk 197768)", i1 false, metadata !"", i32 0, metadata !2, metadata !2, metadata !3, metadata !2, metadata !2, metadata !"", i32 2} ; [ DW_TAG_compile_unit ] [/usr/local/google/home/echristo/tmp/foo.c] [DW_LANG_C99]
 !1 = metadata !{metadata !"foo.c", metadata !"/usr/local/google/home/echristo/tmp"}
 !2 = metadata !{}
 !3 = metadata !{metadata !4}
