@@ -620,10 +620,6 @@ struct NoTTI final : ImmutablePass, TargetTransformInfo {
     return PostIncPrep;
   }
 
-  unsigned getNumberOfRegisters(bool Vector) const {
-    return 8;
-  }
-
   unsigned getIntImmCost(unsigned Opcode, const APInt &Imm,
                          Type *Ty) const override {
     return TCC_Free;

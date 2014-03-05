@@ -45,11 +45,11 @@
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Support/CallSite.h"
-#include "llvm/Support/CFG.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/Host.h"
@@ -2480,7 +2480,7 @@ void CWriter::visitSwitchInst(SwitchInst &SI) {
     printPHICopiesForSuccessor (SI.getParent(), Succ, 2);
     printBranchToBlock(SI.getParent(), Succ, 2);
     if (Function::iterator(Succ) ==
-        llvm::next(Function::iterator(SI.getParent())))
+        std::next(Function::iterator(SI.getParent())))
       Out << "    break;\n";
   }
 
@@ -2501,7 +2501,7 @@ bool CWriter::isGotoCodeNecessary(BasicBlock *From, BasicBlock *To) {
   /// FIXME: This should be reenabled, but loop reordering safe!!
   return true;
 
-  if (llvm::next(Function::iterator(From)) != Function::iterator(To))
+  if (std::next(Function::iterator(From)) != Function::iterator(To))
     return true;  // Not the direct successor, we need a goto.
 
   //isa<SwitchInst>(From->getTerminator())
@@ -2948,7 +2948,7 @@ void CWriter::lowerIntrinsics(Function &F) {
             // All other intrinsic calls we must lower.
             Instruction *Before = 0;
             if (CI != &BB->front())
-              Before = prior(BasicBlock::iterator(CI));
+              Before = std::prev(BasicBlock::iterator(CI));
 
             IL->LowerIntrinsicCall(CI);
             if (Before) {        // Move iterator to instruction after call

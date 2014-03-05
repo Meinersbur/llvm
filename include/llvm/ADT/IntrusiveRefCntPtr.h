@@ -102,7 +102,7 @@ class ThreadSafeRefCountedBase {
   mutable std::atomic_int RefCount;
 
 protected:
-  ThreadSafeRefCountedBase() : RefCount(0) {}
+  ThreadSafeRefCountedBase() /*: RefCount(0)*/ { RefCount = 0; }
 
 public:
   void Retain() const { ++RefCount; }

@@ -87,6 +87,10 @@ def int_molly_cluster_length : Intrinsic<[llvm_i64_ty], [llvm_i64_ty/*dimension*
 // Return the rank where this intrnsics is executed
 def int_molly_cluster_myrank : Intrinsic<[llvm_i64_ty/*coordinate*/], []>;
 
+// The modulus, NOT remainder
+// Needed for toridial fields
+def int_molly_mod : Intrinsic<[llvm_i64_ty], [llvm_i64_ty/*dividend*/,llvm_i64_ty/*divisor*/], [IntrNoMem]>;
+
 
 //===----------------------------------------------------------------------===//
 // Inner interface 

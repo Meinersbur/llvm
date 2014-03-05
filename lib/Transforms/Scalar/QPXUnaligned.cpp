@@ -28,7 +28,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/Support/CFG.h"
+//#include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -63,7 +63,7 @@ namespace {
     AliasAnalysis *AA;
     DominatorTree *DT;
     ScalarEvolution *SE;
-    DataLayout *TD;
+    const DataLayout *TD;
   };
 }
 
@@ -113,7 +113,8 @@ bool QPXUnaligned::runOnFunction(Function &F) {
   AA = &getAnalysis<AliasAnalysis>();
   DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   SE = &getAnalysis<ScalarEvolution>();
-  TD = getAnalysisIfAvailable<DataLayout>();
+  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+  TD = DLP ? &DLP->getDataLayout() : 0;
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   bool MadeChange = false;
 
@@ -206,7 +207,7 @@ bool QPXUnaligned::runOnFunction(Function &F) {
       // Look for loads to the next address that either always come before
       // this load or always come after it.
       ExpandableLoad EL;
-      for (Bucket::iterator J = llvm::next(I); J != IE; ++J) {
+      for (Bucket::iterator J = std::next(I); J != IE; ++J) {
         int64_t Diff = cast<SCEVConstant>(
           SE->getMinusSCEV(J->first, I->first))->getValue()->getSExtValue();
         int64_t DiffEnd = Diff + TD->getTypeStoreSize(J->second->getType()) - 1;
@@ -284,7 +285,7 @@ bool QPXUnaligned::runOnFunction(Function &F) {
                  PIE = pred_end(J->second->getParent()); PI != PIE; ++PI)
               Worklist.push_back(BasicBlock::iterator((*PI)->getTerminator()));
           } else
-            Worklist.push_back(llvm::prior(BasicBlock::iterator(J->second)));
+            Worklist.push_back(std::prev(BasicBlock::iterator(J->second)));
           while (!Worklist.empty()) {
             BasicBlock::iterator P = Worklist.pop_back_val();
             if (!Visited.insert(P->getParent()))
@@ -407,7 +408,7 @@ next_J:;
     // Now use the address of the first load to generate a qvlpcldx
     // instruction and the qvfperm shuffle.
 
-    IRBuilder<> Builder(llvm::next(BasicBlock::iterator(InsertPt)));
+    IRBuilder<> Builder(std::next(BasicBlock::iterator(InsertPt)));
 
     Module *M = F.getParent();
     Value *QVLPCLDFunc = Intrinsic::getDeclaration(M,
