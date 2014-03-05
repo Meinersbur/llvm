@@ -18,8 +18,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/DataTypes.h"
-#include "llvm/Support/ValueHandle.h"
 
 namespace llvm {
   class BasicBlock;
@@ -72,7 +72,7 @@ namespace llvm {
     SmallVector<TrackingVH<MDNode>, 4> AllRetainTypes;
     SmallVector<Value *, 4> AllSubprograms;
     SmallVector<Value *, 4> AllGVs;
-    SmallVector<Value *, 4> AllImportedModules;
+    SmallVector<TrackingVH<MDNode>, 4> AllImportedModules;
 
     // Private use for multiple types of template parameters.
     DITemplateValueParameter
@@ -633,12 +633,14 @@ namespace llvm {
 
     /// createLexicalBlock - This creates a descriptor for a lexical block
     /// with the specified parent context.
-    /// @param Scope       Parent lexical scope.
-    /// @param File        Source file
-    /// @param Line        Line number
-    /// @param Col         Column number
+    /// @param Scope         Parent lexical scope.
+    /// @param File          Source file.
+    /// @param Line          Line number.
+    /// @param Col           Column number.
+    /// @param Discriminator DWARF path discriminator value.
     DILexicalBlock createLexicalBlock(DIDescriptor Scope, DIFile File,
-                                      unsigned Line, unsigned Col);
+                                      unsigned Line, unsigned Col,
+                                      unsigned Discriminator);
 
     /// \brief Create a descriptor for an imported module.
     /// @param Context The scope this module is imported into

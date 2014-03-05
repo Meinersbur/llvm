@@ -37,6 +37,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
@@ -45,7 +46,6 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/LineIterator.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Regex.h"
@@ -244,15 +244,15 @@ public:
     initializeSampleProfileLoaderPass(*PassRegistry::getPassRegistry());
   }
 
-  virtual bool doInitialization(Module &M);
+  bool doInitialization(Module &M) override;
 
   void dump() { Profiler->dump(); }
 
-  virtual const char *getPassName() const { return "Sample profile pass"; }
+  const char *getPassName() const override { return "Sample profile pass"; }
 
-  virtual bool runOnFunction(Function &F);
+  bool runOnFunction(Function &F) override;
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
     AU.addRequired<LoopInfo>();
     AU.addRequired<DominatorTreeWrapperPass>();

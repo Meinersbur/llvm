@@ -39,6 +39,7 @@
 #include <iterator>
 #include <stack>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <sys/types.h>
 
@@ -136,8 +137,7 @@ public:
   }
   bool operator!=(const UniqueID &Other) const { return !(*this == Other); }
   bool operator<(const UniqueID &Other) const {
-    return Device < Other.Device ||
-           (Device == Other.Device && File < Other.File);
+    return std::tie(Device, File) < std::tie(Other.Device, Other.File);
   }
   uint64_t getDevice() const { return Device; }
   uint64_t getFile() const { return File; }
@@ -665,10 +665,8 @@ private:
 public:
   typedef char char_type;
 
-#if LLVM_HAS_RVALUE_REFERENCES
   mapped_file_region(mapped_file_region&&);
   mapped_file_region &operator =(mapped_file_region&&);
-#endif
 
   /// Construct a mapped_file_region at \a path starting at \a offset of length
   /// \a length and with access \a mode.

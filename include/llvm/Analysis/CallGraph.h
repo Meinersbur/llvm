@@ -55,11 +55,11 @@
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/IncludeFile.h"
-#include "llvm/Support/ValueHandle.h"
 #include <map>
 
 namespace llvm {
@@ -381,11 +381,11 @@ public:
   // Implementation of the ModulePass interface needed here.
   //
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const;
-  virtual bool runOnModule(Module &M);
-  virtual void releaseMemory();
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+  bool runOnModule(Module &M) override;
+  void releaseMemory() override;
 
-  void print(raw_ostream &o, const Module *) const;
+  void print(raw_ostream &o, const Module *) const override;
   void dump() const;
 };
 

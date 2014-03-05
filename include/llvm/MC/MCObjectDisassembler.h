@@ -68,7 +68,7 @@ public:
   /// somewhere not accessible in the object file.
   /// This is used for dynamic disassembly (see RawMemoryObject).
   void setFallbackRegion(OwningPtr<MemoryObject> &Region) {
-    FallbackRegion.reset(Region.take());
+    FallbackRegion.reset(Region.release());
   }
 
   /// \brief Set the symbolizer to use to get information on external functions.
@@ -162,12 +162,12 @@ public:
                             uint64_t HeaderLoadAddress);
 
 protected:
-  uint64_t getEffectiveLoadAddr(uint64_t Addr) LLVM_OVERRIDE;
-  uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr) LLVM_OVERRIDE;
-  uint64_t getEntrypoint() LLVM_OVERRIDE;
+  uint64_t getEffectiveLoadAddr(uint64_t Addr) override;
+  uint64_t getOriginalLoadAddr(uint64_t EffectiveAddr) override;
+  uint64_t getEntrypoint() override;
 
-  ArrayRef<uint64_t> getStaticInitFunctions() LLVM_OVERRIDE;
-  ArrayRef<uint64_t> getStaticExitFunctions() LLVM_OVERRIDE;
+  ArrayRef<uint64_t> getStaticInitFunctions() override;
+  ArrayRef<uint64_t> getStaticExitFunctions() override;
 };
 
 }

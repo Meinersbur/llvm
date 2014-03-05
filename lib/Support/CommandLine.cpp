@@ -125,20 +125,12 @@ static ManagedStatic<OptionCatSet> RegisteredOptionCategories;
 // Initialise the general option category.
 OptionCategory llvm::cl::GeneralCategory("General options");
 
-struct HasName {
-  HasName(StringRef Name) : Name(Name) {}
-  bool operator()(const OptionCategory *Category) const {
-    return Name == Category->getName();
-  }
-  StringRef Name;
-};
-
-void OptionCategory::registerCategory()
-{
+void OptionCategory::registerCategory() {
   assert(std::count_if(RegisteredOptionCategories->begin(),
                        RegisteredOptionCategories->end(),
-                       HasName(getName())) == 0 &&
-         "Duplicate option categories");
+                       [this](const OptionCategory *Category) {
+                         return getName() == Category->getName();
+                       }) == 0 && "Duplicate option categories");
 
   RegisteredOptionCategories->insert(this);
 }
@@ -697,7 +689,7 @@ namespace {
         free(Dup);
       }
     }
-    const char *SaveString(const char *Str) LLVM_OVERRIDE {
+    const char *SaveString(const char *Str) override {
       char *Dup = strdup(Str);
       Dups.push_back(Dup);
       return Dup;
@@ -1496,7 +1488,7 @@ public:
     MoreHelp->clear();
 
     // Halt the program since help information was printed
-    exit(1);
+    exit(0);
   }
 };
 
@@ -1515,7 +1507,7 @@ public:
   using HelpPrinter::operator= ;
 
 protected:
-  virtual void printOptions(StrOptionPairVector &Opts, size_t MaxArgLen) {
+  void printOptions(StrOptionPairVector &Opts, size_t MaxArgLen) override {
     std::vector<OptionCategory *> SortedCategories;
     std::map<OptionCategory *, std::vector<Option *> > CategorizedOptions;
 
@@ -1732,7 +1724,7 @@ public:
 
     if (OverrideVersionPrinter != 0) {
       (*OverrideVersionPrinter)();
-      exit(1);
+      exit(0);
     }
     print();
 
@@ -1746,7 +1738,7 @@ public:
         (*I)();
     }
 
-    exit(1);
+    exit(0);
   }
 };
 } // End anonymous namespace

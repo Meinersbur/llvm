@@ -175,7 +175,7 @@ private:
 /// Example:
 ///   !!null null
 class NullNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   NullNode(OwningPtr<Document> &D)
       : Node(NK_Null, D, StringRef(), StringRef()) {}
@@ -191,7 +191,7 @@ public:
 /// Example:
 ///   Adena
 class ScalarNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   ScalarNode(OwningPtr<Document> &D, StringRef Anchor, StringRef Tag,
              StringRef Val)
@@ -233,7 +233,7 @@ private:
 /// Example:
 ///   Section: .text
 class KeyValueNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   KeyValueNode(OwningPtr<Document> &D)
     : Node(NK_KeyValue, D, StringRef(), StringRef())
@@ -255,7 +255,7 @@ public:
   /// @returns The value, or nullptr if failed() == true.
   Node *getValue();
 
-  virtual void skip() LLVM_OVERRIDE {
+  virtual void skip() override {
     getKey()->skip();
     getValue()->skip();
   }
@@ -345,7 +345,7 @@ void skip(CollectionType &C) {
 ///   Name: _main
 ///   Scope: Global
 class MappingNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   enum MappingType {
     MT_Block,
@@ -369,7 +369,7 @@ public:
 
   iterator end() { return iterator(); }
 
-  virtual void skip() LLVM_OVERRIDE {
+  virtual void skip() override {
     yaml::skip(*this);
   }
 
@@ -395,7 +395,7 @@ private:
 ///   - Hello
 ///   - World
 class SequenceNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   enum SequenceType {
     ST_Block,
@@ -430,7 +430,7 @@ public:
 
   iterator end() { return iterator(); }
 
-  virtual void skip() LLVM_OVERRIDE {
+  virtual void skip() override {
     yaml::skip(*this);
   }
 
@@ -451,7 +451,7 @@ private:
 /// Example:
 ///   *AnchorName
 class AliasNode : public Node {
-  virtual void anchor();
+  void anchor() override;
 public:
   AliasNode(OwningPtr<Document> &D, StringRef Val)
     : Node(NK_Alias, D, StringRef(), StringRef()), Name(Val) {}

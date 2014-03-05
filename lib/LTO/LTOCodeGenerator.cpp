@@ -39,11 +39,11 @@
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Target/TargetLowering.h"
@@ -270,7 +270,7 @@ const void* LTOCodeGenerator::compile(size_t* length,
     sys::fs::remove(NativeObjectPath);
     return NULL;
   }
-  NativeObjectFile = BuffPtr.take();
+  NativeObjectFile = BuffPtr.release();
 
   // remove temp files
   sys::fs::remove(NativeObjectPath);
@@ -561,6 +561,9 @@ void LTOCodeGenerator::DiagnosticHandler2(const DiagnosticInfo &DI) {
     break;
   case DS_Warning:
     Severity = LTO_DS_WARNING;
+    break;
+  case DS_Remark:
+    Severity = LTO_DS_REMARK;
     break;
   case DS_Note:
     Severity = LTO_DS_NOTE;

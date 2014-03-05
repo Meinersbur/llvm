@@ -68,6 +68,10 @@ def SDT_XCoreStwsp    : SDTypeProfile<0, 2, [SDTCisInt<1>]>;
 def XCoreStwsp        : SDNode<"XCoreISD::STWSP", SDT_XCoreStwsp,
                                [SDNPHasChain, SDNPMayStore]>;
 
+def SDT_XCoreLdwsp    : SDTypeProfile<1, 1, [SDTCisInt<1>]>;
+def XCoreLdwsp        : SDNode<"XCoreISD::LDWSP", SDT_XCoreLdwsp,
+                               [SDNPHasChain, SDNPMayLoad]>;
+
 // These are target-independent nodes, but have target-specific formats.
 def SDT_XCoreCallSeqStart : SDCallSeqStart<[ SDTCisVT<0, i32> ]>;
 def SDT_XCoreCallSeqEnd   : SDCallSeqEnd<[ SDTCisVT<0, i32>,
@@ -581,10 +585,12 @@ def STWSP_lru6 : _FLRU6<0b010101, (outs), (ins RRegs:$a, i32imm:$b),
 
 let mayLoad=1 in {
 def LDWSP_ru6 : _FRU6<0b010111, (outs RRegs:$a), (ins i32imm:$b),
-                      "ldw $a, sp[$b]", []>;
+                      "ldw $a, sp[$b]",
+                      [(set RRegs:$a, (XCoreLdwsp immU6:$b))]>;
 
 def LDWSP_lru6 : _FLRU6<0b010111, (outs RRegs:$a), (ins i32imm:$b),
-                        "ldw $a, sp[$b]", []>;
+                        "ldw $a, sp[$b]",
+                        [(set RRegs:$a, (XCoreLdwsp immU16:$b))]>;
 }
 
 let neverHasSideEffects = 1 in {
@@ -712,10 +718,10 @@ def BLACP_u10 : _FU10<0b111000, (outs), (ins i32imm:$a), "bla cp[$a]", []>;
 def BLACP_lu10 : _FLU10<0b111000, (outs), (ins i32imm:$a), "bla cp[$a]", []>;
 
 def BLRF_u10 : _FU10<0b110100, (outs), (ins pcrel_imm:$a), "bl $a",
-                     [(XCoreBranchLink immU10:$a)]>;
+                     []>;
 
 def BLRF_lu10 : _FLU10<0b110100, (outs), (ins pcrel_imm:$a), "bl $a",
-                       [(XCoreBranchLink immU20:$a)]>;
+                       [(XCoreBranchLink tglobaladdr:$a)]>;
 
 def BLRB_u10 : _FU10<0b110101, (outs), (ins pcrel_imm_neg:$a), "bl $a", []>;
 
@@ -1107,7 +1113,6 @@ def WAITEU_0R : _F0R<0b0000001100, (outs), (ins),
 // Non-Instruction Patterns
 //===----------------------------------------------------------------------===//
 
-def : Pat<(XCoreBranchLink tglobaladdr:$addr), (BLRF_lu10 tglobaladdr:$addr)>;
 def : Pat<(XCoreBranchLink texternalsym:$addr), (BLRF_lu10 texternalsym:$addr)>;
 
 /// sext_inreg

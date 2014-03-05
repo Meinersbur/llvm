@@ -18,16 +18,16 @@
 #include "DIE.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/LexicalScopes.h"
 #include "llvm/DebugInfo.h"
+#include "llvm/IR/DebugLoc.h"
 #include "llvm/MC/MachineLocation.h"
 #include "llvm/Support/Allocator.h"
-#include "llvm/Support/DebugLoc.h"
 
 namespace llvm {
 

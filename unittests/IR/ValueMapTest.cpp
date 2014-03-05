@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/ValueMap.h"
+#include "llvm/IR/ValueMap.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
@@ -117,8 +117,7 @@ TYPED_TEST(ValueMapTest, OperationsWork) {
 
 template<typename ExpectedType, typename VarType>
 void CompileAssertHasType(VarType) {
-  LLVM_STATIC_ASSERT((is_same<ExpectedType, VarType>::value),
-                     "Not the same type");
+  static_assert((is_same<ExpectedType, VarType>::value), "Not the same type");
 }
 
 TYPED_TEST(ValueMapTest, Iteration) {

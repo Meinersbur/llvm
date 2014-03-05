@@ -22,8 +22,8 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/COFF.h"
-#include "llvm/Object/IRObjectFile.h"
 #include "llvm/Object/ELFObjectFile.h"
+#include "llvm/Object/IRObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/ObjectFile.h"
@@ -523,7 +523,7 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     return;
 
   LLVMContext &Context = getGlobalContext();
-  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer.take(), &Context);
+  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer.release(), &Context);
   if (error(BinaryOrErr.getError(), Filename))
     return;
   OwningPtr<Binary> Bin(BinaryOrErr.get());

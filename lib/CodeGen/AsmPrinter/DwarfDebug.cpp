@@ -29,6 +29,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
@@ -42,7 +43,6 @@
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Timer.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
@@ -470,11 +470,11 @@ void DwarfDebug::addScopeRangeList(DwarfCompileUnit *TheCU, DIE *ScopeDIE,
        RI != RE; ++RI) {
     RangeSpan Span(getLabelBeforeInsn(RI->first),
                    getLabelAfterInsn(RI->second));
-    List.addRange(llvm_move(Span));
+    List.addRange(std::move(Span));
   }
 
   // Add the range list to the set of ranges to be emitted.
-  TheCU->addRangeList(llvm_move(List));
+  TheCU->addRangeList(std::move(List));
 }
 
 // Construct new DW_TAG_lexical_block for this scope and attach
@@ -1592,7 +1592,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
 
             // Terminate old register assignments that don't reach MI;
             MachineFunction::const_iterator PrevMBB = Prev->getParent();
-            if (PrevMBB != I && (!AtBlockEntry || llvm::next(PrevMBB) != I) &&
+            if (PrevMBB != I && (!AtBlockEntry || std::next(PrevMBB) != I) &&
                 isDbgValueInDefinedReg(Prev)) {
               // Previous register assignment needs to terminate at the end of
               // its basic block.
@@ -1603,7 +1603,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
                 DEBUG(dbgs() << "Dropping DBG_VALUE for empty range:\n"
                              << "\t" << *Prev << "\n");
                 History.pop_back();
-              } else if (llvm::next(PrevMBB) != PrevMBB->getParent()->end())
+              } else if (std::next(PrevMBB) != PrevMBB->getParent()->end())
                 // Terminate after LastMI.
                 History.push_back(LastMI);
             }
@@ -1800,7 +1800,7 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
 
   // Add the range of this function to the list of ranges for the CU.
   RangeSpan Span(FunctionBeginSym, FunctionEndSym);
-  TheCU->addRange(llvm_move(Span));
+  TheCU->addRange(std::move(Span));
 
   // Clear debug info
   for (ScopeVariablesMap::iterator I = ScopeVariables.begin(),
@@ -1825,6 +1825,7 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
   StringRef Fn;
   StringRef Dir;
   unsigned Src = 1;
+  unsigned Discriminator = 0;
   if (S) {
     DIDescriptor Scope(S);
 
@@ -1848,13 +1849,15 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
       DILexicalBlock DB(S);
       Fn = DB.getFilename();
       Dir = DB.getDirectory();
+      Discriminator = DB.getDiscriminator();
     } else
       llvm_unreachable("Unexpected scope info");
 
     Src = getOrCreateSourceID(
         Fn, Dir, Asm->OutStreamer.getContext().getDwarfCompileUnitID());
   }
-  Asm->OutStreamer.EmitDwarfLocDirective(Src, Line, Col, Flags, 0, 0, Fn);
+  Asm->OutStreamer.EmitDwarfLocDirective(Src, Line, Col, Flags, 0,
+                                         Discriminator, Fn);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1889,8 +1892,7 @@ unsigned DwarfFile::computeSizeAndOffset(DIE *Die, unsigned Offset) {
 
   // Size the DIE children if any.
   if (!Children.empty()) {
-    assert(Abbrev.getChildrenFlag() == dwarf::DW_CHILDREN_yes &&
-           "Children flag not set");
+    assert(Abbrev.hasChildren() && "Children flag not set");
 
     for (unsigned j = 0, M = Children.size(); j < M; ++j)
       Offset = computeSizeAndOffset(Children[j], Offset);
@@ -2057,7 +2059,7 @@ void DwarfDebug::emitDIE(DIE *Die) {
   }
 
   // Emit the DIE children if any.
-  if (Abbrev.getChildrenFlag() == dwarf::DW_CHILDREN_yes) {
+  if (Abbrev.hasChildren()) {
     const std::vector<DIE *> &Children = Die->getChildren();
 
     for (unsigned j = 0, M = Children.size(); j < M; ++j)

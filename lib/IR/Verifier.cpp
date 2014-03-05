@@ -52,7 +52,10 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/DebugInfo.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -65,10 +68,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/InstVisitor.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CFG.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/ConstantRange.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -2411,21 +2411,21 @@ struct VerifierLegacyPass : public FunctionPass {
     initializeVerifierLegacyPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnFunction(Function &F) {
+  bool runOnFunction(Function &F) override {
     if (!V.verify(F) && FatalErrors)
       report_fatal_error("Broken function found, compilation aborted!");
 
     return false;
   }
 
-  bool doFinalization(Module &M) {
+  bool doFinalization(Module &M) override {
     if (!V.verify(M) && FatalErrors)
       report_fatal_error("Broken module found, compilation aborted!");
 
     return false;
   }
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesAll();
   }
 };

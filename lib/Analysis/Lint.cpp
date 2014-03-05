@@ -42,6 +42,7 @@
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
@@ -49,7 +50,6 @@
 #include "llvm/InstVisitor.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManager.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetLibraryInfo.h"
@@ -113,15 +113,15 @@ namespace {
       initializeLintPass(*PassRegistry::getPassRegistry());
     }
 
-    virtual bool runOnFunction(Function &F);
+    bool runOnFunction(Function &F) override;
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesAll();
       AU.addRequired<AliasAnalysis>();
       AU.addRequired<TargetLibraryInfo>();
       AU.addRequired<DominatorTreeWrapperPass>();
     }
-    virtual void print(raw_ostream &O, const Module *M) const {}
+    void print(raw_ostream &O, const Module *M) const override {}
 
     void WriteValue(const Value *V) {
       if (!V) return;
@@ -603,7 +603,7 @@ void Lint::visitInsertElementInst(InsertElementInst &I) {
 void Lint::visitUnreachableInst(UnreachableInst &I) {
   // This isn't undefined behavior, it's merely suspicious.
   Assert1(&I == I.getParent()->begin() ||
-          prior(BasicBlock::iterator(&I))->mayHaveSideEffects(),
+          std::prev(BasicBlock::iterator(&I))->mayHaveSideEffects(),
           "Unusual: unreachable immediately preceded by instruction without "
           "side effects", &I);
 }
