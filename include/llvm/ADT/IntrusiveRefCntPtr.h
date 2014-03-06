@@ -23,8 +23,8 @@
 
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
-#include <memory>
 #include <atomic>
+#include <memory>
 
 namespace llvm {
 
@@ -102,7 +102,7 @@ class ThreadSafeRefCountedBase {
   mutable std::atomic<int> RefCount;
 
 protected:
-  ThreadSafeRefCountedBase() /*: RefCount(0)*/ { RefCount = 0; }
+  ThreadSafeRefCountedBase() : RefCount(0) {}
 
 public:
   void Retain() const { ++RefCount; }
