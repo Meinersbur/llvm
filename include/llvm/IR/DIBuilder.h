@@ -1,4 +1,4 @@
-//===--- llvm/DIBuilder.h - Debug Information Builder -----------*- C++ -*-===//
+//===- DIBuilder.h - Debug Information Builder ------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,12 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_DIBUILDER_H
-#define LLVM_DIBUILDER_H
+#ifndef LLVM_IR_DIBUILDER_H
+#define LLVM_IR_DIBUILDER_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/DataTypes.h"
 

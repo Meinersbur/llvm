@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Linker.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
@@ -62,7 +62,7 @@ protected:
     M.reset();
   }
 
-  OwningPtr<Module> M;
+  std::unique_ptr<Module> M;
   Function *F;
   GlobalVariable *GV;
   BasicBlock *EntryBB;

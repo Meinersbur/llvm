@@ -18,10 +18,9 @@
 #include "DwarfDebug.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/DIBuilder.h"
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCSection.h"
 
@@ -71,7 +70,7 @@ protected:
   DICompileUnit CUNode;
 
   /// Unit debug information entry.
-  const OwningPtr<DIE> UnitDie;
+  const std::unique_ptr<DIE> UnitDie;
 
   /// Offset of the UnitDie from beginning of debug info section.
   unsigned DebugInfoOffset;
@@ -339,6 +338,9 @@ public:
                 const MCSymbol *Label);
 
   void addLabel(DIELoc *Die, dwarf::Form Form, const MCSymbol *Label);
+
+  /// addLocationList - Add a Dwarf loclistptr attribute data and value.
+  void addLocationList(DIE *Die, dwarf::Attribute Attribute, unsigned Index);
 
   /// addSectionLabel - Add a Dwarf section label attribute data and value.
   ///

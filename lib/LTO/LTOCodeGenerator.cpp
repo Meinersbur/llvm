@@ -29,7 +29,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/LTO/LTOModule.h"
-#include "llvm/Linker.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/SubtargetFeature.h"
@@ -264,7 +264,7 @@ const void* LTOCodeGenerator::compile(size_t* length,
   delete NativeObjectFile;
 
   // read .o file into memory buffer
-  OwningPtr<MemoryBuffer> BuffPtr;
+  std::unique_ptr<MemoryBuffer> BuffPtr;
   if (error_code ec = MemoryBuffer::getFile(name, BuffPtr, -1, false)) {
     errMsg = ec.message();
     sys::fs::remove(NativeObjectPath);
