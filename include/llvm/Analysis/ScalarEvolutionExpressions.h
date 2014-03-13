@@ -27,6 +27,9 @@ namespace llvm {
     // These should be ordered in terms of increasing complexity to make the
     // folders simpler.
     scConstant, scTruncate, scZeroExtend, scSignExtend, scAddExpr, scMulExpr,
+#ifdef MOLLY
+    scModExpr,
+#endif /* MOLLY */
     scUDivExpr, scAddRecExpr, scUMaxExpr, scSMaxExpr,
     scUnknown, scCouldNotCompute
   };
@@ -271,6 +274,33 @@ namespace llvm {
   };
 
 
+#ifdef MOLLY
+  class SCEVModExpr : public SCEV {
+    friend class ScalarEvolution;
+
+    const SCEV *Divident;
+    const SCEV *Divisor;
+    SCEVModExpr(const FoldingSetNodeIDRef ID, const SCEV *divident, const SCEV *divisor)
+      : SCEV(ID, scModExpr), Divident(divident), Divisor(divisor) {}
+
+  public:
+    const SCEV *getDivident() const { return Divident; }
+    const SCEV *getLHS() const { return Divident; }
+
+    const SCEV *getDivisor() const { return Divisor; } // Always constant?
+    const SCEV *getRHS() const { return Divisor; }
+
+    Type *getType() const {
+      return Divident->getType();
+    }
+
+    static inline bool classof(const SCEV *S) {
+      return S->getSCEVType() == scModExpr;
+    }
+  };
+#endif /* MOLLY */
+
+
   //===--------------------------------------------------------------------===//
   /// SCEVAddRecExpr - This node represents a polynomial recurrence on the trip
   /// count of the specified loop.  This is the primary focus of the
@@ -477,6 +507,10 @@ namespace llvm {
         return ((SC*)this)->visitUnknown((const SCEVUnknown*)S);
       case scCouldNotCompute:
         return ((SC*)this)->visitCouldNotCompute((const SCEVCouldNotCompute*)S);
+#ifdef MOLLY
+      case scModExpr:
+        return ((SC*)this)->visitModExpr((const SCEVModExpr*)S);
+#endif /* MOLLY */
       default:
         llvm_unreachable("Unknown SCEV type!");
       }
@@ -609,6 +643,12 @@ namespace llvm {
       return SE.getUDivExpr(visit(Expr->getLHS()), visit(Expr->getRHS()));
     }
 
+#ifdef MOLLY
+    const SCEV *visitModExpr(const SCEVModExpr *Expr) {
+      return SE.getModExpr(visit(Expr->getLHS()), visit(Expr->getRHS()));
+    }
+#endif /* MOLLY */
+
     const SCEV *visitAddRecExpr(const SCEVAddRecExpr *Expr) {
       SmallVector<const SCEV *, 2> Operands;
       for (int i = 0, e = Expr->getNumOperands(); i < e; ++i)
@@ -653,7 +693,6 @@ namespace llvm {
   };
 
   typedef DenseMap<const Loop*, const SCEV*> LoopToScevMapT;
-
   /// The SCEVApplyRewriter takes a scalar evolution expression and applies
   /// the Map (Loop -> SCEV) to all AddRecExprs.
   struct SCEVApplyRewriter
@@ -704,6 +743,12 @@ namespace llvm {
     const SCEV *visitUDivExpr(const SCEVUDivExpr *Expr) {
       return SE.getUDivExpr(visit(Expr->getLHS()), visit(Expr->getRHS()));
     }
+
+#ifdef MOLLY
+    const SCEV *visitModExpr(const SCEVModExpr *Expr) {
+      return SE.getModExpr(visit(Expr->getLHS()), visit(Expr->getRHS()));
+    }
+#endif /* MOLLY */
 
     const SCEV *visitAddRecExpr(const SCEVAddRecExpr *Expr) {
       SmallVector<const SCEV *, 2> Operands;

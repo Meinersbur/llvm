@@ -2042,6 +2042,12 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
        case Intrinsic::fma:
        case Intrinsic::fmuladd:
          return true;
+#ifdef MOLLY
+       case Intrinsic::molly_mod:
+         return true;
+       case Intrinsic::molly_ptr:
+         return true;
+#endif /* MOLLY */
        // TODO: some fp intrinsics are marked as having the same error handling
        // as libm. They're safe to speculate when they won't error.
        // TODO: are convert_{from,to}_fp16 safe?

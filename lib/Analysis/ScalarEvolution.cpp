@@ -87,6 +87,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include <algorithm>
+#ifdef MOLLY
+#include "llvm/IR/IntrinsicInst.h"
+#endif /* MOLLY */
 using namespace llvm;
 
 STATISTIC(NumArrayLenItCounts,
@@ -177,6 +180,14 @@ void SCEV::print(raw_ostream &OS) const {
     OS << ">";
     return;
   }
+#ifdef MOLLY
+  //case scRemExpr:
+  case scModExpr: {
+    auto Mod = cast<SCEVModExpr>(this);
+    OS << "(" << *Mod->getDivident() << " mod " << *Mod->getDivisor() << ")";
+    return;
+  }
+#endif /* MOLLY */
   case scAddExpr:
   case scMulExpr:
   case scUMaxExpr:
@@ -252,6 +263,9 @@ Type *SCEV::getType() const {
   case scZeroExtend:
   case scSignExtend:
     return cast<SCEVCastExpr>(this)->getType();
+#ifdef MOLLY
+  case scModExpr:
+#endif /* MOLLY */
   case scAddRecExpr:
   case scMulExpr:
   case scUMaxExpr:
@@ -2717,6 +2731,28 @@ const SCEV *ScalarEvolution::getUnknown(Value *V) {
   return S;
 }
 
+#ifdef MOLLY
+const SCEV* ScalarEvolution::getModExpr(const SCEV *divident, const SCEV *divisor) {
+  assert(getEffectiveSCEVType(divident->getType()) == getEffectiveSCEVType(divisor->getType()) && "SCEVModExpr operand types don't match!");
+
+  //TODO: Implement expression normalization
+  // Assuming divisor is always constant, necessary for ISL
+  // const mod const --> const
+  // x mod 1 --> 0
+  // 0 mod y --> 0
+  // x mod y --> x if range(x) \subseteq { z | z < y } 
+  FoldingSetNodeID ID;
+  ID.AddInteger(scModExpr);
+  ID.AddPointer(divident);
+  ID.AddPointer(divisor);
+  void *IP = 0;
+  if (const SCEV *S = UniqueSCEVs.FindNodeOrInsertPos(ID, IP)) return S;
+  SCEV *S = new (SCEVAllocator)SCEVModExpr(ID.Intern(SCEVAllocator), divident, divisor);
+  UniqueSCEVs.InsertNode(S, IP);
+  return S;
+}
+#endif /* MOLLY */
+
 //===----------------------------------------------------------------------===//
 //            Basic SCEV Analysis and PHI Idiom Recognition Code
 //
@@ -4025,6 +4061,22 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
         break;
       }
     }
+
+#ifdef MOLLY
+  case Instruction::Call: {
+    if (auto intr = dyn_cast<IntrinsicInst>(U)) {
+      if (intr->getIntrinsicID() == Intrinsic::molly_mod) {
+        auto divident = intr->getArgOperand(0);
+        auto divisor = intr->getArgOperand(1);
+
+        auto dividentSCEV = getSCEV(divident);
+        auto divisorSCEV = getSCEV(divisor);
+
+        return getModExpr(dividentSCEV, divisorSCEV);
+      }
+    }
+  } break;
+#endif /* MOLLY */
 
   default: // We cannot analyze this expression.
     break;
@@ -5492,6 +5544,16 @@ const SCEV *ScalarEvolution::computeSCEVAtScope(const SCEV *V, const Loop *L) {
       return Cast;  // must be loop invariant
     return getTruncateExpr(Op, Cast->getType());
   }
+
+#ifdef MOLLY
+  if (auto Mod = dyn_cast<SCEVModExpr>(V)) {
+    const SCEV *Divident = getSCEVAtScope(Mod->getDivident(), L);
+    const SCEV *Divisor = getSCEVAtScope(Mod->getDivisor(), L);
+    if (Divident == Mod->getDivident() && Divisor == Mod->getDivisor())
+      return Mod;   // must be loop invariant
+    return getModExpr(Divident, Divisor);
+  }
+#endif /* MOLLY */
 
   llvm_unreachable("Unknown SCEV type!");
 }
@@ -6983,6 +7045,14 @@ public:
     return GCD;
   }
 
+#ifdef MOLLY
+  const SCEV *visitModExpr(const SCEVModExpr *Expr) {
+    if (GCD != Expr)
+      Remainder = Expr;
+    return GCD;
+  }
+#endif /* MOLLY */
+
   const SCEV *visitAddRecExpr(const SCEVAddRecExpr *Expr) {
     if (GCD == Expr)
       return GCD;
@@ -7144,6 +7214,14 @@ public:
       return One;
     return Expr;
   }
+
+#ifdef MOLLY
+  const SCEV *visitModExpr(const SCEVModExpr *Expr) {
+    if (GCD == Expr)
+      return One;
+    return Expr;
+  }
+#endif /* MOLLY */
 
   const SCEV *visitAddRecExpr(const SCEVAddRecExpr *Expr) {
     if (GCD == Expr)

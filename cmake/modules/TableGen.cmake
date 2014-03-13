@@ -2,6 +2,11 @@
 # Extra parameters for `tblgen' may come after `ofn' parameter.
 # Adds the name of the generated file to TABLEGEN_OUTPUT.
 
+# BEGIN MOlly
+option(BUILD_INDEP_TABLEGEN "Only generate tablegen target on request (target tablegen_all)" OFF)
+add_custom_target(tablegen_all)
+# END MOlly
+
 function(tablegen project ofn)
   # Validate calling context.
   foreach(v
@@ -67,7 +72,11 @@ function(add_public_tablegen_target target)
     add_dependencies(${target} ${LLVM_COMMON_DEPENDS})
   endif()
   set_target_properties(${target} PROPERTIES FOLDER "Tablegenning")
-  set(LLVM_COMMON_DEPENDS ${LLVM_COMMON_DEPENDS} ${target} PARENT_SCOPE)
+  
+  add_dependencies(tablegen_all ${target})
+  if (NOT BUILD_INDEP_TABLEGEN)
+    set(LLVM_COMMON_DEPENDS ${LLVM_COMMON_DEPENDS} ${target} PARENT_SCOPE)
+  endif ()
 endfunction()
 
 if(CMAKE_CROSSCOMPILING)

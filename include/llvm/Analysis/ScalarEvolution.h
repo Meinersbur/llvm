@@ -649,6 +649,9 @@ namespace llvm {
     const SCEV *getUMinExpr(const SCEV *LHS, const SCEV *RHS);
     const SCEV *getUnknown(Value *V);
     const SCEV *getCouldNotCompute();
+#ifdef MOLLY
+    const SCEV *getModExpr(const SCEV *divident, const SCEV *divisor);
+#endif /* MOLLY */
 
     /// getSizeOfExpr - Return an expression for sizeof AllocTy that is type
     /// IntTy

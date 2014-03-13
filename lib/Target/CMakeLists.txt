@@ -9,7 +9,9 @@ add_llvm_library(LLVMTarget
   TargetSubtargetInfo.cpp
   )
 
+if (NOT BUILD_INDEP_TABLEGEN)
 list(APPEND LLVM_COMMON_DEPENDS intrinsics_gen)
+endif ()
 
 foreach(t ${LLVM_TARGETS_TO_BUILD})
   message(STATUS "Targeting ${t}")

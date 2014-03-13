@@ -89,8 +89,23 @@ def int_molly_cluster_myrank : Intrinsic<[llvm_i64_ty/*coordinate*/], []>;
 
 // The modulus, NOT remainder
 // Needed for toridial fields
+// TODO: Version with different bit width/variadic bit width
 def int_molly_mod : Intrinsic<[llvm_i64_ty], [llvm_i64_ty/*dividend*/,llvm_i64_ty/*divisor*/], [IntrNoMem]>;
 
+
+// This is to distinguish memcpy permissible in SCoPs from general memcpy
+// llvm.molly.memcpy may:
+// - Copy from a field to an alloca
+// - Copy from an alloca to a field
+// - Copy between two alloca
+// (- Copy between tow fields)
+// - alloca must have the exact byte length as the third argument
+// TODO: Not yet used
+def int_molly_memcpy  : Intrinsic<[],
+                             [llvm_anyptr_ty, llvm_anyptr_ty, llvm_anyint_ty,
+                              llvm_i32_ty, llvm_i1_ty],
+                            [IntrReadWriteArgMem, NoCapture<0>, NoCapture<1>,
+                             ReadOnly<1>]>;
 
 //===----------------------------------------------------------------------===//
 // Inner interface 

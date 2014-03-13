@@ -16,4 +16,6 @@ add_llvm_library(LLVMAsmPrinter
   WinCodeViewLineTables.cpp
   )
 
-add_dependencies(LLVMAsmPrinter intrinsics_gen)
+if (NOT BUILD_INDEP_TABLEGEN)
+  add_dependencies(LLVMAsmPrinter intrinsics_gen)
+endif ()

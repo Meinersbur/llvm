@@ -14,7 +14,9 @@ tablegen(LLVM ARMGenSubtargetInfo.inc -gen-subtarget)
 tablegen(LLVM ARMGenDisassemblerTables.inc -gen-disassembler)
 add_public_tablegen_target(ARMCommonTableGen)
 
+if (NOT BUILD_INDEP_TABLEGEN)
 set(LLVM_NEXT_DEPENDS intrinsics_gen)
+endif ()
 
 add_llvm_target(ARMCodeGen
   A15SDOptimizer.cpp

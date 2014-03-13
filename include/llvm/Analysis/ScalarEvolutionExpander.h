@@ -240,6 +240,10 @@ namespace llvm {
 
     Value *visitUDivExpr(const SCEVUDivExpr *S);
 
+#ifdef MOLLY
+    Value *visitModExpr(const SCEVModExpr *S);
+#endif /* MOLLY */
+
     Value *visitAddRecExpr(const SCEVAddRecExpr *S);
 
     Value *visitSMaxExpr(const SCEVSMaxExpr *S);

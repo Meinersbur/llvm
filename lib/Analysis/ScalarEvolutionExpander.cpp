@@ -829,6 +829,24 @@ Value *SCEVExpander::visitUDivExpr(const SCEVUDivExpr *S) {
   return InsertBinop(Instruction::UDiv, LHS, RHS);
 }
 
+#ifdef MOLLY
+Value *SCEVExpander::visitModExpr(const SCEVModExpr *S) {
+  Type *Ty = SE.getEffectiveSCEVType(S->getType());
+  Value *LHS = expandCodeFor(S->getLHS(), Ty);
+  Value *RHS = expandCodeFor(S->getRHS(), Ty);
+
+  DebugLoc Loc = Builder.GetInsertPoint()->getDebugLoc();
+
+  auto module = Builder.GetInsertBlock()->getParent()->getParent();
+  auto mollyModDef = Intrinsic::getDeclaration(module, Intrinsic::molly_mod);
+  Instruction *BO = cast<Instruction>(Builder.CreateCall2(mollyModDef, LHS, RHS, "mod"));
+  BO->setDebugLoc(Loc);
+  rememberInstruction(BO);
+
+  return InsertBinop(Instruction::UDiv, LHS, RHS);
+}
+#endif /* MOLLY */
+
 /// Move parts of Base into Rest to leave Base with the minimal
 /// expression that provides a pointer operand suitable for a
 /// GEP expansion.
