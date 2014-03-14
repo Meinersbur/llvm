@@ -620,6 +620,18 @@ namespace {
         return compare(LC->getRHS(), RC->getRHS());
       }
 
+#ifdef MOLLY
+      case scModExpr: {
+        auto LC = cast<SCEVModExpr>(LHS);
+        auto RC = cast<SCEVModExpr>(RHS);
+
+        long X = compare(LC->getLHS(), RC->getLHS());
+        if (X != 0)
+          return X;
+        return compare(LC->getRHS(), RC->getRHS());
+      }
+#endif /* MOLLY */
+
       case scTruncate:
       case scZeroExtend:
       case scSignExtend: {

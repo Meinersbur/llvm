@@ -573,6 +573,14 @@ namespace llvm {
           push(UDiv->getRHS());
           break;
         }
+#ifdef MOLLY
+        case scModExpr: {
+          const SCEVModExpr *Mod = cast<SCEVModExpr>(S);
+          push(Mod->getDivident());
+          push(Mod->getDivisor());
+          break;
+        }
+#endif /* MOLLY */
         case scCouldNotCompute:
           llvm_unreachable("Attempt to use a SCEVCouldNotCompute object!");
         default:
