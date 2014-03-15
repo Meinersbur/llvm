@@ -179,8 +179,13 @@ unsigned TargetTransformInfo::getIntImmCost(const APInt &Imm, Type *Ty) const {
 }
 
 unsigned TargetTransformInfo::getIntImmCost(unsigned Opcode, const APInt &Imm,
-  Type *Ty) const {
+                                            Type *Ty) const {
   return PrevTTI->getIntImmCost(Opcode, Imm, Ty);
+}
+
+unsigned TargetTransformInfo::getIntImmCost(Intrinsic::ID IID, const APInt &Imm,
+                                            Type *Ty) const {
+  return PrevTTI->getIntImmCost(IID, Imm, Ty);
 }
 
 bool TargetTransformInfo::useSoftwarePrefetching(bool &PrefWrites,
@@ -589,26 +594,6 @@ struct NoTTI final : ImmutablePass, TargetTransformInfo {
   unsigned getIntImmCost(const APInt &Imm, Type *Ty) const override {
     return TCC_Basic;
   }
-  
-  bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const {
-    PrefWrites = PrefetchWrites;
-    Dist = LoopDataPrefDist;
-    return LoopDataPref;
-  }
-
-  unsigned getL1CacheLineSize() const {
-    return L1CacheLineSize;
-  }
-
-  bool prepForPreIncAM(unsigned &MaxVars) const {
-    MaxVars = MaxPrepVars;
-    return PreIncPrep;
-  }
-
-  bool prepForPostIncAM(unsigned &MaxVars) const {
-    MaxVars = MaxPrepVars;
-    return PostIncPrep;
-  }
 
   unsigned getIntImmCost(unsigned Opcode, const APInt &Imm,
                          Type *Ty) const override {
@@ -618,6 +603,26 @@ struct NoTTI final : ImmutablePass, TargetTransformInfo {
   unsigned getIntImmCost(Intrinsic::ID IID, const APInt &Imm,
                          Type *Ty) const override {
     return TCC_Free;
+  }
+
+  bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const override {
+    PrefWrites = PrefetchWrites;
+    Dist = LoopDataPrefDist;
+    return LoopDataPref;
+  }
+
+  unsigned getL1CacheLineSize() const override {
+    return L1CacheLineSize;
+  }
+
+  bool prepForPreIncAM(unsigned &MaxVars) const override {
+    MaxVars = MaxPrepVars;
+    return PreIncPrep;
+  }
+
+  bool prepForPostIncAM(unsigned &MaxVars) const override {
+    MaxVars = MaxPrepVars;
+    return PostIncPrep;
   }
 
   unsigned getNumberOfRegisters(bool Vector) const override {

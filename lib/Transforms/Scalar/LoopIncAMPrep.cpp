@@ -25,10 +25,10 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
-//#include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -60,7 +60,7 @@ namespace {
   private:
     LoopInfo *LI;
     ScalarEvolution *SE;
-    const DataLayout *TD;
+    const DataLayout *DL;
   };
 }
 
@@ -115,12 +115,14 @@ static Value *GetPointerOperand(Value *MemI) {
 bool LoopIncAMPrep::runOnLoop(Loop *L, LPPassManager &LPM) {
   LI = &getAnalysis<LoopInfo>();
   SE = &getAnalysis<ScalarEvolution>();
+
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  TD = DLP ? &DLP->getDataLayout() : 0;
+  DL = DLP ? &DLP->getDataLayout() : 0;
+
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   bool MadeChange = false;
 
-  if (!TD)
+  if (!DL)
     return MadeChange;
 
   unsigned MaxVars;

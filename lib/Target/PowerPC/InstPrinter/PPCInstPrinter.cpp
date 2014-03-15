@@ -33,9 +33,16 @@ FullRegNames("ppc-asm-full-reg-names", cl::Hidden, cl::init(false),
 
 void PPCInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
   const char *RegName = getRegisterName(RegNo);
-  if ((RegName[0] == 'd' /* FP2 */ || RegName[0] == 'q' /* QPX */) &&
-      RegName[1] == 'f')
-    RegName += 1;
+  if (RegName[0] == 'q' /* QPX */) {
+    // The system toolchain does not understand QPX register names in .cfi_*
+    // directives, so print the name of the floating-point subregister instead.
+    std::string RN(RegName);
+
+    RN[0] = 'f';
+    OS << RN;
+
+    return;
+  }
 
   OS << RegName;
 }
@@ -335,10 +342,9 @@ static const char *stripRegisterPrefix(const char *RegName) {
   switch (RegName[0]) {
   case 'r':
   case 'f':
+  case 'q': // for QPX
   case 'v': return RegName + 1;
   case 'c': if (RegName[1] == 'r') return RegName + 2;
-  case 'd': if (RegName[1] == 'f') return RegName + 2; // for FP2
-  case 'q': if (RegName[1] == 'f') return RegName + 2; // for QPX 
   }
   
   return RegName;

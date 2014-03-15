@@ -806,6 +806,9 @@ SDNode *PPCDAGToDAGISel::SelectSETCC(SDNode *N) {
   // Altivec Vector compare instructions do not set any CR register by default and
   // vector compare operations return the same type as the operands.
   if (LHS.getValueType().isVector()) {
+    if (PPCSubTarget.hasQPX())
+      return 0;
+
     EVT VecVT = LHS.getValueType();
     MVT::SimpleValueType VT = VecVT.getSimpleVT().SimpleTy;
     unsigned int VCmpInst = getVCmpInst(VT, CC);
@@ -976,10 +979,11 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
 
   case ISD::SETCC: {
     SDNode *SN = SelectSETCC(N);
-    if (SN && (N->getValueType(0).getSimpleVT().SimpleTy != MVT::v4i1))
+    if (SN)
       return SN;
     break;
   }
+
   case PPCISD::GlobalBaseReg:
     return getGlobalBaseReg();
 

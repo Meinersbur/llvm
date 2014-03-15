@@ -151,8 +151,6 @@ def PPCA2Itineraries : ProcessorItineraries<
                                  [6, 0, 0, 0]>,
   InstrItinData<IIC_FPRes,       [InstrStage<1, [A2_FU]>],
                                  [6, 0]>
-  , InstrItinData<VecPerm,       [InstrStage<1, [FU]>], // QPX
-                                 [2, 1, 1, 1]>
 ]>;
 
 // ===---------------------------------------------------------------------===//

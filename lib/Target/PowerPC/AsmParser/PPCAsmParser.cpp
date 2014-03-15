@@ -95,6 +95,18 @@ static unsigned VRegs[32] = {
   PPC::V24, PPC::V25, PPC::V26, PPC::V27,
   PPC::V28, PPC::V29, PPC::V30, PPC::V31
 };
+
+static unsigned QFRegs[32] = {
+  PPC::QF0,  PPC::QF1,  PPC::QF2,  PPC::QF3,
+  PPC::QF4,  PPC::QF5,  PPC::QF6,  PPC::QF7,
+  PPC::QF8,  PPC::QF9,  PPC::QF10, PPC::QF11,
+  PPC::QF12, PPC::QF13, PPC::QF14, PPC::QF15,
+  PPC::QF16, PPC::QF17, PPC::QF18, PPC::QF19,
+  PPC::QF20, PPC::QF21, PPC::QF22, PPC::QF23,
+  PPC::QF24, PPC::QF25, PPC::QF26, PPC::QF27,
+  PPC::QF28, PPC::QF29, PPC::QF30, PPC::QF31
+};
+
 static unsigned CRBITRegs[32] = {
   PPC::CR0LT, PPC::CR0GT, PPC::CR0EQ, PPC::CR0UN,
   PPC::CR1LT, PPC::CR1GT, PPC::CR1EQ, PPC::CR1UN,
@@ -447,6 +459,21 @@ public:
   void addRegVRRCOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::CreateReg(VRegs[getReg()]));
+  }
+
+  void addRegQFRCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateReg(QFRegs[getReg()]));
+  }
+
+  void addRegQSRCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateReg(QFRegs[getReg()]));
+  }
+
+  void addRegQBRCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateReg(QFRegs[getReg()]));
   }
 
   void addRegCRBITRCOperands(MCInst &Inst, unsigned N) const {

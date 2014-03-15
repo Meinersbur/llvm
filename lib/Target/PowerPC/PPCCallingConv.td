@@ -34,7 +34,6 @@ def RetCC_PPC : CallingConv<[
   
   CCIfType<[f32], CCAssignToReg<[F1, F2]>>,
   CCIfType<[f64], CCAssignToReg<[F1, F2, F3, F4]>>,
-  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2]>>,
   CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()", CCAssignToReg<[QF1, QF2]>>>,
   
   // Vector types are always returned in V2.
@@ -96,7 +95,6 @@ def CC_PPC32_SVR4_Common : CallingConv<[
   
   // FP values are passed in F1 - F8.
   CCIfType<[f32, f64], CCAssignToReg<[F1, F2, F3, F4, F5, F6, F7, F8]>>,
-  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8]>>,
   CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()",
     CCAssignToReg<[QF1, QF2, QF3, QF4, QF5, QF6, QF7, QF8]>>>,
 

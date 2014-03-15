@@ -157,7 +157,6 @@ void initializeLiveStacksPass(PassRegistry&);
 void initializeLiveVariablesPass(PassRegistry&);
 void initializeLoaderPassPass(PassRegistry&);
 void initializeLocalStackSlotPassPass(PassRegistry&);
-void initializeQPXUnalignedPass(PassRegistry&);
 void initializeLoopDataPrefetchPass(PassRegistry&);
 void initializeLoopIncAMPrepPass(PassRegistry&);
 void initializeLoopDeletionPass(PassRegistry&);

@@ -102,9 +102,6 @@ static cl::opt<bool> MISchedPostRA("misched-postra", cl::Hidden,
 static cl::opt<bool> EarlyLiveIntervals("early-live-intervals", cl::Hidden,
     cl::desc("Run live interval analysis earlier in the pipeline"));
 
-static cl::opt<bool> EnableQPXUnaligned("enable-qpx-unaligned", cl::Hidden,
-    cl::desc("Enable QPX unaligned permute expansion"));
-
 /// Allow standard passes to be disabled by command line options. This supports
 /// simple binary flags that either suppress the pass or do nothing.
 /// i.e. -disable-mypass=false has no effect.
@@ -389,9 +386,6 @@ void TargetPassConfig::addIRPasses() {
   // coming from the front-end and/or optimizer is valid.
   if (!DisableVerify)
     addPass(createVerifierPass());
-
-  if (getOptLevel() != CodeGenOpt::None && EnableQPXUnaligned)
-    addPass(createQPXUnalignedPass());
 
   if (getOptLevel() != CodeGenOpt::None)
     addPass(createLoopDataPrefetchPass());

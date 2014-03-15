@@ -7,10 +7,10 @@ entry:
 }
 
 ; CHECK: @foo
-; CHECK: stfd
-; CHECK: stfd
-; CHECK: stfd
-; CHECK: stfd
+; CHECK: stfs
+; CHECK: stfs
+; CHECK: stfs
+; CHECK: stfs
 ; CHECK: blr
 
 define void @bar(<4 x float> %v, <4 x float>* %p) {
@@ -20,5 +20,5 @@ entry:
 }
 
 ; CHECK: @bar
-; CHECK: qvstfdx
+; CHECK: qvstfsx
 

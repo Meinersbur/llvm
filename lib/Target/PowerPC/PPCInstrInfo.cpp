@@ -166,7 +166,6 @@ unsigned PPCInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
   case PPC::RESTORE_CRBIT:
   case PPC::LVX:
   case PPC::RESTORE_VRSAVE:
-  case PPC::LFPDX:
   case PPC::QVLFDX:
   case PPC::QVLFSXs:
   case PPC::QVLFDXb:
@@ -195,7 +194,6 @@ unsigned PPCInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
   case PPC::SPILL_CRBIT:
   case PPC::STVX:
   case PPC::SPILL_VRSAVE:
-  case PPC::STFPDX:
   case PPC::QVSTFDX:
   case PPC::QVSTFSXs:
   case PPC::QVSTFDXb:
@@ -674,8 +672,6 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     Opc = PPC::MCRF;
   else if (PPC::VRRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::VOR;
-  else if (PPC::DFRCRegClass.contains(DestReg, SrcReg))
-    Opc = PPC::FPMR;
   else if (PPC::QFRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::QVFMR;
   else if (PPC::QSRCRegClass.contains(DestReg, SrcReg))
@@ -755,12 +751,6 @@ PPCInstrInfo::StoreRegToStackSlot(MachineFunction &MF,
                                                getKillRegState(isKill)),
                                        FrameIdx));
     SpillsVRS = true;
-  } else if (PPC::DFRCRegClass.hasSubClassEq(RC)) {
-    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::STFPDX))
-                                       .addReg(SrcReg,
-                                               getKillRegState(isKill)),
-                                       FrameIdx));
-    NonRI = true;
   } else if (PPC::QFRCRegClass.hasSubClassEq(RC)) {
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::QVSTFDX))
                                        .addReg(SrcReg,
@@ -866,10 +856,6 @@ PPCInstrInfo::LoadRegFromStackSlot(MachineFunction &MF, DebugLoc DL,
                                                DestReg),
                                        FrameIdx));
     SpillsVRS = true;
-  } else if (PPC::DFRCRegClass.hasSubClassEq(RC)) {
-    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::LFPDX), DestReg),
-                                       FrameIdx));
-    NonRI = true;
   } else if (PPC::QFRCRegClass.hasSubClassEq(RC)) {
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::QVLFDX), DestReg),
                                        FrameIdx));

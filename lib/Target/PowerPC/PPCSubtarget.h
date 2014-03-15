@@ -77,7 +77,6 @@ protected:
   bool IsPPC64;
   bool HasAltivec;
   bool HasQPX;
-  bool HasFP2;
   bool HasVSX;
   bool HasFCPSGN;
   bool HasFSQRT;
@@ -187,7 +186,6 @@ public:
   bool hasISEL() const { return HasISEL; }
   bool hasPOPCNTD() const { return HasPOPCNTD; }
   bool hasLDBRX() const { return HasLDBRX; }
-  bool hasFP2() const { return HasFP2; }
   bool hasQPX() const { return HasQPX; }
   bool isBookE() const { return IsBookE; }
   bool isDeprecatedMFTB() const { return DeprecatedMFTB; }

@@ -37,7 +37,7 @@ define <4 x float> @test3(<4 x float> %x) nounwind  {
 ; CHECK-NOT: qvfrin
 
 ; CHECK-FM: test3:
-; CHECK-FM: qvfrin 1, 1
+; CHECK-FM-NOT: qvfrin
 }
 
 declare <4 x float> @llvm.nearbyint.v4f32(<4 x float>) nounwind readnone
@@ -50,7 +50,7 @@ define <4 x double> @test4(<4 x double> %x) nounwind  {
 ; CHECK-NOT: qvfrin
 
 ; CHECK-FM: test4:
-; CHECK-FM: qvfrin 1, 1
+; CHECK-FM-NOT: qvfrin
 }
 
 declare <4 x double> @llvm.nearbyint.v4f64(<4 x double>) nounwind readnone

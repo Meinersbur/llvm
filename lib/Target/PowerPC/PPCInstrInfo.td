@@ -2477,7 +2477,6 @@ def : Pat<(fcopysign f32:$frB, f64:$frA),
           (FCPSGNS (COPY_TO_REGCLASS $frA, F4RC), $frB)>;
 
 include "PPCInstrAltivec.td"
-include "PPCInstrFP2.td"
 include "PPCInstr64Bit.td"
 include "PPCInstrQPX.td"
 def crnot : OutPatFrag<(ops node:$in),

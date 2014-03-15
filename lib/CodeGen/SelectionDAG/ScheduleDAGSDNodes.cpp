@@ -209,7 +209,6 @@ void ScheduleDAGSDNodes::ClusterNeighboringLoads(SDNode *Node) {
   unsigned NumOps = Node->getNumOperands();
   if (Node->getOperand(NumOps-1).getValueType() == MVT::Other)
     Chain = Node->getOperand(NumOps-1).getNode();
-  // FIXME: Check other children of the parent node.
   if (!Chain)
     return;
 

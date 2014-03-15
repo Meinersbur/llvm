@@ -301,6 +301,7 @@ public:
                                  Type *Ty) const;
   virtual unsigned getIntImmCost(Intrinsic::ID IID, const APInt &Imm,
                                  Type *Ty) const;
+
   /// Return true if software prefetching should be used. If true is
   /// returned, the first parameter is set to indicate whether or not writes
   /// should also be prefetched and the second parameter is set to the

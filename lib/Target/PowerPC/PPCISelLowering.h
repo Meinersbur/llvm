@@ -476,8 +476,6 @@ namespace llvm {
 
     virtual bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const;
 
-    virtual bool isShuffleMaskLegal(const SmallVectorImpl<int> &Mask, EVT VT) const;
-
     /// getOptimalMemOpType - Returns the target specific optimal type for load
     /// and store operations as a result of memset, memcpy, and memmove
     /// lowering. If DstAlign is zero that means it's safe to destination
@@ -566,9 +564,9 @@ namespace llvm {
     SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG) const;
 
+    SDValue LowerVectorLoad(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerVectorStore(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSLEEF(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerCallResult(SDValue Chain, SDValue InFlag,

@@ -546,58 +546,7 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setOperationAction(ISD::READCYCLECOUNTER, MVT::i64, Legal);
   }
 
-  if (TM.getSubtarget<PPCSubtarget>().hasFP2()) {
-    setOperationAction(ISD::FADD, MVT::v2f64, Legal);
-    setOperationAction(ISD::FSUB, MVT::v2f64, Legal);
-    setOperationAction(ISD::FMUL, MVT::v2f64, Legal);
-    setOperationAction(ISD::FDIV, MVT::v2f64, Expand);
-    setOperationAction(ISD::FREM, MVT::v2f64, Expand);
-
-    setOperationAction(ISD::FCOPYSIGN, MVT::v2f64, Expand);
-    setOperationAction(ISD::FGETSIGN, MVT::v2f64, Expand);
-
-    setOperationAction(ISD::LOAD  , MVT::v2f64, Legal);
-    setOperationAction(ISD::STORE , MVT::v2f64, Legal);
-    setOperationAction(ISD::STORE , MVT::v2i32, Legal);
-
-    setOperationAction(ISD::SELECT, MVT::v2f64, Expand);
-    setOperationAction(ISD::VSELECT, MVT::v2f64, Expand);
-
-    setOperationAction(ISD::EXTRACT_VECTOR_ELT , MVT::v2f64, Legal);
-    setOperationAction(ISD::INSERT_VECTOR_ELT , MVT::v2f64, Expand);
-    setOperationAction(ISD::CONCAT_VECTORS , MVT::v2f64, Expand);
-    setOperationAction(ISD::EXTRACT_SUBVECTOR , MVT::v2f64, Expand);
-    setOperationAction(ISD::VECTOR_SHUFFLE , MVT::v2f64, Legal);
-    setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v2f64, Legal);
-    setOperationAction(ISD::BUILD_VECTOR, MVT::v2f64, Custom);
-
-    setOperationAction(ISD::FP_TO_SINT , MVT::v2f64, Legal);
-    setOperationAction(ISD::FP_TO_UINT , MVT::v2f64, Expand);
-
-    setOperationAction(ISD::FP_ROUND , MVT::v2f64, Expand);
-    setOperationAction(ISD::FP_ROUND_INREG , MVT::v2f64, Expand);
-    setOperationAction(ISD::FP_EXTEND, MVT::v2f64, Expand);
-
-    setOperationAction(ISD::FNEG , MVT::v2f64, Legal);
-    setOperationAction(ISD::FABS , MVT::v2f64, Legal);
-    setOperationAction(ISD::FSQRT , MVT::v2f64, Expand);
-    setOperationAction(ISD::FSIN , MVT::v2f64, Expand);
-    setOperationAction(ISD::FCOS , MVT::v2f64, Expand);
-    setOperationAction(ISD::FPOWI , MVT::v2f64, Expand);
-    setOperationAction(ISD::FPOW , MVT::v2f64, Expand);
-    setOperationAction(ISD::FLOG , MVT::v2f64, Expand);
-    setOperationAction(ISD::FLOG2 , MVT::v2f64, Expand);
-    setOperationAction(ISD::FLOG10 , MVT::v2f64, Expand);
-    setOperationAction(ISD::FEXP , MVT::v2f64, Expand);
-    setOperationAction(ISD::FEXP2 , MVT::v2f64, Expand);
-    setOperationAction(ISD::FCEIL , MVT::v2f64, Expand);
-    setOperationAction(ISD::FTRUNC , MVT::v2f64, Expand);
-    setOperationAction(ISD::FRINT , MVT::v2f64, Expand);
-    setOperationAction(ISD::FNEARBYINT , MVT::v2f64, Expand);
-    setOperationAction(ISD::FFLOOR , MVT::v2f64, Expand);
-
-    addRegisterClass(MVT::v2f64, &PPC::DFRCRegClass);
-  } else if (TM.getSubtarget<PPCSubtarget>().hasQPX()) {
+  if (TM.getSubtarget<PPCSubtarget>().hasQPX()) {
     setOperationAction(ISD::FADD, MVT::v4f64, Legal);
     setOperationAction(ISD::FSUB, MVT::v4f64, Legal);
     setOperationAction(ISD::FMUL, MVT::v4f64, Legal);
@@ -2443,9 +2392,6 @@ PPCTargetLowering::LowerFormalArguments_32SVR4(
           break;
         case MVT::v4f32:
           RC = PPCSubTarget.hasQPX() ? &PPC::QSRCRegClass : &PPC::VRRCRegClass;
-          break;
-        case MVT::v2f64:
-          RC = &PPC::DFRCRegClass;
           break;
         case MVT::v4f64:
           RC = &PPC::QFRCRegClass;
@@ -5254,6 +5200,9 @@ SDValue PPCTargetLowering::lowerEH_SJLJ_LONGJMP(SDValue Op,
 }
 
 SDValue PPCTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getValueType().isVector())
+    return LowerVectorLoad(Op, DAG);
+
   assert(Op.getValueType() == MVT::i1 &&
          "Custom lowering only for i1 loads");
 
@@ -5275,6 +5224,9 @@ SDValue PPCTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
 }
 
 SDValue PPCTargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
+  if (Op.getOperand(1).getValueType().isVector())
+    return LowerVectorStore(Op, DAG);
+
   assert(Op.getOperand(1).getValueType() == MVT::i1 &&
          "Custom lowering only for i1 stores");
 
@@ -5987,8 +5939,7 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
     return DAG.getSetCC(dl, MVT::v4i1, LoadedVect, FPZeros, ISD::SETEQ);
   }
 
-  if (TM.getSubtarget<PPCSubtarget>().hasFP2() ||
-      TM.getSubtarget<PPCSubtarget>().hasQPX()) {
+  if (TM.getSubtarget<PPCSubtarget>().hasQPX()) {
     return SDValue();
   }
 
@@ -6230,9 +6181,7 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
   EVT VT = Op.getValueType();
 
   const TargetMachine &TM = getTargetMachine();
-  if (TM.getSubtarget<PPCSubtarget>().hasFP2()) {
-    return SDValue();
-  } else if (TM.getSubtarget<PPCSubtarget>().hasQPX()) {
+  if (TM.getSubtarget<PPCSubtarget>().hasQPX()) {
     if (VT.getVectorNumElements() != 4)
       return SDValue();
 
@@ -6568,9 +6517,14 @@ SDValue PPCTargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
   SDValue Idx = DAG.getConstant(Offset, FIdx.getValueType());
   Idx = DAG.getNode(ISD::ADD, dl, FIdx.getValueType(), FIdx, Idx);
 
-  return DAG.getLoad(MVT::i32, dl, StoreChain, Idx,
-                     PtrInfo.getWithOffset(Offset),
-                     false, false, false, 0);
+  SDValue IntVal = DAG.getLoad(MVT::i32, dl, StoreChain, Idx,
+                               PtrInfo.getWithOffset(Offset),
+                               false, false, false, 0);
+
+  if (!PPCSubTarget.useCRBits())
+    return IntVal;
+
+  return DAG.getNode(ISD::TRUNCATE, dl, MVT::i1, IntVal);
 }
 
 SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
@@ -6633,8 +6587,8 @@ SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
 }
 
 /// Lowering for QPX v4i1 loads
-SDValue PPCTargetLowering::LowerLOAD(SDValue Op,
-                                     SelectionDAG &DAG) const {
+SDValue PPCTargetLowering::LowerVectorLoad(SDValue Op,
+                                           SelectionDAG &DAG) const {
   assert(Op.getValueType() == MVT::v4i1 && "Unknown load to lower");
 
   SDLoc dl(Op);
@@ -6670,8 +6624,8 @@ SDValue PPCTargetLowering::LowerLOAD(SDValue Op,
 }
 
 /// Lowering for QPX v4i1 stores
-SDValue PPCTargetLowering::LowerSTORE(SDValue Op,
-                                      SelectionDAG &DAG) const {
+SDValue PPCTargetLowering::LowerVectorStore(SDValue Op,
+                                            SelectionDAG &DAG) const {
   SDLoc dl(Op);
   StoreSDNode *SN = cast<StoreSDNode>(Op.getNode());
   SDValue StoreChain = SN->getChain();
@@ -6946,8 +6900,6 @@ SDValue PPCTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::SCALAR_TO_VECTOR:   return LowerSCALAR_TO_VECTOR(Op, DAG);
   case ISD::EXTRACT_VECTOR_ELT: return LowerEXTRACT_VECTOR_ELT(Op, DAG);
   case ISD::MUL:                return LowerMUL(Op, DAG);
-  case ISD::LOAD:               return LowerLOAD(Op, DAG);
-  case ISD::STORE:              return LowerSTORE(Op, DAG);
 
   // Vector SLEEF math functions.
   case ISD::FTAN:
@@ -9458,16 +9410,12 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
         return std::make_pair(0U, &PPC::F4RCRegClass);
       if (VT == MVT::f64 || VT == MVT::i64)
         return std::make_pair(0U, &PPC::F8RCRegClass);
-      if (VT == MVT::v2f64 && PPCSubTarget.hasFP2())
-        return std::make_pair(0U, &PPC::DFRCRegClass);
       if (VT == MVT::v4f64 && PPCSubTarget.hasQPX())
         return std::make_pair(0U, &PPC::QFRCRegClass);
       if (VT == MVT::v4f32 && PPCSubTarget.hasQPX())
         return std::make_pair(0U, &PPC::QSRCRegClass);
       break;
     case 'v':
-      if (VT == MVT::v2f64 && PPCSubTarget.hasFP2())
-        return std::make_pair(0U, &PPC::DFRCRegClass);
       if (VT == MVT::v4f64 && PPCSubTarget.hasQPX())
         return std::make_pair(0U, &PPC::QFRCRegClass);
       if (VT == MVT::v4f32 && PPCSubTarget.hasQPX())
@@ -9606,10 +9554,6 @@ bool PPCTargetLowering::isLegalAddressingMode(const AddrMode &AM,
     return false;
   }
 
-  return true;
-}
-
-bool PPCTargetLowering::isShuffleMaskLegal(const SmallVectorImpl<int> &Mask, EVT VT) const {
   return true;
 }
 

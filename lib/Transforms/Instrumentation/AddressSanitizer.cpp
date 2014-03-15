@@ -277,10 +277,8 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
     else
       Mapping.Offset = kDefaultShadowOffset32;
   } else {  // LongSize == 64
-    if (isBGQ)
-      Mapping.Offset = -1;
-    else if (IsPPC64)
-      Mapping.Offset = kPPC64_ShadowOffset64;
+    if (IsPPC64)
+      Mapping.Offset = (isBGQ ? ((uint64_t) -1) : kPPC64_ShadowOffset64);
     else if (IsFreeBSD)
       Mapping.Offset = kFreeBSD_ShadowOffset64;
     else if (IsLinux && IsX86_64)
@@ -295,6 +293,11 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
     Mapping.Scale = ClMappingScale;
   }
 
+  // OR-ing shadow offset if more efficient (at least on x86) if the offset
+  // is a power of two, but on ppc64 we have to use add since the shadow
+  // offset is not necessary 1/8-th of the address space.
+  Mapping.OrShadowOffset = !IsPPC64 && !(Mapping.Offset & (Mapping.Offset - 1));
+
   Mapping.OffsetGV = 0;
   Mapping.Offset2GV = 0;
   Mapping.Offset3GV = 0;
@@ -305,11 +308,6 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
   Mapping.Offset3Value = 0;
   Mapping.BeginValue = 0;
   Mapping.Begin2Value = 0;
-
-  // OR-ing shadow offset if more efficient (at least on x86) if the offset
-  // is a power of two, but on ppc64 we have to use add since the shadow
-  // offset is not necessary 1/8-th of the address space.
-  Mapping.OrShadowOffset = !IsPPC64 && !(Mapping.Offset & (Mapping.Offset - 1));
 
   return Mapping;
 }
@@ -356,6 +354,7 @@ struct AddressSanitizer : public FunctionPass {
   bool runOnFunction(Function &F) override;
   bool maybeInsertAsanInitAtFunctionEntry(Function &F);
   bool doInitialization(Module &M) override;
+  void emitShadowMapping(Module &M, IRBuilder<> &IRB);
   static char ID;  // Pass identification, replacement for typeid
 
  private:
@@ -1211,6 +1210,7 @@ bool AddressSanitizer::doInitialization(Module &M) {
   IRB.CreateCall(AsanInitFunction);
 
   Mapping = getShadowMapping(M, LongSize);
+  emitShadowMapping(M, IRB);
 
   appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndCtorPriority);
   return true;
