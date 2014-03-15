@@ -18,17 +18,31 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetOpcodes.h"
 using namespace llvm;
+
+// FIXME: Once the integrated assembler supports full register names, tie this
+// to the verbose-asm setting.
+static cl::opt<bool>
+FullRegNames("ppc-asm-full-reg-names", cl::Hidden, cl::init(false),
+             cl::desc("Use full register names when printing assembly"));
 
 #include "PPCGenAsmWriter.inc"
 
 void PPCInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
   const char *RegName = getRegisterName(RegNo);
-  if ((RegName[0] == 'd' /* FP2 */ || RegName[0] == 'q' /* QPX */) &&
-      RegName[1] == 'f')
-    RegName += 1;
+  if (RegName[0] == 'q' /* QPX */) {
+    // The system toolchain does not understand QPX register names in .cfi_*
+    // directives, so print the name of the floating-point subregister instead.
+    std::string RN(RegName);
+
+    RN[0] = 'f';
+    OS << RN;
+
+    return;
+  }
 
   OS << RegName;
 }
@@ -147,6 +161,9 @@ void PPCInstPrinter::printPredicateOperand(const MCInst *MI, unsigned OpNo,
     case PPC::PRED_NU:
       O << "nu";
       return;
+    case PPC::PRED_BIT_SET:
+    case PPC::PRED_BIT_UNSET:
+      llvm_unreachable("Invalid use of bit predicate code");
     }
     llvm_unreachable("Invalid predicate code");
   }
@@ -182,6 +199,9 @@ void PPCInstPrinter::printPredicateOperand(const MCInst *MI, unsigned OpNo,
     case PPC::PRED_NU_PLUS:
       O << "+";
       return;
+    case PPC::PRED_BIT_SET:
+    case PPC::PRED_BIT_UNSET:
+      llvm_unreachable("Invalid use of bit predicate code");
     }
     llvm_unreachable("Invalid predicate code");
   }
@@ -316,13 +336,15 @@ void PPCInstPrinter::printTLSCall(const MCInst *MI, unsigned OpNo,
 /// stripRegisterPrefix - This method strips the character prefix from a
 /// register name so that only the number is left.  Used by for linux asm.
 static const char *stripRegisterPrefix(const char *RegName) {
+  if (FullRegNames)
+    return RegName;
+
   switch (RegName[0]) {
   case 'r':
   case 'f':
+  case 'q': // for QPX
   case 'v': return RegName + 1;
   case 'c': if (RegName[1] == 'r') return RegName + 2;
-  case 'd': if (RegName[1] == 'f') return RegName + 2; // for FP2
-  case 'q': if (RegName[1] == 'f') return RegName + 2; // for QPX 
   }
   
   return RegName;

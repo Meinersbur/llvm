@@ -36,7 +36,7 @@ void DWARFDebugLoc::dump(raw_ostream &OS) const {
 
 void DWARFDebugLoc::parse(DataExtractor data, unsigned AddressSize) {
   uint32_t Offset = 0;
-  while (data.isValidOffset(Offset)) {
+  while (data.isValidOffset(Offset+AddressSize-1)) {
     Locations.resize(Locations.size() + 1);
     LocationList &Loc = Locations.back();
     Loc.Offset = Offset;
@@ -68,7 +68,9 @@ void DWARFDebugLoc::parse(DataExtractor data, unsigned AddressSize) {
       Offset += Bytes;
       E.Loc.reserve(str.size());
       std::copy(str.begin(), str.end(), std::back_inserter(E.Loc));
-      Loc.Entries.push_back(llvm_move(E));
+      Loc.Entries.push_back(std::move(E));
     }
   }
+  if (data.isValidOffset(Offset))
+    llvm::errs() << "error: failed to consume entire .debug_loc section\n";
 }

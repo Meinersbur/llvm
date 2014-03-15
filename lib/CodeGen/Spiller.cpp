@@ -77,7 +77,7 @@ protected:
 
     DEBUG(dbgs() << "Spilling everywhere " << *li << "\n");
 
-    assert(li->weight != HUGE_VALF &&
+    assert(li->weight != llvm::huge_valf &&
            "Attempting to spill already spilled value.");
 
     assert(!TargetRegisterInfo::isStackSlot(li->reg) &&
@@ -143,9 +143,9 @@ protected:
       if (hasDef) {
         MachineInstrSpan MIS(miItr);
 
-        tii->storeRegToStackSlot(*mi->getParent(), llvm::next(miItr), NewVReg,
+        tii->storeRegToStackSlot(*mi->getParent(), std::next(miItr), NewVReg,
                                  true, ss, trc, tri);
-        lis->InsertMachineInstrRangeInMaps(llvm::next(miItr), MIS.end());
+        lis->InsertMachineInstrRangeInMaps(std::next(miItr), MIS.end());
       }
     }
   }
@@ -164,7 +164,7 @@ public:
                  VirtRegMap &vrm)
     : SpillerBase(pass, mf, vrm) {}
 
-  void spill(LiveRangeEdit &LRE) {
+  void spill(LiveRangeEdit &LRE) override {
     // Ignore spillIs - we don't use it.
     trivialSpillEverywhere(LRE);
   }

@@ -16,7 +16,6 @@
 #include "JITRegistrar.h"
 #include "ObjectImageCommon.h"
 #include "llvm/ADT/IntervalMap.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
@@ -25,6 +24,8 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/MemoryBuffer.h"
+
 using namespace llvm;
 using namespace llvm::object;
 
@@ -93,23 +94,19 @@ class ELFObjectImage : public ObjectImageCommon {
 
     // Subclasses can override these methods to update the image with loaded
     // addresses for sections and common symbols
-    virtual void updateSectionAddress(const SectionRef &Sec, uint64_t Addr)
-    {
+    void updateSectionAddress(const SectionRef &Sec, uint64_t Addr) override {
       DyldObj->updateSectionAddress(Sec, Addr);
     }
 
-    virtual void updateSymbolAddress(const SymbolRef &Sym, uint64_t Addr)
-    {
+    void updateSymbolAddress(const SymbolRef &Sym, uint64_t Addr) override {
       DyldObj->updateSymbolAddress(Sym, Addr);
     }
 
-    virtual void registerWithDebugger()
-    {
+    void registerWithDebugger() override {
       JITRegistrar::getGDBRegistrar().registerObject(*Buffer);
       Registered = true;
     }
-    virtual void deregisterWithDebugger()
-    {
+    void deregisterWithDebugger() override {
       JITRegistrar::getGDBRegistrar().deregisterObject(*Buffer);
     }
 };
@@ -176,6 +173,39 @@ void RuntimeDyldELF::deregisterEHFrames() {
     MemMgr->deregisterEHFrames(EHFrameAddr, EHFrameLoadAddr, EHFrameSize);
   }
   RegisteredEHFrameSections.clear();
+}
+
+ObjectImage *RuntimeDyldELF::createObjectImageFromFile(object::ObjectFile *ObjFile) {
+  if (!ObjFile)
+    return NULL;
+
+  error_code ec;
+  MemoryBuffer* Buffer = MemoryBuffer::getMemBuffer(ObjFile->getData(), 
+                                                    "", 
+                                                    false);
+
+  if (ObjFile->getBytesInAddress() == 4 && ObjFile->isLittleEndian()) {
+    DyldELFObject<ELFType<support::little, 2, false> > *Obj =
+      new DyldELFObject<ELFType<support::little, 2, false> >(Buffer, ec);
+    return new ELFObjectImage<ELFType<support::little, 2, false> >(NULL, Obj);
+  }
+  else if (ObjFile->getBytesInAddress() == 4 && !ObjFile->isLittleEndian()) {
+    DyldELFObject<ELFType<support::big, 2, false> > *Obj =
+      new DyldELFObject<ELFType<support::big, 2, false> >(Buffer, ec);
+    return new ELFObjectImage<ELFType<support::big, 2, false> >(NULL, Obj);
+  }
+  else if (ObjFile->getBytesInAddress() == 8 && !ObjFile->isLittleEndian()) {
+    DyldELFObject<ELFType<support::big, 2, true> > *Obj =
+      new DyldELFObject<ELFType<support::big, 2, true> >(Buffer, ec);
+    return new ELFObjectImage<ELFType<support::big, 2, true> >(NULL, Obj);
+  }
+  else if (ObjFile->getBytesInAddress() == 8 && ObjFile->isLittleEndian()) {
+    DyldELFObject<ELFType<support::little, 2, true> > *Obj =
+      new DyldELFObject<ELFType<support::little, 2, true> >(Buffer, ec);
+    return new ELFObjectImage<ELFType<support::little, 2, true> >(NULL, Obj);
+  }
+  else
+    llvm_unreachable("Unexpected ELF format");
 }
 
 ObjectImage *RuntimeDyldELF::createObjectImage(ObjectBuffer *Buffer) {
@@ -419,6 +449,48 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
     assert((*TargetPtr >> 21 & 0x3) == 0 && "invalid shift for relocation");
     break;
   }
+  case ELF::R_AARCH64_ADR_PREL_PG_HI21: {
+    // Operation: Page(S+A) - Page(P)
+    uint64_t Result = ((Value + Addend) & ~0xfffULL) - (FinalAddress & ~0xfffULL);
+
+    // Check that -2^32 <= X < 2^32
+    assert(static_cast<int64_t>(Result) >= (-1LL << 32) &&
+           static_cast<int64_t>(Result) < (1LL << 32) &&
+           "overflow check failed for relocation");
+
+    // AArch64 code is emitted with .rela relocations. The data already in any
+    // bits affected by the relocation on entry is garbage.
+    *TargetPtr &= 0x9f00001fU;
+    // Immediate goes in bits 30:29 + 5:23 of ADRP instruction, taken
+    // from bits 32:12 of X.
+    *TargetPtr |= ((Result & 0x3000U) << (29 - 12));
+    *TargetPtr |= ((Result & 0x1ffffc000ULL) >> (14 - 5));
+    break;
+  }
+  case ELF::R_AARCH64_LDST32_ABS_LO12_NC: {
+    // Operation: S + A
+    uint64_t Result = Value + Addend;
+
+    // AArch64 code is emitted with .rela relocations. The data already in any
+    // bits affected by the relocation on entry is garbage.
+    *TargetPtr &= 0xffc003ffU;
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:2 of X
+    *TargetPtr |= ((Result & 0xffc) << (10 - 2));
+    break;
+  }
+  case ELF::R_AARCH64_LDST64_ABS_LO12_NC: {
+    // Operation: S + A
+    uint64_t Result = Value + Addend;
+
+    // AArch64 code is emitted with .rela relocations. The data already in any
+    // bits affected by the relocation on entry is garbage.
+    *TargetPtr &= 0xffc003ffU;
+    // Immediate goes in bits 21:10 of LD/ST instruction, taken
+    // from bits 11:3 of X
+    *TargetPtr |= ((Result & 0xff8) << (10 - 3));
+    break;
+  }
   }
 }
 
@@ -446,8 +518,11 @@ void RuntimeDyldELF::resolveARMRelocation(const SectionEntry &Section,
   default:
     llvm_unreachable("Not implemented relocation type!");
 
+  case ELF::R_ARM_NONE:
+    break;
   // Write a 32bit value to relocation address, taking into account the
   // implicit addend encoded in the target.
+  case ELF::R_ARM_PREL31:
   case ELF::R_ARM_TARGET1:
   case ELF::R_ARM_ABS32:
     *TargetPtr = *Placeholder + Value;
@@ -583,10 +658,8 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
                                          RelocationValueRef &Rel) {
   // Get the ELF symbol value (st_value) to compare with Relocation offset in
   // .opd entries
-
-  error_code err;
-  for (section_iterator si = Obj.begin_sections(),
-     se = Obj.end_sections(); si != se; si.increment(err)) {
+  for (section_iterator si = Obj.begin_sections(), se = Obj.end_sections();
+       si != se; ++si) {
     section_iterator RelSecI = si->getRelocatedSection();
     if (RelSecI == Obj.end_sections())
       continue;
@@ -596,16 +669,14 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
     if (RelSectionName != ".opd")
       continue;
 
-    for (relocation_iterator i = si->begin_relocations(),
-         e = si->end_relocations(); i != e;) {
-      check(err);
-
+    for (relocation_iterator i = si->relocation_begin(),
+         e = si->relocation_end(); i != e;) {
       // The R_PPC64_ADDR64 relocation indicates the first field
       // of a .opd entry
       uint64_t TypeFunc;
       check(i->getType(TypeFunc));
       if (TypeFunc != ELF::R_PPC64_ADDR64) {
-        i.increment(err);
+        ++i;
         continue;
       }
 
@@ -615,10 +686,9 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
       int64_t Addend;
       check(getELFRelocationAddend(*i, Addend));
 
-      i = i.increment(err);
+      ++i;
       if (i == e)
         break;
-      check(err);
 
       // Just check if following relocation is a R_PPC64_TOC
       uint64_t TypeTOC;
@@ -634,7 +704,9 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
 
       section_iterator tsi(Obj.end_sections());
       check(TargetSymbol->getSection(tsi));
-      Rel.SectionID = findOrEmitSection(Obj, (*tsi), true, LocalSections);
+      bool IsCode = false;
+      tsi->isText(IsCode);
+      Rel.SectionID = findOrEmitSection(Obj, (*tsi), IsCode, LocalSections);
       Rel.Addend = (intptr_t)Addend;
       return;
     }
@@ -1031,8 +1103,8 @@ void RuntimeDyldELF::processRelocationRef(unsigned SectionID,
     //  Look up for existing stub.
     StubMap::const_iterator i = Stubs.find(Value);
     if (i != Stubs.end()) {
-      resolveRelocation(Section, Offset,
-                        (uint64_t)Section.Address + i->second, RelType, 0);
+      RelocationEntry RE(SectionID, Offset, RelType, i->second);
+      addRelocationForSection(RE, SectionID);
       DEBUG(dbgs() << " Stub function found\n");
     } else {
       // Create a new stub function.
@@ -1057,9 +1129,8 @@ void RuntimeDyldELF::processRelocationRef(unsigned SectionID,
         addRelocationForSection(RELo, Value.SectionID);
       }
 
-      resolveRelocation(Section, Offset,
-                        (uint64_t)Section.Address + Section.StubOffset,
-                        RelType, 0);
+      RelocationEntry RE(SectionID, Offset, RelType, Section.StubOffset);
+      addRelocationForSection(RE, SectionID);
       Section.StubOffset += getMaxStubSize();
     }
   } else if (Arch == Triple::ppc64 || Arch == Triple::ppc64le) {
@@ -1404,4 +1475,9 @@ bool RuntimeDyldELF::isCompatibleFormat(const ObjectBuffer *Buffer) const {
     return false;
   return (memcmp(Buffer->getBufferStart(), ELF::ElfMagic, strlen(ELF::ElfMagic))) == 0;
 }
+
+bool RuntimeDyldELF::isCompatibleFile(const object::ObjectFile *Obj) const {
+  return Obj->isELF();
+}
+
 } // namespace llvm

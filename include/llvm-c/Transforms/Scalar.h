@@ -41,6 +41,9 @@ void LLVMAddCFGSimplificationPass(LLVMPassManagerRef PM);
 /** See llvm::createDeadStoreEliminationPass function. */
 void LLVMAddDeadStoreEliminationPass(LLVMPassManagerRef PM);
 
+/** See llvm::createScalarizerPass function. */
+void LLVMAddScalarizerPass(LLVMPassManagerRef PM);
+
 /** See llvm::createGVNPass function. */
 void LLVMAddGVNPass(LLVMPassManagerRef PM);
 
@@ -56,9 +59,6 @@ void LLVMAddJumpThreadingPass(LLVMPassManagerRef PM);
 /** See llvm::createLICMPass function. */
 void LLVMAddLICMPass(LLVMPassManagerRef PM);
 
-/** See llvm::createQPXUnalignedPass function. */
-void LLVMAddQPXUnalignedPass(LLVMPassManagerRef PM);
-
 /** See llvm::createLoopDataPrefetchPass function. */
 void LLVMAddLoopDataPrefetchPass(LLVMPassManagerRef PM);
 
@@ -73,6 +73,9 @@ void LLVMAddLoopIdiomPass(LLVMPassManagerRef PM);
 
 /** See llvm::createLoopRotatePass function. */
 void LLVMAddLoopRotatePass(LLVMPassManagerRef PM);
+
+/** See llvm::createLoopRerollPass function. */
+void LLVMAddLoopRerollPass(LLVMPassManagerRef PM);
 
 /** See llvm::createLoopUnrollPass function. */
 void LLVMAddLoopUnrollPass(LLVMPassManagerRef PM);

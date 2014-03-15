@@ -1,4 +1,5 @@
 ; RUN: llc -march=mips -mattr=+msa,+fp64 < %s | FileCheck %s
+; RUN: llc -march=mipsel -mattr=+msa,+fp64 < %s | FileCheck %s
 
 define void @add_v4f32(<4 x float>* %c, <4 x float>* %a, <4 x float>* %b) nounwind {
   ; CHECK: add_v4f32:
@@ -294,7 +295,8 @@ define void @fexp2_v2f64_2(<2 x double>* %c, <2 x double>* %a) nounwind {
   ; CHECK-DAG: ld.d [[R1:\$w[0-9]+]], 0($5)
   %2 = tail call <2 x double> @llvm.exp2.v2f64 (<2 x double> %1)
   %3 = fmul <2 x double> <double 2.0, double 2.0>, %2
-  ; CHECK-DAG: ld.d [[R3:\$w[0-9]+]], %lo(
+  ; CHECK-DAG: addiu [[G_PTR:\$[0-9]+]], {{.*}}, %lo($
+  ; CHECK-DAG: ld.d [[R3:\$w[0-9]+]], 0([[G_PTR]])
   ; CHECK-DAG: fexp2.d [[R4:\$w[0-9]+]], [[R3]], [[R1]]
   store <2 x double> %3, <2 x double>* %c
   ; CHECK-DAG: st.d [[R4]], 0($4)

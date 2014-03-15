@@ -481,7 +481,8 @@ void MipsSEInstrInfo::expandCvtFPInt(MachineBasicBlock &MBB,
   DebugLoc DL = I->getDebugLoc();
   bool DstIsLarger, SrcIsLarger;
 
-  tie(DstIsLarger, SrcIsLarger) = compareOpndSize(CvtOpc, *MBB.getParent());
+  std::tie(DstIsLarger, SrcIsLarger) =
+      compareOpndSize(CvtOpc, *MBB.getParent());
 
   if (DstIsLarger)
     TmpReg = getRegisterInfo().getSubReg(DstReg, Mips::sub_lo);
@@ -520,8 +521,13 @@ void MipsSEInstrInfo::expandBuildPairF64(MachineBasicBlock &MBB,
   DebugLoc dl = I->getDebugLoc();
   const TargetRegisterInfo &TRI = getRegisterInfo();
 
-  // mtc1 Lo, $fp
-  // mtc1 Hi, $fp + 1
+  // For FP32 mode:
+  //   mtc1 Lo, $fp
+  //   mtc1 Hi, $fp + 1
+  // For FP64 mode:
+  //   mtc1 Lo, $fp
+  //   mthc1 Hi, $fp
+
   BuildMI(MBB, I, dl, Mtc1Tdd, TRI.getSubReg(DstReg, Mips::sub_lo))
     .addReg(LoReg);
 

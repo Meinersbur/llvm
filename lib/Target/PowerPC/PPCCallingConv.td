@@ -15,6 +15,8 @@
 /// CCIfSubtarget - Match if the current subtarget has a feature F.
 class CCIfSubtarget<string F, CCAction A>
  : CCIf<!strconcat("State.getTarget().getSubtarget<PPCSubtarget>().", F), A>;
+class CCIfNotSubtarget<string F, CCAction A>
+ : CCIf<!strconcat("!State.getTarget().getSubtarget<PPCSubtarget>().", F), A>;
 
 //===----------------------------------------------------------------------===//
 // Return Value Calling Convention
@@ -23,7 +25,8 @@ class CCIfSubtarget<string F, CCAction A>
 // Return-value convention for PowerPC
 def RetCC_PPC : CallingConv<[
   // On PPC64, integer return values are always promoted to i64
-  CCIfType<[i32], CCIfSubtarget<"isPPC64()", CCPromoteToType<i64>>>,
+  CCIfType<[i32, i1], CCIfSubtarget<"isPPC64()", CCPromoteToType<i64>>>,
+  CCIfType<[i1], CCIfNotSubtarget<"isPPC64()", CCPromoteToType<i32>>>,
 
   CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
   CCIfType<[i64], CCAssignToReg<[X3, X4, X5, X6]>>,
@@ -31,7 +34,6 @@ def RetCC_PPC : CallingConv<[
   
   CCIfType<[f32], CCAssignToReg<[F1, F2]>>,
   CCIfType<[f64], CCAssignToReg<[F1, F2, F3, F4]>>,
-  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2]>>,
   CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()", CCAssignToReg<[QF1, QF2]>>>,
   
   // Vector types are always returned in V2.
@@ -49,6 +51,7 @@ def RetCC_PPC : CallingConv<[
 // Only handle ints and floats.  All ints are promoted to i64.
 // Vector types and quadword ints are not handled.
 def CC_PPC64_ELF_FIS : CallingConv<[
+  CCIfType<[i1],  CCPromoteToType<i64>>,
   CCIfType<[i8],  CCPromoteToType<i64>>,
   CCIfType<[i16], CCPromoteToType<i64>>,
   CCIfType<[i32], CCPromoteToType<i64>>,
@@ -61,6 +64,7 @@ def CC_PPC64_ELF_FIS : CallingConv<[
 // and multiple register returns are "supported" to avoid compile
 // errors, but none are handled by the fast selector.
 def RetCC_PPC64_ELF_FIS : CallingConv<[
+  CCIfType<[i1],   CCPromoteToType<i64>>,
   CCIfType<[i8],   CCPromoteToType<i64>>,
   CCIfType<[i16],  CCPromoteToType<i64>>,
   CCIfType<[i32],  CCPromoteToType<i64>>,
@@ -76,6 +80,8 @@ def RetCC_PPC64_ELF_FIS : CallingConv<[
 //===----------------------------------------------------------------------===//
 
 def CC_PPC32_SVR4_Common : CallingConv<[
+  CCIfType<[i1], CCPromoteToType<i32>>,
+
   // The ABI requires i64 to be passed in two adjacent registers with the first
   // register having an odd register number.
   CCIfType<[i32], CCIfSplit<CCCustom<"CC_PPC32_SVR4_Custom_AlignArgRegs">>>,
@@ -89,7 +95,6 @@ def CC_PPC32_SVR4_Common : CallingConv<[
   
   // FP values are passed in F1 - F8.
   CCIfType<[f32, f64], CCAssignToReg<[F1, F2, F3, F4, F5, F6, F7, F8]>>,
-  CCIfType<[v2f64], CCAssignToReg<[DF1, DF2, DF3, DF4, DF5, DF6, DF7, DF8]>>,
   CCIfType<[v4f64, v4f32, v4i1], CCIfSubtarget<"hasQPX()",
     CCAssignToReg<[QF1, QF2, QF3, QF4, QF5, QF6, QF7, QF8]>>>,
 

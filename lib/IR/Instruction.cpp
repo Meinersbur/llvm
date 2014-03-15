@@ -12,13 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/LeakDetector.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/CallSite.h"
-#include "llvm/Support/LeakDetector.h"
 using namespace llvm;
 
 Instruction::Instruction(Type *ty, unsigned it, Use *Ops, unsigned NumOps,
@@ -33,6 +33,10 @@ Instruction::Instruction(Type *ty, unsigned it, Use *Ops, unsigned NumOps,
            "Instruction to insert before is not in a basic block!");
     InsertBefore->getParent()->getInstList().insert(InsertBefore, this);
   }
+}
+
+const DataLayout *Instruction::getDataLayout() const {
+  return getParent()->getDataLayout();
 }
 
 Instruction::Instruction(Type *ty, unsigned it, Use *Ops, unsigned NumOps,
@@ -223,18 +227,19 @@ const char *Instruction::getOpcodeName(unsigned OpCode) {
   case GetElementPtr: return "getelementptr";
 
   // Convert instructions...
-  case Trunc:     return "trunc";
-  case ZExt:      return "zext";
-  case SExt:      return "sext";
-  case FPTrunc:   return "fptrunc";
-  case FPExt:     return "fpext";
-  case FPToUI:    return "fptoui";
-  case FPToSI:    return "fptosi";
-  case UIToFP:    return "uitofp";
-  case SIToFP:    return "sitofp";
-  case IntToPtr:  return "inttoptr";
-  case PtrToInt:  return "ptrtoint";
-  case BitCast:   return "bitcast";
+  case Trunc:         return "trunc";
+  case ZExt:          return "zext";
+  case SExt:          return "sext";
+  case FPTrunc:       return "fptrunc";
+  case FPExt:         return "fpext";
+  case FPToUI:        return "fptoui";
+  case FPToSI:        return "fptosi";
+  case UIToFP:        return "uitofp";
+  case SIToFP:        return "sitofp";
+  case IntToPtr:      return "inttoptr";
+  case PtrToInt:      return "ptrtoint";
+  case BitCast:       return "bitcast";
+  case AddrSpaceCast: return "addrspacecast";
 
   // Other instructions...
   case ICmp:           return "icmp";
@@ -398,18 +403,18 @@ bool Instruction::isSameOperationAs(const Instruction *I,
 /// specified block.  Note that PHI nodes are considered to evaluate their
 /// operands in the corresponding predecessor block.
 bool Instruction::isUsedOutsideOfBlock(const BasicBlock *BB) const {
-  for (const_use_iterator UI = use_begin(), E = use_end(); UI != E; ++UI) {
+  for (const Use &U : uses()) {
     // PHI nodes uses values in the corresponding predecessor block.  For other
     // instructions, just check to see whether the parent of the use matches up.
-    const User *U = *UI;
-    const PHINode *PN = dyn_cast<PHINode>(U);
+    const Instruction *I = cast<Instruction>(U.getUser());
+    const PHINode *PN = dyn_cast<PHINode>(I);
     if (PN == 0) {
-      if (cast<Instruction>(U)->getParent() != BB)
+      if (I->getParent() != BB)
         return true;
       continue;
     }
 
-    if (PN->getIncomingBlock(UI) != BB)
+    if (PN->getIncomingBlock(U) != BB)
       return true;
   }
   return false;

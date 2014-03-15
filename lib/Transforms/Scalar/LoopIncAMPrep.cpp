@@ -25,9 +25,10 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -45,7 +46,7 @@ namespace {
     }
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.addPreserved<DominatorTree>();
+      AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addRequired<LoopInfo>();
       AU.addPreserved<LoopInfo>();
       AU.addRequired<ScalarEvolution>();
@@ -59,7 +60,7 @@ namespace {
   private:
     LoopInfo *LI;
     ScalarEvolution *SE;
-    DataLayout *TD;
+    const DataLayout *DL;
   };
 }
 
@@ -114,11 +115,14 @@ static Value *GetPointerOperand(Value *MemI) {
 bool LoopIncAMPrep::runOnLoop(Loop *L, LPPassManager &LPM) {
   LI = &getAnalysis<LoopInfo>();
   SE = &getAnalysis<ScalarEvolution>();
-  TD = getAnalysisIfAvailable<DataLayout>();
+
+  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
+  DL = DLP ? &DLP->getDataLayout() : 0;
+
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   bool MadeChange = false;
 
-  if (!TD)
+  if (!DL)
     return MadeChange;
 
   unsigned MaxVars;
@@ -259,7 +263,7 @@ bool LoopIncAMPrep::runOnLoop(Loop *L, LPPassManager &LPM) {
     RecursivelyDeleteTriviallyDeadInstructions(BasePtr);
 
     Value *LastNewPtr = NewBasePtr;
-    for (Bucket::iterator I = llvm::next(Buckets[i].begin()),
+    for (Bucket::iterator I = std::next(Buckets[i].begin()),
          IE = Buckets[i].end(); I != IE; ++I) {
       Value *Ptr = GetPointerOperand(I->second);
       assert(Ptr && "No pointer operand");

@@ -7,9 +7,6 @@ target triple = "powerpc64-bgq-linux"
 %"struct.std::_Vector_base.14.194.626.662.698.1238.1261" = type { %"struct.std::_Vector_base<int, std::allocator<int> >::_Vector_impl.13.193.625.661.697.1237.1260" }
 %"struct.std::_Vector_base<int, std::allocator<int> >::_Vector_impl.13.193.625.661.697.1237.1260" = type { i32*, i32*, i32* }
 
-@_ZN15CosmoHaloFinderC1Ev = alias void (%class.CosmoHaloFinder.16.196.628.664.700.1240.1263*)* @_ZN15CosmoHaloFinderC2Ev
-@_ZN15CosmoHaloFinderD1Ev = alias void (%class.CosmoHaloFinder.16.196.628.664.700.1240.1263*)* @_ZN15CosmoHaloFinderD2Ev
-
 declare void @_ZN15CosmoHaloFinderC2Ev(%class.CosmoHaloFinder.16.196.628.664.700.1240.1263* nocapture) unnamed_addr nounwind align 2
 
 declare void @_ZN15CosmoHaloFinderD2Ev(%class.CosmoHaloFinder.16.196.628.664.700.1240.1263* nocapture) unnamed_addr align 2

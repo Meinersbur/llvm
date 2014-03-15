@@ -28,6 +28,8 @@
 
 #define DEBUG_TYPE "hwloops"
 #include "llvm/ADT/SmallSet.h"
+#include "Hexagon.h"
+#include "HexagonTargetMachine.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -40,9 +42,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
-#include "Hexagon.h"
-#include "HexagonTargetMachine.h"
-
 #include <algorithm>
 #include <vector>
 
@@ -908,7 +907,7 @@ bool HexagonHardwareLoops::isDead(const MachineInstr *MI,
     // this instruction is dead: both it (and the phi node) can be removed.
     use_nodbg_iterator I = MRI->use_nodbg_begin(Reg);
     use_nodbg_iterator End = MRI->use_nodbg_end();
-    if (llvm::next(I) != End || !I.getOperand().getParent()->isPHI())
+    if (std::next(I) != End || !I.getOperand().getParent()->isPHI())
       return false;
 
     MachineInstr *OnePhi = I.getOperand().getParent();
@@ -921,7 +920,7 @@ bool HexagonHardwareLoops::isDead(const MachineInstr *MI,
       use_nodbg_iterator nextJ;
       for (use_nodbg_iterator J = MRI->use_nodbg_begin(OPReg);
            J != End; J = nextJ) {
-        nextJ = llvm::next(J);
+        nextJ = std::next(J);
         MachineOperand &Use = J.getOperand();
         MachineInstr *UseMI = Use.getParent();
 
@@ -955,7 +954,7 @@ void HexagonHardwareLoops::removeIfDead(MachineInstr *MI) {
       MachineRegisterInfo::use_iterator nextI;
       for (MachineRegisterInfo::use_iterator I = MRI->use_begin(Reg),
            E = MRI->use_end(); I != E; I = nextI) {
-        nextI = llvm::next(I);  // I is invalidated by the setReg
+        nextI = std::next(I);  // I is invalidated by the setReg
         MachineOperand &Use = I.getOperand();
         MachineInstr *UseMI = Use.getParent();
         if (UseMI == MI)
@@ -1163,7 +1162,7 @@ bool HexagonHardwareLoops::orderBumpCompare(MachineInstr *BumpI,
   // Out of order.
   unsigned PredR = CmpI->getOperand(0).getReg();
   bool FoundBump = false;
-  instr_iterator CmpIt = CmpI, NextIt = llvm::next(CmpIt);
+  instr_iterator CmpIt = CmpI, NextIt = std::next(CmpIt);
   for (instr_iterator I = NextIt, E = BB->instr_end(); I != E; ++I) {
     MachineInstr *In = &*I;
     for (unsigned i = 0, n = In->getNumOperands(); i < n; ++i) {
@@ -1177,7 +1176,7 @@ bool HexagonHardwareLoops::orderBumpCompare(MachineInstr *BumpI,
     if (In == BumpI) {
       instr_iterator After = BumpI;
       instr_iterator From = CmpI;
-      BB->splice(llvm::next(After), BB, From);
+      BB->splice(std::next(After), BB, From);
       FoundBump = true;
       break;
     }
@@ -1523,7 +1522,7 @@ MachineBasicBlock *HexagonHardwareLoops::createPreheaderForLoop(
     if (PB != Latch) {
       Tmp2.clear();
       bool NotAnalyzed = TII->AnalyzeBranch(*PB, TB, FB, Tmp2, false);
-      (void)NotAnalyzed; // supress compiler warning
+      (void)NotAnalyzed; // suppress compiler warning
       assert (!NotAnalyzed && "Should be analyzable!");
       if (TB != Header && (Tmp2.empty() || FB != Header))
         TII->InsertBranch(*PB, NewPH, 0, EmptyCond, DL);
@@ -1535,7 +1534,7 @@ MachineBasicBlock *HexagonHardwareLoops::createPreheaderForLoop(
   // Insert an unconditional branch to the header.
   TB = FB = 0;
   bool LatchNotAnalyzed = TII->AnalyzeBranch(*Latch, TB, FB, Tmp2, false);
-  (void)LatchNotAnalyzed; // supress compiler warning
+  (void)LatchNotAnalyzed; // suppress compiler warning
   assert (!LatchNotAnalyzed && "Should be analyzable!");
   if (!TB && !FB)
     TII->InsertBranch(*Latch, Header, 0, EmptyCond, DL);

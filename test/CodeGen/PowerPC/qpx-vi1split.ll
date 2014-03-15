@@ -22,4 +22,4 @@ for.end:                                          ; preds = %vector.body
   ret void
 }
 
-attributes #0 = { noinline nounwind "target-cpu"="a2q" "target-features"="-altivec,+qpx" }
+attributes #0 = { noinline nounwind }

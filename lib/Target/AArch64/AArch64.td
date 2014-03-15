@@ -21,8 +21,11 @@ include "llvm/Target/Target.td"
 // AArch64 Subtarget features.
 //
 
+def FeatureFPARMv8 : SubtargetFeature<"fp-armv8", "HasFPARMv8", "true",
+  "Enable ARMv8 FP">;
+
 def FeatureNEON : SubtargetFeature<"neon", "HasNEON", "true",
-  "Enable Advanced SIMD instructions">;
+  "Enable Advanced SIMD instructions", [FeatureFPARMv8]>;
 
 def FeatureCrypto : SubtargetFeature<"crypto", "HasCrypto", "true",
   "Enable cryptographic instructions">;
@@ -33,7 +36,25 @@ def FeatureCrypto : SubtargetFeature<"crypto", "HasCrypto", "true",
 
 include "AArch64Schedule.td"
 
-def : Processor<"generic", GenericItineraries, [FeatureNEON, FeatureCrypto]>;
+class ProcNoItin<string Name, list<SubtargetFeature> Features>
+ : Processor<Name, NoItineraries, Features>;
+
+def : Processor<"generic", GenericItineraries, [FeatureFPARMv8, FeatureNEON]>;
+
+def ProcA53     : SubtargetFeature<"a53", "ARMProcFamily", "CortexA53",
+                                   "Cortex-A53 ARM processors",
+                                   [FeatureFPARMv8,
+                                   FeatureNEON,
+                                   FeatureCrypto]>;
+
+def ProcA57     : SubtargetFeature<"a57", "ARMProcFamily", "CortexA57",
+                                   "Cortex-A57 ARM processors",
+                                   [FeatureFPARMv8,
+                                   FeatureNEON,
+                                   FeatureCrypto]>;
+
+def : ProcessorModel<"cortex-a53", CortexA53Model, [ProcA53]>;
+def : Processor<"cortex-a57", NoItineraries, [ProcA57]>;
 
 //===----------------------------------------------------------------------===//
 // Register File Description
@@ -52,19 +73,9 @@ include "AArch64InstrInfo.td"
 def AArch64InstrInfo : InstrInfo;
 
 //===----------------------------------------------------------------------===//
-// Assembly printer
-//===----------------------------------------------------------------------===//
-
-def A64InstPrinter : AsmWriter {
-  string AsmWriterClassName = "InstPrinter";
-  bit isMCAsmWriter = 1;
-}
-
-//===----------------------------------------------------------------------===//
 // Declare the target which we are implementing
 //===----------------------------------------------------------------------===//
 
 def AArch64 : Target {
   let InstructionSet = AArch64InstrInfo;
-  let AssemblyWriters = [A64InstPrinter];
 }

@@ -17,8 +17,8 @@
 #include "llvm-c/Initialization.h"
 #include "llvm-c/Transforms/Scalar.h"
 #include "llvm/Analysis/Passes.h"
-#include "llvm/Analysis/Verifier.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/PassManager.h"
 
@@ -28,11 +28,13 @@ using namespace llvm;
 /// ScalarOpts library.
 void llvm::initializeScalarOpts(PassRegistry &Registry) {
   initializeADCEPass(Registry);
-  initializeCodeGenPreparePass(Registry);
+  initializeSampleProfileLoaderPass(Registry);
+  initializeConstantHoistingPass(Registry);
   initializeConstantPropagationPass(Registry);
   initializeCorrelatedValuePropagationPass(Registry);
   initializeDCEPass(Registry);
   initializeDeadInstEliminationPass(Registry);
+  initializeScalarizerPass(Registry);
   initializeDSEPass(Registry);
   initializeGVNPass(Registry);
   initializeEarlyCSEPass(Registry);
@@ -40,12 +42,12 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
   initializeJumpThreadingPass(Registry);
   initializeLICMPass(Registry);
   initializeLoopIncAMPrepPass(Registry);
-  initializeQPXUnalignedPass(Registry);
   initializeLoopDataPrefetchPass(Registry);
   initializeLoopDeletionPass(Registry);
   initializeLoopInstSimplifyPass(Registry);
   initializeLoopRotatePass(Registry);
   initializeLoopStrengthReducePass(Registry);
+  initializeLoopRerollPass(Registry);
   initializeLoopUnrollPass(Registry);
   initializeLoopUnswitchPass(Registry);
   initializeLoopIdiomRecognizePass(Registry);
@@ -82,6 +84,10 @@ void LLVMAddDeadStoreEliminationPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createDeadStoreEliminationPass());
 }
 
+void LLVMAddScalarizerPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createScalarizerPass());
+}
+
 void LLVMAddGVNPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createGVNPass());
 }
@@ -106,10 +112,6 @@ void LLVMAddLoopIncAMPrepPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createLoopIncAMPrepPass());
 }
 
-void LLVMAddQPXUnalignedPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createQPXUnalignedPass());
-}
-
 void LLVMAddLoopDataPrefetchPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createLoopDataPrefetchPass());
 }
@@ -124,6 +126,10 @@ void LLVMAddLoopIdiomPass(LLVMPassManagerRef PM) {
 
 void LLVMAddLoopRotatePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createLoopRotatePass());
+}
+
+void LLVMAddLoopRerollPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createLoopRerollPass());
 }
 
 void LLVMAddLoopUnrollPass(LLVMPassManagerRef PM) {

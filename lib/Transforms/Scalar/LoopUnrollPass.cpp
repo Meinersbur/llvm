@@ -19,6 +19,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -58,6 +59,7 @@ namespace {
       UserThreshold = (T != -1) || (UnrollThreshold.getNumOccurrences() > 0);
       UserAllowPartial = (P != -1) ||
                          (UnrollAllowPartial.getNumOccurrences() > 0);
+      UserRuntime = (R != -1) || (UnrollRuntime.getNumOccurrences() > 0);
       UserCount = (C != -1) || (UnrollCount.getNumOccurrences() > 0);
       UserRuntime = (R != -1) || (UnrollRuntime.getNumOccurrences() > 0);
 
@@ -86,12 +88,12 @@ namespace {
     bool     UserAllowPartial;     // CurrentAllowPartial is user-specified.
     bool     UserRuntime;          // CurrentRuntime is user-specified.
 
-    bool runOnLoop(Loop *L, LPPassManager &LPM);
+    bool runOnLoop(Loop *L, LPPassManager &LPM) override;
 
     /// This transformation requires natural loop information & requires that
     /// loop preheaders be inserted into the CFG...
     ///
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<LoopInfo>();
       AU.addPreserved<LoopInfo>();
       AU.addRequiredID(LoopSimplifyID);
@@ -105,7 +107,7 @@ namespace {
       // If loop unroll does not preserve dom info then LCSSA pass on next
       // loop will receive invalid dom info.
       // For now, recreate dom info, if loop is unrolled.
-      AU.addPreserved<DominatorTree>();
+      AU.addPreserved<DominatorTreeWrapperPass>();
     }
   };
 }
@@ -119,8 +121,8 @@ INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 INITIALIZE_PASS_END(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
 
-Pass *llvm::createLoopUnrollPass(int Threshold, int Count,
-                                 int AllowPartial, int Runtime) {
+Pass *llvm::createLoopUnrollPass(int Threshold, int Count, int AllowPartial,
+                                 int Runtime) {
   return new LoopUnroll(Threshold, Count, AllowPartial, Runtime);
 }
 
@@ -150,6 +152,9 @@ static unsigned ApproximateLoopSize(const Loop *L, unsigned &NumCalls,
 }
 
 bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
+  if (skipOptnoneFunction(L))
+    return false;
+
   LoopInfo *LI = &getAnalysis<LoopInfo>();
   ScalarEvolution *SE = &getAnalysis<ScalarEvolution>();
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
@@ -217,7 +222,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
                                             notDuplicatable, TTI);
     DEBUG(dbgs() << "  Loop Size = " << LoopSize << "\n");
     if (notDuplicatable) {
-      DEBUG(dbgs() << "  Not unrolling loop which contains non duplicatable"
+      DEBUG(dbgs() << "  Not unrolling loop which contains non-duplicatable"
             << " instructions.\n");
       return false;
     }
@@ -267,7 +272,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
   }
 
   // Unroll the loop.
-  if (!UnrollLoop(L, Count, TripCount, Runtime, TripMultiple, LI, &LPM))
+  if (!UnrollLoop(L, Count, TripCount, Runtime, TripMultiple, LI, this, &LPM))
     return false;
 
   return true;

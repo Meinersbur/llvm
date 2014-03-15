@@ -18,7 +18,17 @@ for.body4:                                        ; preds = %for.body4, %entry
 
 for.end:                                          ; preds = %for.body4
   unreachable
-; CHECK: @s452
+; CHECK-LABEL: @s452
+; CHECK: lfiwax [[REG1:[0-9]+]],
+; CHECK: fcfid [[REG2:[0-9]+]], [[REG1]]
+; FIXME: We could 'promote' this to a vector earlier and remove this splat.
+; CHECK: qvesplati {{[0-9]+}}, [[REG2]], 0
+; CHECK: qvfmul
+; CHECK: qvfadd
+; CHECK: qvesplati {{[0-9]+}},
+; FIXME: We can use qvstfcdx here instead of two stores.
+; CHECK: stfd
+; CHECK: stfd
 }
 
 !0 = metadata !{metadata !"double", metadata !1}

@@ -29,9 +29,9 @@
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/DataTypes.h"
-#include "llvm/Support/DebugLoc.h"
 #include "llvm/Support/MathExtras.h"
 #include <cassert>
 
@@ -69,6 +69,10 @@ namespace ISD {
   /// isBuildVectorAllZeros - Return true if the specified node is a
   /// BUILD_VECTOR where all of the elements are 0 or undef.
   bool isBuildVectorAllZeros(const SDNode *N);
+
+  /// \brief Return true if the specified node is a BUILD_VECTOR node of
+  /// all ConstantSDNode or undef.
+  bool isBuildVectorOfConstantSDNodes(const SDNode *N);
 
   /// isScalarToVector - Return true if the specified node is a
   /// ISD::SCALAR_TO_VECTOR node or a BUILD_VECTOR node where only the low
@@ -116,7 +120,7 @@ public:
     return !operator==(O);
   }
   bool operator<(const SDValue &O) const {
-    return Node < O.Node || (Node == O.Node && ResNo < O.ResNo);
+    return std::tie(Node, ResNo) < std::tie(O.Node, O.ResNo);
   }
 
   SDValue getValue(unsigned R) const {
@@ -404,7 +408,7 @@ public:
   /// hasOneUse - Return true if there is exactly one use of this node.
   ///
   bool hasOneUse() const {
-    return !use_empty() && llvm::next(use_begin()) == use_end();
+    return !use_empty() && std::next(use_begin()) == use_end();
   }
 
   /// use_size - Return the number of uses of this node. This method takes
@@ -950,6 +954,23 @@ public:
   const SDValue &getValue() const { return Op; }
 };
 
+class AddrSpaceCastSDNode : public UnarySDNode {
+private:
+  unsigned SrcAddrSpace;
+  unsigned DestAddrSpace;
+
+public:
+  AddrSpaceCastSDNode(unsigned Order, DebugLoc dl, EVT VT, SDValue X,
+                      unsigned SrcAS, unsigned DestAS);
+
+  unsigned getSrcAddressSpace() const { return SrcAddrSpace; }
+  unsigned getDestAddressSpace() const { return DestAddrSpace; }
+
+  static bool classof(const SDNode *N) {
+    return N->getOpcode() == ISD::ADDRSPACECAST;
+  }
+};
+
 /// Abstact virtual class for operations for memory operations
 class MemSDNode : public SDNode {
 private:
@@ -1229,9 +1250,10 @@ public:
 class ConstantSDNode : public SDNode {
   const ConstantInt *Value;
   friend class SelectionDAG;
-  ConstantSDNode(bool isTarget, const ConstantInt *val, EVT VT)
+  ConstantSDNode(bool isTarget, bool isOpaque, const ConstantInt *val, EVT VT)
     : SDNode(isTarget ? ISD::TargetConstant : ISD::Constant,
              0, DebugLoc(), getSDVTList(VT)), Value(val) {
+    SubclassData |= (uint16_t)isOpaque;
   }
 public:
 
@@ -1243,6 +1265,8 @@ public:
   bool isOne() const { return Value->isOne(); }
   bool isNullValue() const { return Value->isNullValue(); }
   bool isAllOnesValue() const { return Value->isAllOnesValue(); }
+
+  bool isOpaque() const { return SubclassData & 1; }
 
   static bool classof(const SDNode *N) {
     return N->getOpcode() == ISD::Constant ||
@@ -1469,7 +1493,10 @@ public:
   /// undefined.  isBigEndian describes the endianness of the target.
   bool isConstantSplat(APInt &SplatValue, APInt &SplatUndef,
                        unsigned &SplatBitSize, bool &HasAnyUndefs,
-                       unsigned MinSplatBits = 0, bool isBigEndian = false);
+                       unsigned MinSplatBits = 0,
+                       bool isBigEndian = false) const;
+
+  bool isConstant() const;
 
   static inline bool classof(const SDNode *N) {
     return N->getOpcode() == ISD::BUILD_VECTOR;

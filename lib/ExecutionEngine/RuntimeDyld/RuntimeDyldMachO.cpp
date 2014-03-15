@@ -13,7 +13,6 @@
 
 #define DEBUG_TYPE "dyld"
 #include "RuntimeDyldMachO.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 using namespace llvm;
@@ -148,7 +147,7 @@ void RuntimeDyldMachO::resolveRelocation(const SectionEntry &Section,
   unsigned MachoType = Type;
   unsigned Size = 1 << LogSize;
 
-  DEBUG(dbgs() << "resolveRelocation LocalAddress: " 
+  DEBUG(dbgs() << "resolveRelocation LocalAddress: "
         << format("%p", LocalAddress)
         << " FinalAddress: " << format("%p", FinalAddress)
         << " Value: " << format("%p", Value)
@@ -378,10 +377,14 @@ void RuntimeDyldMachO::processRelocationRef(unsigned SectionID,
     }
   } else {
     SectionRef Sec = MachO->getRelocationSection(RE);
-    Value.SectionID = findOrEmitSection(Obj, Sec, true, ObjSectionToID);
+    bool IsCode = false;
+    Sec.isText(IsCode);
+    Value.SectionID = findOrEmitSection(Obj, Sec, IsCode, ObjSectionToID);
     uint64_t Addr;
     Sec.getAddress(Addr);
     Value.Addend = Addend - Addr;
+    if (IsPCRel)
+      Value.Addend += Offset + NumBytes;
   }
 
   if (Arch == Triple::x86_64 && (RelType == MachO::X86_64_RELOC_GOT ||
@@ -453,6 +456,11 @@ bool RuntimeDyldMachO::isCompatibleFormat(
   if (Magic == "\xFE\xED\xFA\xCF") return true;
   if (Magic == "\xCF\xFA\xED\xFE") return true;
   return false;
+}
+
+bool RuntimeDyldMachO::isCompatibleFile(
+        const object::ObjectFile *Obj) const {
+  return Obj->isMachO();
 }
 
 } // end namespace llvm

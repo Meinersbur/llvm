@@ -89,7 +89,7 @@ bool VectorLegalizer::Run() {
   // Before we start legalizing vector nodes, check if there are any vectors.
   bool HasVectors = false;
   for (SelectionDAG::allnodes_iterator I = DAG.allnodes_begin(),
-       E = prior(DAG.allnodes_end()); I != llvm::next(E); ++I) {
+       E = std::prev(DAG.allnodes_end()); I != std::next(E); ++I) {
     // Check if the values of the nodes contain vectors. We don't need to check
     // the operands because we are going to check their values at some point.
     for (SDNode::value_iterator J = I->value_begin(), E = I->value_end();
@@ -113,7 +113,7 @@ bool VectorLegalizer::Run() {
   // node is only legalized after all of its operands are legalized.
   DAG.AssignTopologicalOrder();
   for (SelectionDAG::allnodes_iterator I = DAG.allnodes_begin(),
-       E = prior(DAG.allnodes_end()); I != llvm::next(E); ++I)
+       E = std::prev(DAG.allnodes_end()); I != std::next(E); ++I)
     LegalizeOp(SDValue(I, 0));
 
   // Finally, it's possible the root changed.  Get the new root.
@@ -244,6 +244,7 @@ SDValue VectorLegalizer::LegalizeOp(SDValue Op) {
   case ISD::SRL:
   case ISD::ROTL:
   case ISD::ROTR:
+  case ISD::BSWAP:
   case ISD::CTLZ:
   case ISD::CTTZ:
   case ISD::CTLZ_ZERO_UNDEF:
@@ -467,7 +468,8 @@ SDValue VectorLegalizer::ExpandLoad(SDValue Op) {
         ScalarLoad = DAG.getLoad(WideVT, dl, Chain, BasePTR,
                                  LD->getPointerInfo().getWithOffset(Offset),
                                  LD->isVolatile(), LD->isNonTemporal(),
-                                 LD->isInvariant(), LD->getAlignment());
+                                 LD->isInvariant(), LD->getAlignment(),
+                                 LD->getTBAAInfo());
       } else {
         EVT LoadVT = WideVT;
         while (RemainingBytes < LoadBytes) {
@@ -477,7 +479,8 @@ SDValue VectorLegalizer::ExpandLoad(SDValue Op) {
         ScalarLoad = DAG.getExtLoad(ISD::EXTLOAD, dl, WideVT, Chain, BasePTR,
                                     LD->getPointerInfo().getWithOffset(Offset),
                                     LoadVT, LD->isVolatile(),
-                                    LD->isNonTemporal(), LD->getAlignment());
+                                    LD->isNonTemporal(), LD->getAlignment(),
+                                    LD->getTBAAInfo());
       }
 
       RemainingBytes -= LoadBytes;
@@ -550,12 +553,12 @@ SDValue VectorLegalizer::ExpandLoad(SDValue Op) {
           Chain, BasePTR, LD->getPointerInfo().getWithOffset(Idx * Stride),
           SrcVT.getScalarType(),
           LD->isVolatile(), LD->isNonTemporal(),
-          LD->getAlignment());
+          LD->getAlignment(), LD->getTBAAInfo());
       else
         ScalarLoad = DAG.getLoad(SrcVT.getScalarType(), dl, Chain, BasePTR,
           LD->getPointerInfo().getWithOffset(Idx * Stride),
           LD->isVolatile(), LD->isNonTemporal(), LD->isInvariant(),
-          LD->getAlignment());
+          LD->getAlignment(), LD->getTBAAInfo());
 
       BasePTR = DAG.getNode(ISD::ADD, dl, BasePTR.getValueType(), BasePTR,
                          DAG.getConstant(Stride, BasePTR.getValueType()));
@@ -587,6 +590,7 @@ SDValue VectorLegalizer::ExpandStore(SDValue Op) {
   unsigned Alignment = ST->getAlignment();
   bool isVolatile = ST->isVolatile();
   bool isNonTemporal = ST->isNonTemporal();
+  const MDNode *TBAAInfo = ST->getTBAAInfo();
 
   unsigned NumElem = StVT.getVectorNumElements();
   // The type of the data we want to save
@@ -617,11 +621,11 @@ SDValue VectorLegalizer::ExpandStore(SDValue Op) {
       // This scalar TruncStore may be illegal, but we legalize it later.
       Store = DAG.getTruncStore(Chain, dl, Ex, BasePTR,
                 ST->getPointerInfo().getWithOffset(Idx*Stride), MemSclVT,
-                isVolatile, isNonTemporal, Alignment);
+                isVolatile, isNonTemporal, Alignment, TBAAInfo);
     else
       Store = DAG.getStore(Chain, dl, Ex, BasePTR,
                 ST->getPointerInfo().getWithOffset(Idx*Stride),
-                isVolatile, isNonTemporal, Alignment);
+                isVolatile, isNonTemporal, Alignment, TBAAInfo);
 
     BasePTR = DAG.getNode(ISD::ADD, dl, BasePTR.getValueType(), BasePTR,
                                DAG.getConstant(Stride, BasePTR.getValueType()));

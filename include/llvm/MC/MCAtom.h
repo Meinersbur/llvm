@@ -32,6 +32,7 @@ class MCDataAtom;
 /// \brief Represents a contiguous range of either instructions (a TextAtom)
 /// or data (a DataAtom).  Address ranges are expressed as _closed_ intervals.
 class MCAtom {
+  virtual void anchor();
 public:
   virtual ~MCAtom() {}
 
@@ -144,8 +145,8 @@ public:
 
   /// \name Atom type specific split/truncate logic.
   /// @{
-  MCTextAtom *split(uint64_t SplitPt) LLVM_OVERRIDE;
-  void     truncate(uint64_t TruncPt) LLVM_OVERRIDE;
+  MCTextAtom *split(uint64_t SplitPt) override;
+  void     truncate(uint64_t TruncPt) override;
   /// @}
 
   // Class hierarchy.
@@ -178,8 +179,8 @@ public:
 
   /// \name Atom type specific split/truncate logic.
   /// @{
-  MCDataAtom *split(uint64_t SplitPt) LLVM_OVERRIDE;
-  void     truncate(uint64_t TruncPt) LLVM_OVERRIDE;
+  MCDataAtom *split(uint64_t SplitPt) override;
+  void     truncate(uint64_t TruncPt) override;
   /// @}
 
   // Class hierarchy.

@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ExecutionEngine/JIT.h"
-#include "llvm/Assembly/Parser.h"
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -21,7 +21,8 @@ using namespace llvm;
 namespace {
 
 // ARM, PowerPC and SystemZ tests disabled pending fix for PR10783.
-#if !defined(__arm__) && !defined(__powerpc__) && !defined(__s390__)
+#if !defined(__arm__) && !defined(__powerpc__) && !defined(__s390__) \
+                      && !defined(__aarch64__)
 
 bool LoadAssemblyInto(Module *M, const char *assembly) {
   SMDiagnostic Error;
@@ -80,9 +81,9 @@ TEST(MultiJitTest, EagerMode) {
   createModule2(Context2, M2, FooF2);
 
   // Now we create the JIT in eager mode
-  OwningPtr<ExecutionEngine> EE1(EngineBuilder(M1).create());
+  std::unique_ptr<ExecutionEngine> EE1(EngineBuilder(M1).create());
   EE1->DisableLazyCompilation(true);
-  OwningPtr<ExecutionEngine> EE2(EngineBuilder(M2).create());
+  std::unique_ptr<ExecutionEngine> EE2(EngineBuilder(M2).create());
   EE2->DisableLazyCompilation(true);
 
   // Call the `foo' function with no arguments:
@@ -110,9 +111,9 @@ TEST(MultiJitTest, LazyMode) {
   createModule2(Context2, M2, FooF2);
 
   // Now we create the JIT in lazy mode
-  OwningPtr<ExecutionEngine> EE1(EngineBuilder(M1).create());
+  std::unique_ptr<ExecutionEngine> EE1(EngineBuilder(M1).create());
   EE1->DisableLazyCompilation(false);
-  OwningPtr<ExecutionEngine> EE2(EngineBuilder(M2).create());
+  std::unique_ptr<ExecutionEngine> EE2(EngineBuilder(M2).create());
   EE2->DisableLazyCompilation(false);
 
   // Call the `foo' function with no arguments:
@@ -144,8 +145,8 @@ TEST(MultiJitTest, JitPool) {
   createModule2(Context2, M2, FooF2);
 
   // Now we create two JITs
-  OwningPtr<ExecutionEngine> EE1(EngineBuilder(M1).create());
-  OwningPtr<ExecutionEngine> EE2(EngineBuilder(M2).create());
+  std::unique_ptr<ExecutionEngine> EE1(EngineBuilder(M1).create());
+  std::unique_ptr<ExecutionEngine> EE2(EngineBuilder(M2).create());
 
   Function *F1 = EE1->FindFunctionNamed("foo1");
   void *foo1 = EE1->getPointerToFunction(F1);

@@ -17,8 +17,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -26,7 +27,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
@@ -205,17 +205,17 @@ namespace {
     bool ModuleLevelChanges;
     const char *NameSuffix;
     ClonedCodeInfo *CodeInfo;
-    const DataLayout *TD;
+    const DataLayout *DL;
   public:
     PruningFunctionCloner(Function *newFunc, const Function *oldFunc,
                           ValueToValueMapTy &valueMap,
                           bool moduleLevelChanges,
                           const char *nameSuffix, 
                           ClonedCodeInfo *codeInfo,
-                          const DataLayout *td)
+                          const DataLayout *DL)
     : NewFunc(newFunc), OldFunc(oldFunc),
       VMap(valueMap), ModuleLevelChanges(moduleLevelChanges),
-      NameSuffix(nameSuffix), CodeInfo(codeInfo), TD(td) {
+      NameSuffix(nameSuffix), CodeInfo(codeInfo), DL(DL) {
     }
 
     /// CloneBlock - The specified block is found to be reachable, clone it and
@@ -272,7 +272,7 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
       // If we can simplify this instruction to some other value, simply add
       // a mapping to that value rather than inserting a new instruction into
       // the basic block.
-      if (Value *V = SimplifyInstruction(NewInst, TD)) {
+      if (Value *V = SimplifyInstruction(NewInst, DL)) {
         // On the off-chance that this simplifies to an instruction in the old
         // function, map it back into the new function.
         if (Value *MappedV = VMap.lookup(V))
@@ -368,7 +368,7 @@ void llvm::CloneAndPruneFunctionInto(Function *NewFunc, const Function *OldFunc,
                                      SmallVectorImpl<ReturnInst*> &Returns,
                                      const char *NameSuffix, 
                                      ClonedCodeInfo *CodeInfo,
-                                     const DataLayout *TD,
+                                     const DataLayout *DL,
                                      Instruction *TheCall) {
   assert(NameSuffix && "NameSuffix cannot be null!");
   
@@ -379,7 +379,7 @@ void llvm::CloneAndPruneFunctionInto(Function *NewFunc, const Function *OldFunc,
 #endif
 
   PruningFunctionCloner PFC(NewFunc, OldFunc, VMap, ModuleLevelChanges,
-                            NameSuffix, CodeInfo, TD);
+                            NameSuffix, CodeInfo, DL);
 
   // Clone the entry block, and anything recursively reachable from it.
   std::vector<const BasicBlock*> CloneWorklist;
@@ -509,7 +509,7 @@ void llvm::CloneAndPruneFunctionInto(Function *NewFunc, const Function *OldFunc,
   // node).
   for (unsigned Idx = 0, Size = PHIToResolve.size(); Idx != Size; ++Idx)
     if (PHINode *PN = dyn_cast<PHINode>(VMap[PHIToResolve[Idx]]))
-      recursivelySimplifyInstruction(PN, TD);
+      recursivelySimplifyInstruction(PN, DL);
 
   // Now that the inlined function body has been fully constructed, go through
   // and zap unconditional fall-through branches.  This happen all the time when

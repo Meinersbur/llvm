@@ -51,12 +51,12 @@ def Feature64Bit     : SubtargetFeature<"64bit","Has64BitSupport", "true",
                                         "Enable 64-bit instructions">;
 def Feature64BitRegs : SubtargetFeature<"64bitregs","Use64BitRegs", "true",
                               "Enable 64-bit registers usage for ppc32 [beta]">;
+def FeatureCRBits    : SubtargetFeature<"crbits", "UseCRBits", "true",
+                              "Use condition-register bits individually">;
 def FeatureAltivec   : SubtargetFeature<"altivec","HasAltivec", "true",
                                         "Enable Altivec instructions">;
 def FeatureMFOCRF    : SubtargetFeature<"mfocrf","HasMFOCRF", "true",
                                         "Enable the MFOCRF instruction">;
-def FeatureFP2       : SubtargetFeature<"fp2","HasFP2", "true",
-                              "Enable FP2 (Double Hummer) instructions [beta]">;
 def FeatureFSqrt     : SubtargetFeature<"fsqrt","HasFSQRT", "true",
                                         "Enable the fsqrt instruction">;
 def FeatureFCPSGN    : SubtargetFeature<"fcpsgn", "HasFCPSGN", "true",
@@ -155,28 +155,12 @@ include "PPCInstrInfo.td"
 //
 
 def : Processor<"generic", G3Itineraries, [Directive32]>;
-def : Processor<"440", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
-def : Processor<"440fp2", PPC440Itineraries, // BG/L
-                          [Directive440, FeatureFSqrt,
-                           FeatureSTFIWX, FeatureISEL, FeatureFP2,
-                           FeatureBookE, DeprecatedMFTB]>;
-def : Processor<"440d", PPC440Itineraries,   // BG/L
-                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
-                           FeatureISEL, FeatureFP2, FeatureBookE,
-                           DeprecatedMFTB]>;
-def : Processor<"450", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
-def : Processor<"450fp2", PPC440Itineraries, // BG/P
-                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
-                           FeatureISEL, FeatureFP2, FeatureBookE,
-                           DeprecatedMFTB]>;
-def : Processor<"450d", PPC440Itineraries,   // BG/P
-                          [Directive440, FeatureFSqrt, FeatureSTFIWX,
-                           FeatureISEL, FeatureFP2, FeatureBookE,
-                           DeprecatedMFTB]>;
+def : ProcessorModel<"440", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
+def : ProcessorModel<"450", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
 def : Processor<"601", G3Itineraries, [Directive601]>;
 def : Processor<"602", G3Itineraries, [Directive602]>;
 def : Processor<"603", G3Itineraries, [Directive603,
@@ -272,7 +256,7 @@ def : ProcessorModel<"pwr6x", G5Model,
                    FeatureSTFIWX, FeatureLFIWAX,
                    FeatureFPRND, Feature64Bit,
                    DeprecatedMFTB, DeprecatedDST]>;
-def : ProcessorModel<"pwr7", G5Model,
+def : ProcessorModel<"pwr7", P7Model,
                   [DirectivePwr7, FeatureAltivec,
                    FeatureMFOCRF, FeatureFCPSGN, FeatureFSqrt, FeatureFRE,
                    FeatureFRES, FeatureFRSQRTE, FeatureFRSQRTES,
@@ -301,11 +285,9 @@ include "PPCCallingConv.td"
 
 def PPCInstrInfo : InstrInfo {
   let isLittleEndianEncoding = 1;
-}
 
-def PPCAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "InstPrinter";
-  bit isMCAsmWriter = 1;
+  // FIXME: Unset this when no longer needed!
+  let decodePositionallyEncodedOperands = 1;
 }
 
 def PPCAsmParser : AsmParser {
@@ -324,8 +306,7 @@ def PPCAsmParserVariant : AsmParserVariant {
 def PPC : Target {
   // Information about the instructions.
   let InstructionSet = PPCInstrInfo;
-  
-  let AssemblyWriters = [PPCAsmWriter];
+
   let AssemblyParsers = [PPCAsmParser];
   let AssemblyParserVariants = [PPCAsmParserVariant];
 }

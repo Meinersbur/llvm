@@ -173,7 +173,7 @@ namespace llvm {
       }
 
       bool operator<(const Segment &Other) const {
-        return start < Other.start || (start == Other.start && end < Other.end);
+        return std::tie(start, end) < std::tie(Other.start, Other.end);
       }
       bool operator==(const Segment &Other) const {
         return start == Other.start && end == Other.end;
@@ -541,19 +541,18 @@ namespace llvm {
 
     /// isSpillable - Can this interval be spilled?
     bool isSpillable() const {
-      return weight != HUGE_VALF;
+      return weight != llvm::huge_valf;
     }
 
     /// markNotSpillable - Mark interval as not spillable
     void markNotSpillable() {
-      weight = HUGE_VALF;
+      weight = llvm::huge_valf;
     }
 
     bool operator<(const LiveInterval& other) const {
       const SlotIndex &thisIndex = beginIndex();
       const SlotIndex &otherIndex = other.beginIndex();
-      return thisIndex < otherIndex ||
-              (thisIndex == otherIndex && reg < other.reg);
+      return std::tie(thisIndex, reg) < std::tie(otherIndex, other.reg);
     }
 
     void print(raw_ostream &OS) const;

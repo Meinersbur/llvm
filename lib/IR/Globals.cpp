@@ -18,9 +18,9 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/LeakDetector.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/LeakDetector.h"
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -40,6 +40,10 @@ void GlobalValue::Dematerialize() {
   getParent()->Dematerialize(this);
 }
 
+const DataLayout *GlobalValue::getDataLayout() const {
+  return getParent()->getDataLayout();
+}
+
 /// Override destroyConstant to make sure it doesn't get called on
 /// GlobalValue's because they shouldn't be treated like other constants.
 void GlobalValue::destroyConstant() {
@@ -53,9 +57,12 @@ void GlobalValue::copyAttributesFrom(const GlobalValue *Src) {
   setSection(Src->getSection());
   setVisibility(Src->getVisibility());
   setUnnamedAddr(Src->hasUnnamedAddr());
+  setDLLStorageClass(Src->getDLLStorageClass());
 }
 
 void GlobalValue::setAlignment(unsigned Align) {
+  assert((!isa<GlobalAlias>(this) || !Align) &&
+         "GlobalAlias should not have an alignment!");
   assert((Align & (Align-1)) == 0 && "Alignment is not a power of 2!");
   assert(Align <= MaximumAlignment &&
          "Alignment is greater than MaximumAlignment!");
@@ -99,7 +106,6 @@ GlobalVariable::GlobalVariable(Type *Ty, bool constant, LinkageTypes Link,
   }
 
   LeakDetector::addGarbageObject(this);
-  setAddressMaybeTaken(true);
 }
 
 GlobalVariable::GlobalVariable(Module &M, Type *Ty, bool constant,
@@ -126,7 +132,6 @@ GlobalVariable::GlobalVariable(Module &M, Type *Ty, bool constant,
     Before->getParent()->getGlobalList().insert(Before, this);
   else
     M.getGlobalList().push_back(this);
-  setAddressMaybeTaken(true);
 }
 
 void GlobalVariable::setParent(Module *parent) {
@@ -186,8 +191,7 @@ void GlobalVariable::copyAttributesFrom(const GlobalValue *Src) {
   assert(isa<GlobalVariable>(Src) && "Expected a GlobalVariable!");
   GlobalValue::copyAttributesFrom(Src);
   const GlobalVariable *SrcVar = cast<GlobalVariable>(Src);
-  setThreadLocal(SrcVar->isThreadLocal());
-  setAddressMaybeTaken(SrcVar->AddressMaybeTaken());
+  setThreadLocalMode(SrcVar->getThreadLocalMode());
 }
 
 
@@ -240,7 +244,8 @@ GlobalValue *GlobalAlias::getAliasedGlobal() {
     return GV;
 
   ConstantExpr *CE = cast<ConstantExpr>(C);
-  assert((CE->getOpcode() == Instruction::BitCast || 
+  assert((CE->getOpcode() == Instruction::BitCast ||
+          CE->getOpcode() == Instruction::AddrSpaceCast ||
           CE->getOpcode() == Instruction::GetElementPtr) &&
          "Unsupported aliasee");
   

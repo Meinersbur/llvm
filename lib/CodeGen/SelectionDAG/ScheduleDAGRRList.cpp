@@ -93,9 +93,6 @@ static cl::opt<bool> DisableSchedHeight(
 static cl::opt<bool> Disable2AddrHack(
   "disable-2addr-hack", cl::Hidden, cl::init(true),
   cl::desc("Disable scheduler's two-address hack"));
-static cl::opt<bool> DisableCallSpillCheck(
-  "disable-call-spill-check", cl::Hidden, cl::init(false),
-  cl::desc("Disable boosting call scheduling priority to prevent spilling"));
 
 static cl::opt<int> MaxReorderWindow(
   "max-sched-reorder", cl::Hidden, cl::init(6),
@@ -180,7 +177,7 @@ public:
     delete AvailableQueue;
   }
 
-  void Schedule();
+  void Schedule() override;
 
   ScheduleHazardRecognizer *getHazardRec() { return HazardRec; }
 
@@ -264,7 +261,7 @@ private:
 
   /// forceUnitLatencies - Register-pressure-reducing scheduling doesn't
   /// need actual latency information but the hybrid scheduler does.
-  bool forceUnitLatencies() const {
+  bool forceUnitLatencies() const override {
     return !NeedLatency;
   }
 };
@@ -1678,13 +1675,13 @@ public:
     return scheduleDAG->getHazardRec();
   }
 
-  void initNodes(std::vector<SUnit> &sunits);
+  void initNodes(std::vector<SUnit> &sunits) override;
 
-  void addNode(const SUnit *SU);
+  void addNode(const SUnit *SU) override;
 
-  void updateNode(const SUnit *SU);
+  void updateNode(const SUnit *SU) override;
 
-  void releaseState() {
+  void releaseState() override {
     SUnits = 0;
     SethiUllmanNumbers.clear();
     std::fill(RegPressure.begin(), RegPressure.end(), 0);
@@ -1698,32 +1695,28 @@ public:
     return SU->getNode()->getIROrder();
   }
 
-  bool empty() const { return Queue.empty(); }
+  bool empty() const override { return Queue.empty(); }
 
-  void push(SUnit *U) {
+  void push(SUnit *U) override {
     assert(!U->NodeQueueId && "Node in the queue already");
     U->NodeQueueId = ++CurQueueId;
     Queue.push_back(U);
   }
 
-  void remove(SUnit *SU) {
+  void remove(SUnit *SU) override {
     assert(!Queue.empty() && "Queue is empty!");
     assert(SU->NodeQueueId != 0 && "Not in queue!");
     std::vector<SUnit *>::iterator I = std::find(Queue.begin(), Queue.end(),
                                                  SU);
-    if (I != prior(Queue.end()))
+    if (I != std::prev(Queue.end()))
       std::swap(*I, Queue.back());
     Queue.pop_back();
     SU->NodeQueueId = 0;
   }
 
-  bool tracksRegPressure() const { return TracksRegPressure; }
+  bool tracksRegPressure() const override { return TracksRegPressure; }
 
   void dumpRegPressure() const;
-
-  bool CallMaySpill() const;
-
-  bool MayLoad(const SUnit *SU) const;
 
   bool HighRegPressure(const SUnit *SU) const;
 
@@ -1731,9 +1724,9 @@ public:
 
   int RegPressureDiff(SUnit *SU, unsigned &LiveUses) const;
 
-  void scheduledNode(SUnit *SU);
+  void scheduledNode(SUnit *SU) override;
 
-  void unscheduledNode(SUnit *SU);
+  void unscheduledNode(SUnit *SU) override;
 
 protected:
   bool canClobber(const SUnit *SU, const SUnit *Op);
@@ -1745,12 +1738,12 @@ protected:
 template<class SF>
 static SUnit *popFromQueueImpl(std::vector<SUnit*> &Q, SF &Picker) {
   std::vector<SUnit *>::iterator Best = Q.begin();
-  for (std::vector<SUnit *>::iterator I = llvm::next(Q.begin()),
+  for (std::vector<SUnit *>::iterator I = std::next(Q.begin()),
          E = Q.end(); I != E; ++I)
     if (Picker(*Best, *I))
       Best = I;
   SUnit *V = *Best;
-  if (Best != prior(Q.end()))
+  if (Best != std::prev(Q.end()))
     std::swap(*Best, Q.back());
   Q.pop_back();
   return V;
@@ -1783,13 +1776,13 @@ public:
                          tii, tri, tli),
       Picker(this) {}
 
-  bool isBottomUp() const { return SF::IsBottomUp; }
+  bool isBottomUp() const override { return SF::IsBottomUp; }
 
-  bool isReady(SUnit *U) const {
+  bool isReady(SUnit *U) const override {
     return Picker.HasReadyFilter && Picker.isReady(U, getCurCycle());
   }
 
-  SUnit *pop() {
+  SUnit *pop() override {
     if (Queue.empty()) return NULL;
 
     SUnit *V = popFromQueue(Queue, Picker, scheduleDAG);
@@ -1947,41 +1940,6 @@ void RegReductionPQBase::dumpRegPressure() const {
           << '\n');
   }
 #endif
-}
-
-// If there are more registers allocated in a given class than there are
-// callee-saved registers, then a call would have to spill those registers to
-// the stack.
-bool RegReductionPQBase::CallMaySpill() const {
-  if (!RegPressure.size())
-    return false;
-
-  const uint16_t* CSR = TRI->getCalleeSavedRegs(&MF);
-  for (TargetRegisterInfo::regclass_iterator I = TRI->regclass_begin(),
-         E = TRI->regclass_end(); I != E; ++I) {
-    const TargetRegisterClass *RC = *I;
-    unsigned Id = RC->getID();
-    unsigned RP = RegPressure[Id];
-
-    unsigned Count = 0;
-    for (const uint16_t *J = CSR; *J; ++J) {
-      if (RC->contains(*J))
-        ++Count;
-    }
-
-    if (Count > RP)
-      return true;
-  }
-
-  return false;
-}
-
-bool RegReductionPQBase::MayLoad(const SUnit *SU) const {
-  if (!SU->getNode()->isMachineOpcode()) 
-    return false; 
- 
-  const MCInstrDesc &II = TII->get(SU->getNode()->getMachineOpcode()); 
-  return II.mayLoad(); 
 }
 
 bool RegReductionPQBase::HighRegPressure(const SUnit *SU) const {
@@ -2434,17 +2392,6 @@ static int BUCompareLatency(SUnit *left, SUnit *right, bool checkPref,
 }
 
 static bool BURRSort(SUnit *left, SUnit *right, RegReductionPQBase *SPQ) {
-  // FIXME: The scheduler currently does not adjust for the register
-  // pressure from caller-saved registers across a call. Until it does, always
-  // schedule a call over a non-call to prevent excess spilling. This, however,
-  // does not apply to loads (which should be scheduled after calls).
-  if (!DisableCallSpillCheck && SPQ->CallMaySpill()) {
-    if (left->isCall && !right->isCall)
-      return SPQ->MayLoad(right);
-    else if (right->isCall && !left->isCall)
-      return !SPQ->MayLoad(left);
-  }
-
   // Schedule physical register definitions close to their use. This is
   // motivated by microarchitectures that can fuse cmp+jump macro-ops. But as
   // long as shortening physreg live ranges is generally good, we can defer

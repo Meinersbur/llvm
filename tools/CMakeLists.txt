@@ -1,7 +1,3 @@
-# NOTE: The tools are organized into groups of four consisting of one large and
-# three small executables. This is done to minimize memory load in parallel
-# builds.  Please retain this ordering.
-
 add_llvm_tool_subdirectory(llvm-config)
 
 add_llvm_tool_subdirectory(opt)
@@ -15,6 +11,7 @@ add_llvm_tool_subdirectory(llvm-nm)
 add_llvm_tool_subdirectory(llvm-size)
 
 add_llvm_tool_subdirectory(llvm-cov)
+add_llvm_tool_subdirectory(llvm-profdata)
 add_llvm_tool_subdirectory(llvm-link)
 add_llvm_tool_subdirectory(lli)
 
