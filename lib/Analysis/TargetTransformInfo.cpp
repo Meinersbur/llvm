@@ -193,11 +193,6 @@ bool TargetTransformInfo::useSoftwarePrefetching(bool &PrefWrites,
   return PrevTTI->useSoftwarePrefetching(PrefWrites, Dist);
 }
 
-unsigned TargetTransformInfo::getIntImmCost(Intrinsic::ID IID, const APInt &Imm,
-                                            Type *Ty) const {
-  return PrevTTI->getIntImmCost(IID, Imm, Ty);
-}
-
 unsigned TargetTransformInfo::getL1CacheLineSize() const {
   return PrevTTI->getL1CacheLineSize();
 }

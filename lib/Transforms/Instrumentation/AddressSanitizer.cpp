@@ -84,8 +84,10 @@ static const char *const kAsanCovName = "__sanitizer_cov";
 static const char *const kAsanPtrCmp = "__sanitizer_ptr_cmp";
 static const char *const kAsanPtrSub = "__sanitizer_ptr_sub";
 static const char *const kAsanHandleNoReturnName = "__asan_handle_no_return";
+static const char *const kAsanMappingOffsetName = "__asan_mapping_offset";
 static const char *const kAsanMappingOffset2Name = "__asan_mapping_offset2";
 static const char *const kAsanMappingOffset3Name = "__asan_mapping_offset3";
+static const char *const kAsanMappingScaleName = "__asan_mapping_scale";
 static const char *const kAsanMappingBeginName = "__asan_mapping_begin";
 static const char *const kAsanMappingBegin2Name = "__asan_mapping_begin2";
 static const int         kMaxAsanStackMallocSizeClass = 10;
@@ -1181,6 +1183,65 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
                             /*hasSideEffects=*/true);
+}
+
+void AddressSanitizer::emitShadowMapping(Module &M, IRBuilder<> &IRB) {
+  // Tell the values of mapping offset and scale to the run-time.
+  GlobalValue *asan_mapping_offset =
+      new GlobalVariable(M, IntptrTy, (Mapping.Offset != (uint64_t) -1),
+                     GlobalValue::LinkOnceODRLinkage,
+                     ConstantInt::get(IntptrTy, Mapping.Offset),
+                     kAsanMappingOffsetName);
+  Mapping.OffsetGV = asan_mapping_offset;
+  // Read the global, otherwise it may be optimized away.
+  IRB.CreateLoad(asan_mapping_offset, true);
+
+  if (Mapping.Offset == (uint64_t) -1) {
+    GlobalValue *asan_mapping_offset2 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingOffset2Name);
+    Mapping.Offset2GV = asan_mapping_offset2;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_offset2, true);
+
+    GlobalValue *asan_mapping_offset3 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingOffset3Name);
+    Mapping.Offset3GV = asan_mapping_offset3;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_offset3, true);
+  }
+
+  GlobalValue *asan_mapping_scale =
+      new GlobalVariable(M, IntptrTy, true, GlobalValue::LinkOnceODRLinkage,
+                         ConstantInt::get(IntptrTy, Mapping.Scale),
+                         kAsanMappingScaleName);
+  // Read the global, otherwise it may be optimized away.
+  IRB.CreateLoad(asan_mapping_scale, true);
+
+  if (Mapping.Offset == (uint64_t) -1) {
+    GlobalValue *asan_mapping_begin =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingBeginName);
+    Mapping.BeginGV = asan_mapping_begin;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_begin, true);
+
+    GlobalValue *asan_mapping_begin2 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingBegin2Name);
+    Mapping.Begin2GV = asan_mapping_begin2;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_begin2, true);
+  }
 }
 
 // virtual
