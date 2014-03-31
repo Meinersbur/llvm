@@ -195,6 +195,12 @@ def int_molly_combuf_recv_wait : Intrinsic<[llvm_anyptr_ty/*ptr to recved data*/
 def int_molly_combuf_recv : Intrinsic<[], [llvm_anyptr_ty/*ptr to combuf*/, llvm_i64_ty/*source rank*/]>;
 
 
+// Communication buffer to and from the same node; used when the local storage does offer space all the elements required and might be too large to store on the stack
+def int_molly_combuf_local_alloc : Intrinsic<[llvm_ptr_ty], [llvm_i64_ty/*number of elements*/, llvm_i64_ty/*byte size per elt*/]>;
+def int_molly_combuf_local_dataptr : Intrinsic<[llvm_ptr_ty], [llvm_ptr_ty/*ptr to combuf*/]>;
+def int_molly_combuf_local_free : Intrinsic<[], [llvm_ptr_ty/*ptr to combuf*/]>;
+
+
 
 // Load the value from the home location
 // Just to be used if outside SCoP
@@ -204,4 +210,6 @@ def int_molly_value_load : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_a
 // Store the value to its home location
 // mollyrt signature: void __molly_value_store(void *buf, void *val, uint64_t rank, uint64_t idx)
 def int_molly_value_store : Intrinsic<[], [llvm_anyptr_ty/*ptr to field*/, llvm_anyptr_ty/*ptr to value to store*/, llvm_i64_ty/*rank that stores te value*/, llvm_i64_ty/*local idx on that rank*/]>;
+
+
 
