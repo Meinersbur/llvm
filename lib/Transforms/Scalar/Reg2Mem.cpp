@@ -67,6 +67,13 @@ INITIALIZE_PASS_END(RegToMem, "reg2mem", "Demote all values to stack slots",
                 false, false)
 
 bool RegToMem::runOnFunction(Function &F) {
+  auto funcName = F.getName();
+  if (funcName == "init") {
+    int a = 0;
+  } else if (funcName == "reduce") {
+    int b = 0;
+  }
+
   if (F.isDeclaration())
     return false;
 
