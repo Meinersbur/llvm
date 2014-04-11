@@ -1096,12 +1096,7 @@ let isCall = 1, hasCtrlDep = 1, isCodeGenOnly = 1, PPC970_Unit = 7 in {
   }
 }
 
-let isCall = 1, PPC970_Unit = 7,
-  Defs = [LR,
-          F0_ext,F1_ext,F2_ext,F3_ext,F4_ext,F5_ext,F6_ext,F7_ext,F8_ext,F9_ext,
-          F10_ext,F11_ext,F12_ext,F13_ext,F14_ext,F15_ext,F16_ext,F17_ext,F18_ext,F19_ext,
-          F20_ext,F21_ext,F22_ext,F23_ext,F24_ext,F25_ext,F26_ext,F27_ext,F28_ext,F29_ext,
-          F30_ext,F31_ext] in {
+let isCall = 1, PPC970_Unit = 7, Defs = [LR] in {
   // Convenient aliases for call instructions
   let Uses = [RM] in {
     def BL  : IForm<18, 0, 1, (outs), (ins calltarget:$func),
@@ -1770,30 +1765,36 @@ let isCompare = 1, neverHasSideEffects = 1 in {
 }
 
 let PPC970_Unit = 1, neverHasSideEffects = 1 in {  // FXU Operations.
+let isCommutable = 1 in {
 defm NAND : XForm_6r<31, 476, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "nand", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (not (and i32:$rS, i32:$rB)))]>;
 defm AND  : XForm_6r<31,  28, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "and", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (and i32:$rS, i32:$rB))]>;
+} // isCommutable
 defm ANDC : XForm_6r<31,  60, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "andc", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (and i32:$rS, (not i32:$rB)))]>;
+let isCommutable = 1 in {
 defm OR   : XForm_6r<31, 444, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "or", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (or i32:$rS, i32:$rB))]>;
 defm NOR  : XForm_6r<31, 124, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "nor", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (not (or i32:$rS, i32:$rB)))]>;
+} // isCommutable
 defm ORC  : XForm_6r<31, 412, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "orc", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (or i32:$rS, (not i32:$rB)))]>;
+let isCommutable = 1 in {
 defm EQV  : XForm_6r<31, 284, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "eqv", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (not (xor i32:$rS, i32:$rB)))]>;
 defm XOR  : XForm_6r<31, 316, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "xor", "$rA, $rS, $rB", IIC_IntSimple,
                      [(set i32:$rA, (xor i32:$rS, i32:$rB))]>;
+} // isCommutable
 defm SLW  : XForm_6r<31,  24, (outs gprc:$rA), (ins gprc:$rS, gprc:$rB),
                      "slw", "$rA, $rS, $rB", IIC_IntGeneral,
                      [(set i32:$rA, (PPCshl i32:$rS, i32:$rB))]>;
@@ -1957,6 +1958,7 @@ def MCRF   : XLForm_3<19, 0, (outs crrc:$BF), (ins crrc:$BFA),
                       "mcrf $BF, $BFA", IIC_BrMCR>,
              PPC970_DGroup_First, PPC970_Unit_CRU;
 
+let isCommutable = 1 in {
 def CRAND  : XLForm_1<19, 257, (outs crbitrc:$CRD),
                                (ins crbitrc:$CRA, crbitrc:$CRB),
                       "crand $CRD, $CRA, $CRB", IIC_BrCR,
@@ -1986,6 +1988,7 @@ def CREQV  : XLForm_1<19, 289, (outs crbitrc:$CRD),
                                (ins crbitrc:$CRA, crbitrc:$CRB),
                       "creqv $CRD, $CRA, $CRB", IIC_BrCR,
                       [(set i1:$CRD, (not (xor i1:$CRA, i1:$CRB)))]>;
+} // isCommutable
 
 def CRANDC : XLForm_1<19, 129, (outs crbitrc:$CRD),
                                (ins crbitrc:$CRA, crbitrc:$CRB),
@@ -2137,7 +2140,7 @@ let Uses = [RM] in {
 
 let PPC970_Unit = 1, neverHasSideEffects = 1 in {  // FXU Operations.
 // XO-Form instructions.  Arithmetic instructions that can set overflow bit
-//
+let isCommutable = 1 in
 defm ADD4  : XOForm_1r<31, 266, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "add", "$rT, $rA, $rB", IIC_IntSimple,
                        [(set i32:$rT, (add i32:$rA, i32:$rB))]>;
@@ -2145,10 +2148,12 @@ let isCodeGenOnly = 1 in
 def ADD4TLS  : XOForm_1<31, 266, 0, (outs gprc:$rT), (ins gprc:$rA, tlsreg32:$rB),
                        "add $rT, $rA, $rB", IIC_IntSimple,
                        [(set i32:$rT, (add i32:$rA, tglobaltlsaddr:$rB))]>;
+let isCommutable = 1 in
 defm ADDC  : XOForm_1rc<31, 10, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                         "addc", "$rT, $rA, $rB", IIC_IntGeneral,
                         [(set i32:$rT, (addc i32:$rA, i32:$rB))]>,
                         PPC970_DGroup_Cracked;
+
 defm DIVW  : XOForm_1r<31, 491, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "divw", "$rT, $rA, $rB", IIC_IntDivW,
                        [(set i32:$rT, (sdiv i32:$rA, i32:$rB))]>,
@@ -2157,6 +2162,7 @@ defm DIVWU : XOForm_1r<31, 459, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "divwu", "$rT, $rA, $rB", IIC_IntDivW,
                        [(set i32:$rT, (udiv i32:$rA, i32:$rB))]>,
                        PPC970_DGroup_First, PPC970_DGroup_Cracked;
+let isCommutable = 1 in {
 defm MULHW : XOForm_1r<31, 75, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "mulhw", "$rT, $rA, $rB", IIC_IntMulHW,
                        [(set i32:$rT, (mulhs i32:$rA, i32:$rB))]>;
@@ -2166,6 +2172,7 @@ defm MULHWU : XOForm_1r<31, 11, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
 defm MULLW : XOForm_1r<31, 235, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "mullw", "$rT, $rA, $rB", IIC_IntMulHW,
                        [(set i32:$rT, (mul i32:$rA, i32:$rB))]>;
+} // isCommutable
 defm SUBF  : XOForm_1r<31, 40, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                        "subf", "$rT, $rA, $rB", IIC_IntGeneral,
                        [(set i32:$rT, (sub i32:$rB, i32:$rA))]>;
@@ -2177,6 +2184,7 @@ defm NEG    : XOForm_3r<31, 104, 0, (outs gprc:$rT), (ins gprc:$rA),
                         "neg", "$rT, $rA", IIC_IntSimple,
                         [(set i32:$rT, (ineg i32:$rA))]>;
 let Uses = [CARRY] in {
+let isCommutable = 1 in
 defm ADDE  : XOForm_1rc<31, 138, 0, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
                         "adde", "$rT, $rA, $rB", IIC_IntGeneral,
                         [(set i32:$rT, (adde i32:$rA, i32:$rB))]>;
@@ -2203,6 +2211,7 @@ defm SUBFZE : XOForm_3rc<31, 200, 0, (outs gprc:$rT), (ins gprc:$rA),
 //
 let PPC970_Unit = 3, neverHasSideEffects = 1 in {  // FPU Operations.
 let Uses = [RM] in {
+let isCommutable = 1 in {
   defm FMADD : AForm_1r<63, 29, 
                       (outs f8rc:$FRT), (ins f8rc:$FRA, f8rc:$FRC, f8rc:$FRB),
                       "fmadd", "$FRT, $FRA, $FRC, $FRB", IIC_FPFused,
@@ -2241,6 +2250,7 @@ let Uses = [RM] in {
                       "fnmsubs", "$FRT, $FRA, $FRC, $FRB", IIC_FPGeneral,
                       [(set f32:$FRT, (fneg (fma f32:$FRA, f32:$FRC,
                                                  (fneg f32:$FRB))))]>;
+} // isCommutable
 }
 // FSEL is artificially split into 4 and 8-byte forms for the result.  To avoid
 // having 4 of these, force the comparison to always be an 8-byte double (code
@@ -2256,6 +2266,7 @@ defm FSELS : AForm_1r<63, 23,
                       "fsel", "$FRT, $FRA, $FRC, $FRB", IIC_FPGeneral,
                       [(set f32:$FRT, (PPCfsel f64:$FRA, f32:$FRC, f32:$FRB))]>;
 let Uses = [RM] in {
+  let isCommutable = 1 in {
   defm FADD  : AForm_2r<63, 21,
                         (outs f8rc:$FRT), (ins f8rc:$FRA, f8rc:$FRB),
                         "fadd", "$FRT, $FRA, $FRB", IIC_FPAddSub,
@@ -2264,6 +2275,7 @@ let Uses = [RM] in {
                         (outs f4rc:$FRT), (ins f4rc:$FRA, f4rc:$FRB),
                         "fadds", "$FRT, $FRA, $FRB", IIC_FPGeneral,
                         [(set f32:$FRT, (fadd f32:$FRA, f32:$FRB))]>;
+  } // isCommutable
   defm FDIV  : AForm_2r<63, 18,
                         (outs f8rc:$FRT), (ins f8rc:$FRA, f8rc:$FRB),
                         "fdiv", "$FRT, $FRA, $FRB", IIC_FPDivD,
@@ -2272,6 +2284,7 @@ let Uses = [RM] in {
                         (outs f4rc:$FRT), (ins f4rc:$FRA, f4rc:$FRB),
                         "fdivs", "$FRT, $FRA, $FRB", IIC_FPDivS,
                         [(set f32:$FRT, (fdiv f32:$FRA, f32:$FRB))]>;
+  let isCommutable = 1 in {
   defm FMUL  : AForm_3r<63, 25,
                         (outs f8rc:$FRT), (ins f8rc:$FRA, f8rc:$FRC),
                         "fmul", "$FRT, $FRA, $FRC", IIC_FPFused,
@@ -2280,6 +2293,7 @@ let Uses = [RM] in {
                         (outs f4rc:$FRT), (ins f4rc:$FRA, f4rc:$FRC),
                         "fmuls", "$FRT, $FRA, $FRC", IIC_FPGeneral,
                         [(set f32:$FRT, (fmul f32:$FRA, f32:$FRC))]>;
+  } // isCommutable
   defm FSUB  : AForm_2r<63, 20,
                         (outs f8rc:$FRT), (ins f8rc:$FRA, f8rc:$FRB),
                         "fsub", "$FRT, $FRA, $FRB", IIC_FPAddSub,
@@ -2478,6 +2492,7 @@ def : Pat<(fcopysign f32:$frB, f64:$frA),
 
 include "PPCInstrAltivec.td"
 include "PPCInstr64Bit.td"
+include "PPCInstrVSX.td"
 include "PPCInstrQPX.td"
 
 def crnot : OutPatFrag<(ops node:$in),

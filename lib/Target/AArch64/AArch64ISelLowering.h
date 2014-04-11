@@ -232,6 +232,9 @@ public:
                           SDLoc dl, SelectionDAG &DAG,
                           SmallVectorImpl<SDValue> &InVals) const;
 
+  SDValue LowerShiftLeftParts(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerShiftRightParts(SDValue Op, SelectionDAG &DAG) const;
+
   bool isConcatVector(SDValue Op, SelectionDAG &DAG, SDValue V0, SDValue V1,
                       const int *Mask, SDValue &Res) const;
 
@@ -274,6 +277,14 @@ public:
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const;
 
   bool isLegalICmpImmediate(int64_t Val) const;
+
+  bool isTruncateFree(Type *Ty1, Type *Ty2) const override;
+  bool isTruncateFree(EVT VT1, EVT VT2) const override;
+
+  bool isZExtFree(Type *Ty1, Type *Ty2) const override;
+  bool isZExtFree(EVT VT1, EVT VT2) const override;
+  bool isZExtFree(SDValue Val, EVT VT2) const override;
+
   SDValue getSelectableIntSetCC(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                          SDValue &A64cc, SelectionDAG &DAG, SDLoc &dl) const;
 

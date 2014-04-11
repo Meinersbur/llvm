@@ -362,9 +362,7 @@ struct AddressSanitizer : public FunctionPass {
  private:
   void initializeCallbacks(Module &M);
 
-  bool ShouldInstrumentGlobal(GlobalVariable *G);
   bool LooksLikeCodeInBug11395(Instruction *I);
-  void FindDynamicInitializers(Module &M);
   bool GlobalIsLinkerInitialized(GlobalVariable *G);
   bool InjectCoverage(Function &F, const ArrayRef<BasicBlock*> AllBlocks);
   void InjectCoverageAtBlock(Function &F, BasicBlock &BB);
@@ -949,7 +947,7 @@ bool AddressSanitizerModule::ShouldInstrumentGlobal(GlobalVariable *G) {
   // our redzones get broken.
   if ((G->getName().find("\01L_OBJC_") == 0) ||
       (G->getName().find("\01l_OBJC_") == 0)) {
-    DEBUG(dbgs() << "Ignoring \\01L_OBJC_* global: " << *G);
+    DEBUG(dbgs() << "Ignoring \\01L_OBJC_* global: " << *G << "\n");
     return false;
   }
 
@@ -960,7 +958,7 @@ bool AddressSanitizerModule::ShouldInstrumentGlobal(GlobalVariable *G) {
     // them.
     if ((Section.find("__OBJC,") == 0) ||
         (Section.find("__DATA, __objc_") == 0)) {
-      DEBUG(dbgs() << "Ignoring ObjC runtime global: " << *G);
+      DEBUG(dbgs() << "Ignoring ObjC runtime global: " << *G << "\n");
       return false;
     }
     // See http://code.google.com/p/address-sanitizer/issues/detail?id=32
@@ -972,9 +970,17 @@ bool AddressSanitizerModule::ShouldInstrumentGlobal(GlobalVariable *G) {
     // Therefore there's no point in placing redzones into __DATA,__cfstring.
     // Moreover, it causes the linker to crash on OS X 10.7
     if (Section.find("__DATA,__cfstring") == 0) {
-      DEBUG(dbgs() << "Ignoring CFString: " << *G);
+      DEBUG(dbgs() << "Ignoring CFString: " << *G << "\n");
       return false;
     }
+    // The linker merges the contents of cstring_literals and removes the
+    // trailing zeroes.
+    if (Section.find("__TEXT,__cstring,cstring_literals") == 0) {
+      DEBUG(dbgs() << "Ignoring a cstring literal: " << *G << "\n");
+      return false;
+    }
+    // Globals from llvm.metadata aren't emitted, do not instrument them.
+    if (Section == "llvm.metadata") return false;
   }
 
   return true;

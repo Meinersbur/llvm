@@ -31,7 +31,7 @@ class PPCRegisterInfo : public PPCGenRegisterInfo {
   const PPCSubtarget &Subtarget;
 public:
   PPCRegisterInfo(const PPCSubtarget &SubTarget);
-
+  
   /// getPointerRegClass - Return the register class to use to hold pointers.
   /// This is used for addressing modes.
   virtual const TargetRegisterClass *
@@ -40,8 +40,11 @@ public:
   unsigned getRegPressureLimit(const TargetRegisterClass *RC,
                                MachineFunction &MF) const;
 
+  const TargetRegisterClass*
+  getLargestLegalSuperClass(const TargetRegisterClass *RC) const;
+
   /// Code Generation virtual methods...
-  const uint16_t *getCalleeSavedRegs(const MachineFunction* MF = 0) const;
+  const MCPhysReg *getCalleeSavedRegs(const MachineFunction* MF = 0) const;
   const uint32_t *getCallPreservedMask(CallingConv::ID CC) const;
   const uint32_t *getNoPreservedMask() const;
 
@@ -89,8 +92,8 @@ public:
   void materializeFrameBaseRegister(MachineBasicBlock *MBB,
                                     unsigned BaseReg, int FrameIdx,
                                     int64_t Offset) const;
-  void resolveFrameIndex(MachineBasicBlock::iterator I,
-                         unsigned BaseReg, int64_t Offset) const;
+  void resolveFrameIndex(MachineInstr &MI, unsigned BaseReg,
+                         int64_t Offset) const;
   bool isFrameOffsetLegal(const MachineInstr *MI, int64_t Offset) const;
 
   // Debug information queries.

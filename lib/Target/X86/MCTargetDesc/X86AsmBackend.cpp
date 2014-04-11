@@ -100,7 +100,7 @@ public:
   }
 
   void applyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
-                  uint64_t Value) const override {
+                  uint64_t Value, bool IsPCRel) const override {
     unsigned Size = 1 << getFixupKindLog2Size(Fixup.getKind());
 
     assert(Fixup.getOffset() + Size <= DataSize &&
@@ -739,7 +739,6 @@ public:
                          MachO::CPUSubTypeX86 st)
     : DarwinX86AsmBackend(T, MRI, CPU, true), SupportsCU(SupportsCU),
       Subtype(st) {
-    HasReliableSymbolDifference = true;
   }
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {

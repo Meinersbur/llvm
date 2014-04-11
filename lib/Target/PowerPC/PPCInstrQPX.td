@@ -47,9 +47,9 @@ class QPXA1s_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
                        [(set v4f64:$FRT, (IntID v4f64:$FRA, v4f64:$FRB, v4f64:$FRC))]>;
 // QPXA2_Int - A AForm_2 intrinsic definition.
 class QPXA2_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
-  : AForm_2<opcode, xo, (outs qfrc:$FRT), (ins qfrc:$FRA, qfrc:$FRC),
-              !strconcat(opc, " $FRT, $FRA, $FRC"), IIC_FPGeneral,
-                       [(set v4f64:$FRT, (IntID v4f64:$FRA, v4f64:$FRC))]>;
+  : AForm_2<opcode, xo, (outs qfrc:$FRT), (ins qfrc:$FRA, qfrc:$FRB),
+              !strconcat(opc, " $FRT, $FRA, $FRB"), IIC_FPGeneral,
+                       [(set v4f64:$FRT, (IntID v4f64:$FRA, v4f64:$FRB))]>;
 // QPXA3_Int - A AForm_3 intrinsic definition.
 class QPXA3_Int<bits<6> opcode, bits<5> xo, string opc, Intrinsic IntID>
   : AForm_3<opcode, xo, (outs qfrc:$FRT), (ins qfrc:$FRA, qfrc:$FRC),

@@ -5744,6 +5744,16 @@ ScalarEvolution::HowFarToZero(const SCEV *V, const Loop *L, bool IsSubExpr) {
       getUDivExpr(Distance, CountDown ? getNegativeSCEV(Step) : Step);
     return ExitLimit(Exact, Exact, /*MustExit=*/false);
   }
+
+  // If Step is a power of two that evenly divides Start we know that the loop
+  // will always terminate.  Start may not be a constant so we just have the
+  // number of trailing zeros available.  This is safe even in presence of
+  // overflow as the recurrence will overflow to exactly 0.
+  const APInt &StepV = StepC->getValue()->getValue();
+  if (StepV.isPowerOf2() &&
+      GetMinTrailingZeros(getNegativeSCEV(Start)) >= StepV.countTrailingZeros())
+    return getUDivExactExpr(Distance, CountDown ? getNegativeSCEV(Step) : Step);
+
   // Then, try to solve the above equation provided that Start is constant.
   if (const SCEVConstant *StartC = dyn_cast<SCEVConstant>(Start))
     return SolveLinEquationWithOverflow(StepC->getValue()->getValue(),
@@ -6155,7 +6165,6 @@ ScalarEvolution::isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
   default:
     llvm_unreachable("Unexpected ICmpInst::Predicate value!");
   case ICmpInst::ICMP_SGT:
-    Pred = ICmpInst::ICMP_SLT;
     std::swap(LHS, RHS);
   case ICmpInst::ICMP_SLT: {
     ConstantRange LHSRange = getSignedRange(LHS);
@@ -6167,7 +6176,6 @@ ScalarEvolution::isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
     break;
   }
   case ICmpInst::ICMP_SGE:
-    Pred = ICmpInst::ICMP_SLE;
     std::swap(LHS, RHS);
   case ICmpInst::ICMP_SLE: {
     ConstantRange LHSRange = getSignedRange(LHS);
@@ -6179,7 +6187,6 @@ ScalarEvolution::isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
     break;
   }
   case ICmpInst::ICMP_UGT:
-    Pred = ICmpInst::ICMP_ULT;
     std::swap(LHS, RHS);
   case ICmpInst::ICMP_ULT: {
     ConstantRange LHSRange = getUnsignedRange(LHS);
@@ -6191,7 +6198,6 @@ ScalarEvolution::isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
     break;
   }
   case ICmpInst::ICMP_UGE:
-    Pred = ICmpInst::ICMP_ULE;
     std::swap(LHS, RHS);
   case ICmpInst::ICMP_ULE: {
     ConstantRange LHSRange = getUnsignedRange(LHS);
@@ -6597,7 +6603,7 @@ ScalarEvolution::HowManyLessThans(const SCEV *LHS, const SCEV *RHS,
     IsSigned ? APIntOps::smin(getSignedRange(RHS).getSignedMax(), Limit)
              : APIntOps::umin(getUnsignedRange(RHS).getUnsignedMax(), Limit);
 
-  const SCEV *MaxBECount = getCouldNotCompute();
+  const SCEV *MaxBECount;
   if (isa<SCEVConstant>(BECount))
     MaxBECount = BECount;
   else
@@ -6956,10 +6962,12 @@ public:
     if (PartialGCD != One)
       return PartialGCD;
 
+    // Failed to find a PartialGCD: set the Remainder to the full expression,
+    // and return the GCD.
     Remainder = Expr;
     const SCEVMulExpr *Mul = dyn_cast<SCEVMulExpr>(GCD);
     if (!Mul)
-      return PartialGCD;
+      return GCD;
 
     // When the GCD is a multiply expression, try to decompose it:
     // this occurs when Step does not divide the Start expression
@@ -6973,7 +6981,7 @@ public:
       }
     }
 
-    return PartialGCD;
+    return GCD;
   }
 
   const SCEV *visitUDivExpr(const SCEVUDivExpr *Expr) {
@@ -6993,12 +7001,17 @@ public:
 
     const SCEV *Rem = Zero;
     const SCEV *Res = findGCD(SE, Expr->getOperand(0), GCD, &Rem);
+    if (Res == One || Res->isAllOnesValue()) {
+      Remainder = Expr;
+      return GCD;
+    }
+
     if (Rem != Zero)
       Remainder = SE.getAddExpr(Remainder, Rem);
 
     Rem = Zero;
     Res = findGCD(SE, Expr->getOperand(1), Res, &Rem);
-    if (Rem != Zero) {
+    if (Rem != Zero || Res == One || Res->isAllOnesValue()) {
       Remainder = Expr;
       return GCD;
     }
@@ -7114,7 +7127,6 @@ public:
           Operands.push_back(Expr->getOperand(i));
       }
     } else {
-      FoundGCDTerm = false;
       const SCEV *PartialGCD = One;
       for (int i = 0, e = Expr->getNumOperands(); i < e; ++i) {
         if (PartialGCD == GCD) {
@@ -7126,7 +7138,7 @@ public:
         const SCEV *Res = SCEVGCD::findGCD(SE, Expr->getOperand(i), GCD, &Rem);
         if (Rem == Zero) {
           PartialGCD = SE.getMulExpr(PartialGCD, Res);
-          Operands.push_back(divide(SE, Expr->getOperand(i), GCD));
+          Operands.push_back(divide(SE, Expr->getOperand(i), Res));
         } else {
           Operands.push_back(Expr->getOperand(i));
         }

@@ -55,7 +55,7 @@ protected:
   Use *allocHungoffUses(unsigned) const;
   void dropHungoffUses() {
     Use::zap(OperandList, OperandList + NumOperands, true);
-    OperandList = 0;
+    OperandList = nullptr;
     // Reset NumOperands so User::operator delete() does the right thing.
     NumOperands = 0;
   }
@@ -178,8 +178,8 @@ public:
   // delete.
   //
   void dropAllReferences() {
-    for (op_iterator i = op_begin(), e = op_end(); i != e; ++i)
-      i->set(0);
+    for (Use &U : operands())
+      U.set(nullptr);
   }
 
   /// replaceUsesOfWith - Replaces all references to the "From" definition with

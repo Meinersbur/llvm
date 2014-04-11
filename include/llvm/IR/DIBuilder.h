@@ -78,7 +78,7 @@ namespace llvm {
     DITemplateValueParameter
     createTemplateValueParameter(unsigned Tag, DIDescriptor Scope,
                                  StringRef Name, DIType Ty, Value *Val,
-                                 MDNode *File = 0, unsigned LineNo = 0,
+                                 MDNode *File = nullptr, unsigned LineNo = 0,
                                  unsigned ColumnNo = 0);
 
     DIBuilder(const DIBuilder &) LLVM_DELETED_FUNCTION;
@@ -293,7 +293,7 @@ namespace llvm {
                                     uint64_t OffsetInBits, unsigned Flags,
                                     DIType DerivedFrom, DIArray Elements,
                                     DIType VTableHolder = DIType(),
-                                    MDNode *TemplateParms = 0,
+                                    MDNode *TemplateParms = nullptr,
                                     StringRef UniqueIdentifier = StringRef());
 
     /// createStructType - Create debugging information entry for a struct.
@@ -342,7 +342,7 @@ namespace llvm {
     /// @param ColumnNo     Column Number.
     DITemplateTypeParameter
     createTemplateTypeParameter(DIDescriptor Scope, StringRef Name, DIType Ty,
-                                MDNode *File = 0, unsigned LineNo = 0,
+                                MDNode *File = nullptr, unsigned LineNo = 0,
                                 unsigned ColumnNo = 0);
 
     /// createTemplateValueParameter - Create debugging information for template
@@ -356,7 +356,7 @@ namespace llvm {
     /// @param ColumnNo     Column Number.
     DITemplateValueParameter
     createTemplateValueParameter(DIDescriptor Scope, StringRef Name,
-                                 DIType Ty, Value *Val, MDNode *File = 0,
+                                 DIType Ty, Value *Val, MDNode *File = nullptr,
                                  unsigned LineNo = 0, unsigned ColumnNo = 0);
 
     /// \brief Create debugging information for a template template parameter.
@@ -369,8 +369,9 @@ namespace llvm {
     /// @param ColumnNo     Column Number.
     DITemplateValueParameter
     createTemplateTemplateParameter(DIDescriptor Scope, StringRef Name,
-                                    DIType Ty, StringRef Val, MDNode *File = 0,
-                                    unsigned LineNo = 0, unsigned ColumnNo = 0);
+                                    DIType Ty, StringRef Val,
+                                    MDNode *File = nullptr, unsigned LineNo = 0,
+                                    unsigned ColumnNo = 0);
 
     /// \brief Create debugging information for a template parameter pack.
     /// @param Scope        Scope in which this type is defined.
@@ -382,7 +383,7 @@ namespace llvm {
     /// @param ColumnNo     Column Number.
     DITemplateValueParameter
     createTemplateParameterPack(DIDescriptor Scope, StringRef Name,
-                                DIType Ty, DIArray Val, MDNode *File = 0,
+                                DIType Ty, DIArray Val, MDNode *File = nullptr,
                                 unsigned LineNo = 0, unsigned ColumnNo = 0);
 
     /// createArrayType - Create debugging information entry for an array.
@@ -466,7 +467,7 @@ namespace llvm {
     /// @param Val         llvm::Value of the variable.
     DIGlobalVariable
     createGlobalVariable(StringRef Name, DIFile File, unsigned LineNo,
-                         DIType Ty, bool isLocalToUnit, llvm::Value *Val);
+                         DITypeRef Ty, bool isLocalToUnit, llvm::Value *Val);
 
     /// \brief Create a new descriptor for the specified global.
     /// @param Name        Name of the variable.
@@ -479,7 +480,7 @@ namespace llvm {
     /// @param Val         llvm::Value of the variable.
     DIGlobalVariable
     createGlobalVariable(StringRef Name, StringRef LinkageName, DIFile File,
-                         unsigned LineNo, DIType Ty, bool isLocalToUnit,
+                         unsigned LineNo, DITypeRef Ty, bool isLocalToUnit,
                          llvm::Value *Val);
 
     /// createStaticVariable - Create a new descriptor for the specified
@@ -497,8 +498,8 @@ namespace llvm {
     DIGlobalVariable
     createStaticVariable(DIDescriptor Context, StringRef Name,
                          StringRef LinkageName, DIFile File, unsigned LineNo,
-                         DIType Ty, bool isLocalToUnit, llvm::Value *Val,
-                         MDNode *Decl = NULL);
+                         DITypeRef Ty, bool isLocalToUnit, llvm::Value *Val,
+                         MDNode *Decl = nullptr);
 
 
     /// createLocalVariable - Create a new descriptor for the specified
@@ -518,7 +519,7 @@ namespace llvm {
     DIVariable createLocalVariable(unsigned Tag, DIDescriptor Scope,
                                    StringRef Name,
                                    DIFile File, unsigned LineNo,
-                                   DIType Ty, bool AlwaysPreserve = false,
+                                   DITypeRef Ty, bool AlwaysPreserve = false,
                                    unsigned Flags = 0,
                                    unsigned ArgNo = 0);
 
@@ -537,7 +538,7 @@ namespace llvm {
     ///                    number. 1 indicates 1st argument.
     DIVariable createComplexVariable(unsigned Tag, DIDescriptor Scope,
                                      StringRef Name, DIFile F, unsigned LineNo,
-                                     DIType Ty, ArrayRef<Value *> Addr,
+                                     DITypeRef Ty, ArrayRef<Value *> Addr,
                                      unsigned ArgNo = 0);
 
     /// createFunction - Create a new descriptor for the specified subprogram.
@@ -564,9 +565,9 @@ namespace llvm {
                                 unsigned ScopeLine,
                                 unsigned Flags = 0,
                                 bool isOptimized = false,
-                                Function *Fn = 0,
-                                MDNode *TParam = 0,
-                                MDNode *Decl = 0);
+                                Function *Fn = nullptr,
+                                MDNode *TParam = nullptr,
+                                MDNode *Decl = nullptr);
 
     /// FIXME: this is added for dragonegg. Once we update dragonegg
     /// to call resolve function, this will be removed.
@@ -578,9 +579,9 @@ namespace llvm {
                                 unsigned ScopeLine,
                                 unsigned Flags = 0,
                                 bool isOptimized = false,
-                                Function *Fn = 0,
-                                MDNode *TParam = 0,
-                                MDNode *Decl = 0);
+                                Function *Fn = nullptr,
+                                MDNode *TParam = nullptr,
+                                MDNode *Decl = nullptr);
 
     /// createMethod - Create a new descriptor for the specified C++ method.
     /// See comments in DISubprogram for descriptions of these fields.
@@ -610,8 +611,8 @@ namespace llvm {
                               DIType VTableHolder = DIType(),
                               unsigned Flags = 0,
                               bool isOptimized = false,
-                              Function *Fn = 0,
-                              MDNode *TParam = 0);
+                              Function *Fn = nullptr,
+                              MDNode *TParam = nullptr);
 
     /// createNameSpace - This creates new descriptor for a namespace
     /// with the specified parent scope.
@@ -647,24 +648,27 @@ namespace llvm {
     /// @param NS The namespace being imported here
     /// @param Line Line number
     DIImportedEntity createImportedModule(DIScope Context, DINameSpace NS,
-                                          unsigned Line,
-                                          StringRef Name = StringRef());
+                                          unsigned Line);
 
     /// \brief Create a descriptor for an imported module.
     /// @param Context The scope this module is imported into
     /// @param NS An aliased namespace
     /// @param Line Line number
     DIImportedEntity createImportedModule(DIScope Context, DIImportedEntity NS,
-                                          unsigned Line, StringRef Name);
+                                          unsigned Line);
 
     /// \brief Create a descriptor for an imported function.
     /// @param Context The scope this module is imported into
     /// @param Decl The declaration (or definition) of a function, type, or
     ///             variable
     /// @param Line Line number
+    DIImportedEntity createImportedDeclaration(DIScope Context, DIScope Decl,
+                                               unsigned Line,
+                                               StringRef Name = StringRef());
     DIImportedEntity createImportedDeclaration(DIScope Context,
-                                               DIDescriptor Decl,
-                                               unsigned Line);
+                                               DIImportedEntity NS,
+                                               unsigned Line,
+                                               StringRef Name = StringRef());
 
     /// insertDeclare - Insert a new llvm.dbg.declare intrinsic call.
     /// @param Storage     llvm::Value of the variable

@@ -14,7 +14,6 @@
 #ifndef X86TARGETMACHINE_H
 #define X86TARGETMACHINE_H
 
-#include "X86.h"
 #include "X86FrameLowering.h"
 #include "X86ISelLowering.h"
 #include "X86InstrInfo.h"
@@ -22,14 +21,13 @@
 #include "X86SelectionDAGInfo.h"
 #include "X86Subtarget.h"
 #include "llvm/IR/DataLayout.h"
-#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
 
 class StringRef;
 
-class X86TargetMachine : public LLVMTargetMachine {
+class X86TargetMachine final : public LLVMTargetMachine {
   virtual void anchor();
   X86Subtarget       Subtarget;
   X86FrameLowering   FrameLowering;

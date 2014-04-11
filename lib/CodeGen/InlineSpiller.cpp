@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/LiveRangeEdit.h"
 #include "llvm/CodeGen/LiveStackAnalysis.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
+#include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -238,9 +239,10 @@ bool InlineSpiller::isSnippet(const LiveInterval &SnipLI) {
   MachineInstr *UseMI = 0;
 
   // Check that all uses satisfy our criteria.
-  for (MachineRegisterInfo::reg_nodbg_iterator
-         RI = MRI.reg_nodbg_begin(SnipLI.reg);
-       MachineInstr *MI = RI.skipInstruction();) {
+  for (MachineRegisterInfo::reg_instr_nodbg_iterator
+       RI = MRI.reg_instr_nodbg_begin(SnipLI.reg),
+       E = MRI.reg_instr_nodbg_end(); RI != E; ) {
+    MachineInstr *MI = &*(RI++);
 
     // Allow copies to/from Reg.
     if (isFullCopyOf(MI, Reg))
@@ -277,8 +279,9 @@ void InlineSpiller::collectRegsToSpill() {
   if (Original == Reg)
     return;
 
-  for (MachineRegisterInfo::reg_iterator RI = MRI.reg_begin(Reg);
-       MachineInstr *MI = RI.skipInstruction();) {
+  for (MachineRegisterInfo::reg_instr_iterator
+       RI = MRI.reg_instr_begin(Reg), E = MRI.reg_instr_end(); RI != E; ) {
+    MachineInstr *MI = &*(RI++);
     unsigned SnipReg = isFullCopyOf(MI, Reg);
     if (!isSibling(SnipReg))
       continue;
@@ -438,7 +441,20 @@ void InlineSpiller::propagateSiblingValue(SibValueMap::iterator SVIIter,
           // Also hoist spills to blocks with smaller loop depth, but make sure
           // that the new value dominates.  Non-phi dependents are always
           // dominated, phis need checking.
+
+          const BranchProbability MarginProb(4, 5); // 80%
+          // Hoist a spill to outer loop if there are multiple dependents (it
+          // can be beneficial if more than one dependents are hoisted) or
+          // if DepSV (the hoisting source) is hotter than SV (the hoisting
+          // destination) (we add a 80% margin to bias a little towards
+          // loop depth).
+          bool HoistCondition =
+            (MBFI.getBlockFreq(DepSV.SpillMBB) >=
+             (MBFI.getBlockFreq(SV.SpillMBB) * MarginProb)) ||
+            Deps->size() > 1;
+
           if ((Loops.getLoopDepth(DepSV.SpillMBB) > SpillDepth) &&
+              HoistCondition &&
               (!DepSVI->first->isPHIDef() ||
                MDT.dominates(SV.SpillMBB, DepSV.SpillMBB))) {
             Changed = true;
@@ -759,8 +775,10 @@ void InlineSpiller::eliminateRedundantSpills(LiveInterval &SLI, VNInfo *VNI) {
     DEBUG(dbgs() << "Merged to stack int: " << *StackInt << '\n');
 
     // Find all spills and copies of VNI.
-    for (MachineRegisterInfo::use_nodbg_iterator UI = MRI.use_nodbg_begin(Reg);
-         MachineInstr *MI = UI.skipInstruction();) {
+    for (MachineRegisterInfo::use_instr_nodbg_iterator
+         UI = MRI.use_instr_nodbg_begin(Reg), E = MRI.use_instr_nodbg_end();
+         UI != E; ) {
+      MachineInstr *MI = &*(UI++);
       if (!MI->isCopy() && !MI->mayStore())
         continue;
       SlotIndex Idx = LIS.getInstructionIndex(MI);
@@ -920,10 +938,12 @@ void InlineSpiller::reMaterializeAll() {
   for (unsigned i = 0, e = RegsToSpill.size(); i != e; ++i) {
     unsigned Reg = RegsToSpill[i];
     LiveInterval &LI = LIS.getInterval(Reg);
-    for (MachineRegisterInfo::use_nodbg_iterator
-         RI = MRI.use_nodbg_begin(Reg);
-         MachineInstr *MI = RI.skipBundle();)
+    for (MachineRegisterInfo::use_bundle_nodbg_iterator
+         RI = MRI.use_bundle_nodbg_begin(Reg), E = MRI.use_bundle_nodbg_end();
+         RI != E; ) {
+      MachineInstr *MI = &*(RI++);
       anyRemat |= reMaterializeFor(LI, MI);
+    }
   }
   if (!anyRemat)
     return;
@@ -1187,8 +1207,10 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
   LiveInterval &OldLI = LIS.getInterval(Reg);
 
   // Iterate over instructions using Reg.
-  for (MachineRegisterInfo::reg_iterator RegI = MRI.reg_begin(Reg);
-       MachineInstr *MI = RegI.skipBundle();) {
+  for (MachineRegisterInfo::reg_bundle_iterator
+       RegI = MRI.reg_bundle_begin(Reg), E = MRI.reg_bundle_end();
+       RegI != E; ) {
+    MachineInstr *MI = &*(RegI++);
 
     // Debug values are not allowed to affect codegen.
     if (MI->isDebugValue()) {
@@ -1313,8 +1335,10 @@ void InlineSpiller::spillAll() {
 
   // Finally delete the SnippetCopies.
   for (unsigned i = 0, e = RegsToSpill.size(); i != e; ++i) {
-    for (MachineRegisterInfo::reg_iterator RI = MRI.reg_begin(RegsToSpill[i]);
-         MachineInstr *MI = RI.skipInstruction();) {
+    for (MachineRegisterInfo::reg_instr_iterator
+         RI = MRI.reg_instr_begin(RegsToSpill[i]), E = MRI.reg_instr_end();
+         RI != E; ) {
+      MachineInstr *MI = &*(RI++);
       assert(SnippetCopies.count(MI) && "Remaining use wasn't a snippet copy");
       // FIXME: Do this with a LiveRangeEdit callback.
       LIS.RemoveMachineInstrFromMaps(MI);

@@ -57,7 +57,7 @@ private:
                        EHPrivateExtern  = 1 << 2 };
   DenseMap<const MCSymbol*, unsigned> FlagMap;
 
-  bool needsSet(const MCExpr *Value);
+  DenseMap<const MCSymbol*, MCSymbolData*> SymbolMap;
 
   void EmitRegisterName(int64_t Register);
   void EmitCFIStartProcImpl(MCDwarfFrameInfo &Frame) override;
@@ -126,6 +126,7 @@ public:
   void ChangeSection(const MCSection *Section,
                      const MCExpr *Subsection) override;
 
+  void EmitLOHDirective(MCLOHType Kind, const MCLOHArgs &Args) override;
   void EmitLabel(MCSymbol *Symbol) override;
   void EmitDebugLabel(MCSymbol *Symbol) override;
 
@@ -133,6 +134,8 @@ public:
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitLinkerOptions(ArrayRef<std::string> Options) override;
   void EmitDataRegion(MCDataRegionType Kind) override;
+  void EmitVersionMin(MCVersionMinType Kind, unsigned Major, unsigned Minor,
+                      unsigned Update) override;
   void EmitThumbFunc(MCSymbol *Func) override;
 
   void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;
@@ -197,12 +200,14 @@ public:
                          unsigned char Value = 0) override;
 
   void EmitFileDirective(StringRef Filename) override;
-  bool EmitDwarfFileDirective(unsigned FileNo, StringRef Directory,
-                              StringRef Filename, unsigned CUID = 0) override;
+  unsigned EmitDwarfFileDirective(unsigned FileNo, StringRef Directory,
+                                  StringRef Filename,
+                                  unsigned CUID = 0) override;
   void EmitDwarfLocDirective(unsigned FileNo, unsigned Line,
                              unsigned Column, unsigned Flags,
                              unsigned Isa, unsigned Discriminator,
                              StringRef FileName) override;
+  MCSymbol *getDwarfLineTableSymbol(unsigned CUID) override;
 
   void EmitIdent(StringRef IdentString) override;
   void EmitCFISections(bool EH, bool Debug) override;
@@ -249,6 +254,8 @@ public:
   void EmitRawTextImpl(StringRef String) override;
 
   void FinishImpl() override;
+
+  virtual MCSymbolData &getOrCreateSymbolData(const MCSymbol *Symbol) override;
 };
 
 } // end anonymous namespace.
@@ -337,6 +344,27 @@ void MCAsmStreamer::EmitLabel(MCSymbol *Symbol) {
   EmitEOL();
 }
 
+void MCAsmStreamer::EmitLOHDirective(MCLOHType Kind, const MCLOHArgs &Args) {
+  StringRef str = MCLOHIdToName(Kind);
+
+#ifndef NDEBUG
+  int NbArgs = MCLOHIdToNbArgs(Kind);
+  assert(NbArgs != -1 && ((size_t)NbArgs) == Args.size() && "Malformed LOH!");
+  assert(str != "" && "Invalid LOH name");
+#endif
+
+  OS << "\t" << MCLOHDirectiveName() << " " << str << "\t";
+  bool IsFirst = true;
+  for (MCLOHArgs::const_iterator It = Args.begin(), EndIt = Args.end();
+       It != EndIt; ++It) {
+    if (!IsFirst)
+      OS << ", ";
+    IsFirst = false;
+    OS << **It;
+  }
+  EmitEOL();
+}
+
 void MCAsmStreamer::EmitDebugLabel(MCSymbol *Symbol) {
   assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
   MCStreamer::EmitDebugLabel(Symbol);
@@ -379,6 +407,18 @@ void MCAsmStreamer::EmitDataRegion(MCDataRegionType Kind) {
   EmitEOL();
 }
 
+void MCAsmStreamer::EmitVersionMin(MCVersionMinType Kind, unsigned Major,
+                                   unsigned Minor, unsigned Update) {
+  switch (Kind) {
+  case MCVM_IOSVersionMin:        OS << "\t.ios_version_min"; break;
+  case MCVM_OSXVersionMin:        OS << "\t.macosx_version_min"; break;
+  }
+  OS << " " << Major << ", " << Minor;
+  if (Update)
+    OS << ", " << Update;
+  EmitEOL();
+}
+
 void MCAsmStreamer::EmitThumbFunc(MCSymbol *Func) {
   // This needs to emit to a temporary string to get properly quoted
   // MCSymbols when they have spaces in them.
@@ -393,8 +433,7 @@ void MCAsmStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   OS << *Symbol << " = " << *Value;
   EmitEOL();
 
-  // FIXME: Lift context changes into super class.
-  Symbol->setVariableValue(Value);
+  MCStreamer::EmitAssignment(Symbol, Value);
 }
 
 void MCAsmStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
@@ -843,15 +882,31 @@ void MCAsmStreamer::EmitFileDirective(StringRef Filename) {
   EmitEOL();
 }
 
-bool MCAsmStreamer::EmitDwarfFileDirective(unsigned FileNo, StringRef Directory,
-                                           StringRef Filename, unsigned CUID) {
+unsigned MCAsmStreamer::EmitDwarfFileDirective(unsigned FileNo,
+                                               StringRef Directory,
+                                               StringRef Filename,
+                                               unsigned CUID) {
+  assert(CUID == 0);
+
+  MCDwarfLineTable &Table = getContext().getMCDwarfLineTable(CUID);
+  unsigned NumFiles = Table.getMCDwarfFiles().size();
+  FileNo = Table.getFile(Directory, Filename, FileNo);
+  if (FileNo == 0)
+    return 0;
+  if (NumFiles == Table.getMCDwarfFiles().size())
+    return FileNo;
+
+  SmallString<128> FullPathName;
+
   if (!UseDwarfDirectory && !Directory.empty()) {
     if (sys::path::is_absolute(Filename))
-      return EmitDwarfFileDirective(FileNo, "", Filename, CUID);
-
-    SmallString<128> FullPathName = Directory;
-    sys::path::append(FullPathName, Filename);
-    return EmitDwarfFileDirective(FileNo, "", FullPathName, CUID);
+      Directory = "";
+    else {
+      FullPathName = Directory;
+      sys::path::append(FullPathName, Filename);
+      Directory = "";
+      Filename = FullPathName;
+    }
   }
 
   OS << "\t.file\t" << FileNo << ' ';
@@ -861,11 +916,8 @@ bool MCAsmStreamer::EmitDwarfFileDirective(unsigned FileNo, StringRef Directory,
   }
   PrintQuotedString(Filename, OS);
   EmitEOL();
-  // All .file will belong to a single CUID.
-  CUID = 0;
 
-  return this->MCStreamer::EmitDwarfFileDirective(FileNo, Directory, Filename,
-                                                  CUID);
+  return FileNo;
 }
 
 void MCAsmStreamer::EmitDwarfLocDirective(unsigned FileNo, unsigned Line,
@@ -904,6 +956,12 @@ void MCAsmStreamer::EmitDwarfLocDirective(unsigned FileNo, unsigned Line,
        << Line << ':' << Column;
   }
   EmitEOL();
+}
+
+MCSymbol *MCAsmStreamer::getDwarfLineTableSymbol(unsigned CUID) {
+  // Always use the zeroth line table, since asm syntax only supports one line
+  // table for now.
+  return MCStreamer::getDwarfLineTableSymbol(0);
 }
 
 void MCAsmStreamer::EmitIdent(StringRef IdentString) {
@@ -1384,10 +1442,31 @@ void MCAsmStreamer::EmitRawTextImpl(StringRef String) {
 void MCAsmStreamer::FinishImpl() {
   // If we are generating dwarf for assembly source files dump out the sections.
   if (getContext().getGenDwarfForAssembly())
-    MCGenDwarfInfo::Emit(this, NULL);
+    MCGenDwarfInfo::Emit(this);
+
+  // Emit the label for the line table, if requested - since the rest of the
+  // line table will be defined by .loc/.file directives, and not emitted
+  // directly, the label is the only work required here.
+  auto &Tables = getContext().getMCDwarfLineTables();
+  if (!Tables.empty()) {
+    assert(Tables.size() == 1 && "asm output only supports one line table");
+    if (auto *Label = Tables.begin()->second.getLabel()) {
+      SwitchSection(getContext().getObjectFileInfo()->getDwarfLineSection());
+      EmitLabel(Label);
+    }
+  }
 
   if (!UseCFI)
     EmitFrames(AsmBackend.get(), false);
+}
+
+MCSymbolData &MCAsmStreamer::getOrCreateSymbolData(const MCSymbol *Symbol) {
+  MCSymbolData *&Entry = SymbolMap[Symbol];
+
+  if (!Entry)
+    Entry = new MCSymbolData(*Symbol, 0, 0, 0);
+
+  return *Entry;
 }
 
 MCStreamer *llvm::createAsmStreamer(MCContext &Context,

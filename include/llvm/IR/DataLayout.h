@@ -174,14 +174,14 @@ private:
 
 public:
   /// Constructs a DataLayout from a specification string. See reset().
-  explicit DataLayout(StringRef LayoutDescription) : LayoutMap(0) {
+  explicit DataLayout(StringRef LayoutDescription) : LayoutMap(nullptr) {
     reset(LayoutDescription);
   }
 
   /// Initialize target data from properties stored in the module.
   explicit DataLayout(const Module *M);
 
-  DataLayout(const DataLayout &DL) : LayoutMap(0) { *this = DL; }
+  DataLayout(const DataLayout &DL) : LayoutMap(nullptr) { *this = DL; }
 
   DataLayout &operator=(const DataLayout &DL) {
     clear();
@@ -219,8 +219,8 @@ public:
   /// The width is specified in bits.
   ///
   bool isLegalInteger(unsigned Width) const {
-    for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
-      if (LegalIntWidths[i] == Width)
+    for (unsigned LegalIntWidth : LegalIntWidths)
+      if (LegalIntWidth == Width)
         return true;
     return false;
   }
@@ -281,10 +281,10 @@ public:
   /// fitsInLegalInteger - This function returns true if the specified type fits
   /// in a native integer type supported by the CPU.  For example, if the CPU
   /// only supports i32 as a native integer type, then i27 fits in a legal
-  // integer type but i45 does not.
+  /// integer type but i45 does not.
   bool fitsInLegalInteger(unsigned Width) const {
-    for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
-      if (Width <= LegalIntWidths[i])
+    for (unsigned LegalIntWidth : LegalIntWidths)
+      if (Width <= LegalIntWidth)
         return true;
     return false;
   }
@@ -347,7 +347,9 @@ public:
   /// getTypeStoreSize - Return the maximum number of bytes that may be
   /// overwritten by storing the specified type.  For example, returns 5
   /// for i36 and 10 for x86_fp80.
-  uint64_t getTypeStoreSize(Type *Ty) const;
+  uint64_t getTypeStoreSize(Type *Ty) const {
+    return (getTypeSizeInBits(Ty)+7)/8;
+  }
 
   /// getTypeStoreSizeInBits - Return the maximum number of bits that may be
   /// overwritten by storing the specified type; always a multiple of 8.  For
@@ -406,7 +408,7 @@ public:
   /// none are set.
   Type *getLargestLegalIntType(LLVMContext &C) const {
     unsigned LargestSize = getLargestLegalIntTypeSize();
-    return (LargestSize == 0) ? 0 : Type::getIntNTy(C, LargestSize);
+    return (LargestSize == 0) ? nullptr : Type::getIntNTy(C, LargestSize);
   }
 
   /// getLargestLegalIntType - Return the size of largest legal integer type

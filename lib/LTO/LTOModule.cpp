@@ -168,6 +168,8 @@ LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
       CPU = "core2";
     else if (Triple.getArch() == llvm::Triple::x86)
       CPU = "yonah";
+    else if (Triple.getArch() == llvm::Triple::arm64)
+      CPU = "cyclone";
   }
 
   TargetMachine *target = march->createTargetMachine(TripleStr, CPU, FeatureStr,
@@ -408,8 +410,7 @@ void LTOModule::addDefinedSymbol(const GlobalValue *def, bool isFunction) {
   }
 
   // set definition part
-  if (def->hasWeakLinkage() || def->hasLinkOnceLinkage() ||
-      def->hasLinkerPrivateWeakLinkage())
+  if (def->hasWeakLinkage() || def->hasLinkOnceLinkage())
     attr |= LTO_SYMBOL_DEFINITION_WEAK;
   else if (def->hasCommonLinkage())
     attr |= LTO_SYMBOL_DEFINITION_TENTATIVE;
@@ -424,8 +425,7 @@ void LTOModule::addDefinedSymbol(const GlobalValue *def, bool isFunction) {
   else if (canBeHidden(def))
     attr |= LTO_SYMBOL_SCOPE_DEFAULT_CAN_BE_HIDDEN;
   else if (def->hasExternalLinkage() || def->hasWeakLinkage() ||
-           def->hasLinkOnceLinkage() || def->hasCommonLinkage() ||
-           def->hasLinkerPrivateWeakLinkage())
+           def->hasLinkOnceLinkage() || def->hasCommonLinkage())
     attr |= LTO_SYMBOL_SCOPE_DEFAULT;
   else
     attr |= LTO_SYMBOL_SCOPE_INTERNAL;
@@ -660,6 +660,7 @@ namespace {
     void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override {
       // FIXME: should we handle aliases?
       markDefined(*Symbol);
+      AddValueSymbols(Value);
     }
     bool EmitSymbolAttribute(MCSymbol *Symbol,
                              MCSymbolAttr Attribute) override {

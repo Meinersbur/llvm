@@ -504,6 +504,11 @@ namespace llvm {
     /// expanded to fmul + fadd.
     virtual bool isFMAFasterThanFMulAndFAdd(EVT VT) const;
 
+    // Should we expand the build vector with shuffles?
+    virtual bool
+    shouldExpandBuildVectorWithShuffles(EVT VT,
+                                        unsigned DefinedValues) const;
+
     /// createFastISel - This method returns a target-specific FastISel object,
     /// or null if the target does not support "fast" instruction selection.
     virtual FastISel *createFastISel(FunctionLoweringInfo &FuncInfo,
@@ -563,6 +568,7 @@ namespace llvm {
     SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerVectorLoad(SDValue Op, SelectionDAG &DAG) const;
