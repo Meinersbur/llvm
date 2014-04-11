@@ -21,9 +21,6 @@
 #include <string>
 
 namespace llvm {
-      // Vararg - Consume all the remaining arguments
-      Vararg = 249,
-
 
   class LLVMContext;
   class Type;

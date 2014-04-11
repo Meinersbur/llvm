@@ -664,10 +664,6 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
   case IITDescriptor::Argument:
     varargStart = std::max(varargStart, D.getArgumentNumber()+1);
     return Tys[D.getArgumentNumber()];
-  case IITDescriptor::ExtendVecArgument:
-    varargStart = std::max(varargStart, D.getArgumentNumber()+1);
-    return VectorType::getExtendedElementVectorType(cast<VectorType>(
-                                                  Tys[D.getArgumentNumber()]));
   case IITDescriptor::ExtendArgument: {
     Type *Ty = Tys[D.getArgumentNumber()];
     if (VectorType *VTy = dyn_cast<VectorType>(Ty))

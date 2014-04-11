@@ -124,6 +124,11 @@ namespace llvm {
       // This value must be a multiple of 32.
       MAX_ALLOWED_VALUETYPE = 64,
 
+#ifdef MOLLY
+      // Vararg - Consume all the remaining arguments
+      Vararg = 249,
+#endif /* MOLLY */
+
       // Metadata - This is MDNode or MDString.
       Metadata       = 250,
 
