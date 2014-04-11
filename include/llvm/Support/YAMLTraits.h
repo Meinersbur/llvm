@@ -13,6 +13,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -31,7 +32,7 @@ namespace yaml {
 /// This class should be specialized by any type that needs to be converted
 /// to/from a YAML mapping.  For example:
 ///
-///     struct ScalarBitSetTraits<MyStruct> {
+///     struct MappingTraits<MyStruct> {
 ///       static void mapping(IO &io, MyStruct &s) {
 ///         io.mapRequired("name", s.name);
 ///         io.mapRequired("size", s.size);
@@ -206,7 +207,8 @@ struct has_ScalarTraits
   static double test(...);
 
 public:
-  static bool const value = (sizeof(test<ScalarTraits<T> >(0,0)) == 1);
+  static bool const value =
+    (sizeof(test<ScalarTraits<T> >(nullptr,nullptr)) == 1);
 };
 
 
@@ -339,7 +341,7 @@ struct unvalidatedMappingTraits : public std::integral_constant<bool,
 class IO {
 public:
 
-  IO(void *Ctxt=NULL);
+  IO(void *Ctxt=nullptr);
   virtual ~IO();
 
   virtual bool outputting() = 0;
@@ -421,6 +423,11 @@ public:
   }
 
   template <typename T>
+  void mapOptional(const char* Key, Optional<T> &Val) {
+    processKeyWithDefault(Key, Val, Optional<T>(), /*Required=*/false);
+  }
+
+  template <typename T>
   typename std::enable_if<!has_SequenceTraits<T>::value,void>::type
   mapOptional(const char* Key, T& Val) {
     this->processKey(Key, Val, false);
@@ -432,6 +439,26 @@ public:
   }
   
 private:
+  template <typename T>
+  void processKeyWithDefault(const char *Key, Optional<T> &Val,
+                             const Optional<T> &DefaultValue, bool Required) {
+    assert(DefaultValue.hasValue() == false &&
+           "Optional<T> shouldn't have a value!");
+    void *SaveInfo;
+    bool UseDefault;
+    const bool sameAsDefault = outputting() && !Val.hasValue();
+    if (!outputting() && !Val.hasValue())
+      Val = T();
+    if (this->preflightKey(Key, Required, sameAsDefault, UseDefault,
+                           SaveInfo)) {
+      yamlize(*this, Val.getValue(), Required);
+      this->postflightKey(SaveInfo);
+    } else {
+      if (UseDefault)
+        Val = DefaultValue;
+    }
+  }
+
   template <typename T>
   void processKeyWithDefault(const char *Key, T &Val, const T& DefaultValue,
                                                                 bool Required) {
@@ -739,9 +766,9 @@ public:
   // user-data. The DiagHandler can be specified to provide
   // alternative error reporting.
   Input(StringRef InputContent,
-        void *Ctxt = NULL,
-        SourceMgr::DiagHandlerTy DiagHandler = NULL,
-        void *DiagHandlerCtxt = NULL);
+        void *Ctxt = nullptr,
+        SourceMgr::DiagHandlerTy DiagHandler = nullptr,
+        void *DiagHandlerCtxt = nullptr);
   ~Input();
 
   // Check if there was an syntax or semantic error during parsing.
@@ -870,7 +897,7 @@ private:
 ///
 class Output : public IO {
 public:
-  Output(llvm::raw_ostream &, void *Ctxt=NULL);
+  Output(llvm::raw_ostream &, void *Ctxt=nullptr);
   virtual ~Output();
 
   bool outputting() override;

@@ -13,6 +13,7 @@
 
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/Analysis.h"
@@ -1065,82 +1066,82 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
     switch (TLI.getLoadExtAction(ExtType, SrcVT.getSimpleVT())) {
     default: llvm_unreachable("This action is not supported yet!");
     case TargetLowering::Custom:
-             isCustom = true;
-             // FALLTHROUGH
+      isCustom = true;
+      // FALLTHROUGH
     case TargetLowering::Legal: {
-             Value = SDValue(Node, 0);
-             Chain = SDValue(Node, 1);
+      Value = SDValue(Node, 0);
+      Chain = SDValue(Node, 1);
 
-             if (isCustom) {
-               SDValue Res = TLI.LowerOperation(SDValue(Node, 0), DAG);
-               if (Res.getNode()) {
-                 Value = Res;
-                 Chain = Res.getValue(1);
-               }
-             } else {
-               // If this is an unaligned load and the target doesn't support
-               // it, expand it.
-               EVT MemVT = LD->getMemoryVT();
-               unsigned AS = LD->getAddressSpace();
-               if (!TLI.allowsUnalignedMemoryAccesses(MemVT, AS)) {
-                 Type *Ty =
-                   LD->getMemoryVT().getTypeForEVT(*DAG.getContext());
-                 unsigned ABIAlignment =
-                   TLI.getDataLayout()->getABITypeAlignment(Ty);
-                 if (LD->getAlignment() < ABIAlignment){
-                   ExpandUnalignedLoad(cast<LoadSDNode>(Node),
-                                       DAG, TLI, Value, Chain);
-                 }
-               }
-             }
-             break;
+      if (isCustom) {
+        SDValue Res = TLI.LowerOperation(SDValue(Node, 0), DAG);
+        if (Res.getNode()) {
+          Value = Res;
+          Chain = Res.getValue(1);
+        }
+      } else {
+        // If this is an unaligned load and the target doesn't support
+        // it, expand it.
+        EVT MemVT = LD->getMemoryVT();
+        unsigned AS = LD->getAddressSpace();
+        if (!TLI.allowsUnalignedMemoryAccesses(MemVT, AS)) {
+          Type *Ty =
+            LD->getMemoryVT().getTypeForEVT(*DAG.getContext());
+          unsigned ABIAlignment =
+            TLI.getDataLayout()->getABITypeAlignment(Ty);
+          if (LD->getAlignment() < ABIAlignment){
+            ExpandUnalignedLoad(cast<LoadSDNode>(Node),
+                                DAG, TLI, Value, Chain);
+          }
+        }
+      }
+      break;
     }
     case TargetLowering::Expand:
-             if (!TLI.isLoadExtLegal(ISD::EXTLOAD, SrcVT) &&
-                                     TLI.isTypeLegal(SrcVT)) {
-               SDValue Load = DAG.getLoad(SrcVT, dl, Chain, Ptr,
-                                          LD->getMemOperand());
-               unsigned ExtendOp;
-               switch (ExtType) {
-               case ISD::EXTLOAD:
-                 ExtendOp = (SrcVT.isFloatingPoint() ?
-                             ISD::FP_EXTEND : ISD::ANY_EXTEND);
-                 break;
-               case ISD::SEXTLOAD: ExtendOp = ISD::SIGN_EXTEND; break;
-               case ISD::ZEXTLOAD: ExtendOp = ISD::ZERO_EXTEND; break;
-               default: llvm_unreachable("Unexpected extend load type!");
-               }
-               Value = DAG.getNode(ExtendOp, dl, Node->getValueType(0), Load);
-               Chain = Load.getValue(1);
-               break;
-             }
+      if (!TLI.isLoadExtLegal(ISD::EXTLOAD, SrcVT) &&
+          TLI.isTypeLegal(SrcVT)) {
+        SDValue Load = DAG.getLoad(SrcVT, dl, Chain, Ptr,
+                                   LD->getMemOperand());
+        unsigned ExtendOp;
+        switch (ExtType) {
+        case ISD::EXTLOAD:
+          ExtendOp = (SrcVT.isFloatingPoint() ?
+                      ISD::FP_EXTEND : ISD::ANY_EXTEND);
+          break;
+        case ISD::SEXTLOAD: ExtendOp = ISD::SIGN_EXTEND; break;
+        case ISD::ZEXTLOAD: ExtendOp = ISD::ZERO_EXTEND; break;
+        default: llvm_unreachable("Unexpected extend load type!");
+        }
+        Value = DAG.getNode(ExtendOp, dl, Node->getValueType(0), Load);
+        Chain = Load.getValue(1);
+        break;
+      }
 
-             assert(!SrcVT.isVector() &&
-                    "Vector Loads are handled in LegalizeVectorOps");
+      assert(!SrcVT.isVector() &&
+             "Vector Loads are handled in LegalizeVectorOps");
 
-             // FIXME: This does not work for vectors on most targets.  Sign-
-             // and zero-extend operations are currently folded into extending
-             // loads, whether they are legal or not, and then we end up here
-             // without any support for legalizing them.
-             assert(ExtType != ISD::EXTLOAD &&
-                    "EXTLOAD should always be supported!");
-             // Turn the unsupported load into an EXTLOAD followed by an
-             // explicit zero/sign extend inreg.
-             SDValue Result = DAG.getExtLoad(ISD::EXTLOAD, dl,
-                                             Node->getValueType(0),
-                                             Chain, Ptr, SrcVT,
-                                             LD->getMemOperand());
-             SDValue ValRes;
-             if (ExtType == ISD::SEXTLOAD)
-               ValRes = DAG.getNode(ISD::SIGN_EXTEND_INREG, dl,
-                                    Result.getValueType(),
-                                    Result, DAG.getValueType(SrcVT));
-             else
-               ValRes = DAG.getZeroExtendInReg(Result, dl,
-                                               SrcVT.getScalarType());
-             Value = ValRes;
-             Chain = Result.getValue(1);
-             break;
+      // FIXME: This does not work for vectors on most targets.  Sign-
+      // and zero-extend operations are currently folded into extending
+      // loads, whether they are legal or not, and then we end up here
+      // without any support for legalizing them.
+      assert(ExtType != ISD::EXTLOAD &&
+             "EXTLOAD should always be supported!");
+      // Turn the unsupported load into an EXTLOAD followed by an
+      // explicit zero/sign extend inreg.
+      SDValue Result = DAG.getExtLoad(ISD::EXTLOAD, dl,
+                                      Node->getValueType(0),
+                                      Chain, Ptr, SrcVT,
+                                      LD->getMemOperand());
+      SDValue ValRes;
+      if (ExtType == ISD::SEXTLOAD)
+        ValRes = DAG.getNode(ISD::SIGN_EXTEND_INREG, dl,
+                             Result.getValueType(),
+                             Result, DAG.getValueType(SrcVT));
+      else
+        ValRes = DAG.getZeroExtendInReg(Result, dl,
+                                        SrcVT.getScalarType());
+      Value = ValRes;
+      Chain = Result.getValue(1);
+      break;
     }
   }
 
@@ -1394,10 +1395,39 @@ SDValue SelectionDAGLegalize::ExpandExtractFromVectorThroughStack(SDValue Op) {
   SDValue Vec = Op.getOperand(0);
   SDValue Idx = Op.getOperand(1);
   SDLoc dl(Op);
-  // Store the value to a temporary stack slot, then LOAD the returned part.
-  SDValue StackPtr = DAG.CreateStackTemporary(Vec.getValueType());
-  SDValue Ch = DAG.getStore(DAG.getEntryNode(), dl, Vec, StackPtr,
-                            MachinePointerInfo(), false, false, 0);
+
+  // Before we generate a new store to a temporary stack slot, see if there is
+  // already one that we can use. There often is because when we scalarize
+  // vector operations (using SelectionDAG::UnrollVectorOp for example) a whole
+  // series of EXTRACT_VECTOR_ELT nodes are generated, one for each element in
+  // the vector. If all are expanded here, we don't want one store per vector
+  // element.
+  SDValue StackPtr, Ch;
+  for (SDNode::use_iterator UI = Vec.getNode()->use_begin(),
+       UE = Vec.getNode()->use_end(); UI != UE; ++UI) {
+    SDNode *User = *UI;
+    if (StoreSDNode *ST = dyn_cast<StoreSDNode>(User)) {
+      if (ST->isIndexed() || ST->isTruncatingStore() ||
+          ST->getValue() != Vec)
+        continue;
+
+      // Make sure that nothing else could have stored into the destination of
+      // this store.
+      if (!ST->getChain().reachesChainWithoutSideEffects(DAG.getEntryNode()))
+        continue;
+
+      StackPtr = ST->getBasePtr();
+      Ch = SDValue(ST, 0);
+      break;
+    }
+  }
+
+  if (!Ch.getNode()) {
+    // Store the value to a temporary stack slot, then LOAD the returned part.
+    StackPtr = DAG.CreateStackTemporary(Vec.getValueType());
+    Ch = DAG.getStore(DAG.getEntryNode(), dl, Vec, StackPtr,
+                      MachinePointerInfo(), false, false, 0);
+  }
 
   // Add the offset to the index.
   unsigned EltSize =
@@ -1952,30 +1982,39 @@ SDValue SelectionDAGLegalize::ExpandBUILD_VECTOR(SDNode *Node) {
                        false, false, false, Alignment);
   }
 
-  if (!MoreThanTwoValues) {
-    SmallVector<int, 8> ShuffleVec(NumElems, -1);
-    for (unsigned i = 0; i < NumElems; ++i) {
-      SDValue V = Node->getOperand(i);
-      if (V.getOpcode() == ISD::UNDEF)
-        continue;
-      ShuffleVec[i] = V == Value1 ? 0 : NumElems;
-    }
-    if (TLI.isShuffleMaskLegal(ShuffleVec, Node->getValueType(0))) {
-      // Get the splatted value into the low element of a vector register.
-      SDValue Vec1 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Value1);
-      SDValue Vec2;
-      if (Value2.getNode())
-        Vec2 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Value2);
-      else
-        Vec2 = DAG.getUNDEF(VT);
+  SmallSet<SDValue, 16> DefinedValues;
+  for (unsigned i = 0; i < NumElems; ++i) {
+    if (Node->getOperand(i).getOpcode() == ISD::UNDEF)
+      continue;
+    DefinedValues.insert(Node->getOperand(i));
+  }
 
-      // Return shuffle(LowValVec, undef, <0,0,0,0>)
-      return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
+  if (TLI.shouldExpandBuildVectorWithShuffles(VT, DefinedValues.size())) {
+    if (!MoreThanTwoValues) {
+      SmallVector<int, 8> ShuffleVec(NumElems, -1);
+      for (unsigned i = 0; i < NumElems; ++i) {
+        SDValue V = Node->getOperand(i);
+        if (V.getOpcode() == ISD::UNDEF)
+          continue;
+        ShuffleVec[i] = V == Value1 ? 0 : NumElems;
+      }
+      if (TLI.isShuffleMaskLegal(ShuffleVec, Node->getValueType(0))) {
+        // Get the splatted value into the low element of a vector register.
+        SDValue Vec1 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Value1);
+        SDValue Vec2;
+        if (Value2.getNode())
+          Vec2 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Value2);
+        else
+          Vec2 = DAG.getUNDEF(VT);
+
+        // Return shuffle(LowValVec, undef, <0,0,0,0>)
+        return DAG.getVectorShuffle(VT, dl, Vec1, Vec2, ShuffleVec.data());
+      }
+    } else {
+      SDValue Res;
+      if (ExpandBVWithShuffles(Node, DAG, TLI, Res))
+        return Res;
     }
-  } else {
-    SDValue Res;
-    if (ExpandBVWithShuffles(Node, DAG, TLI, Res))
-      return Res;
   }
 
   // Otherwise, we can't handle this case efficiently.
@@ -2973,6 +3012,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
                                  Node->getOperand(0),
                                  Node->getOperand(1), Zero, Zero,
                                  cast<AtomicSDNode>(Node)->getMemOperand(),
+                                 cast<AtomicSDNode>(Node)->getOrdering(),
                                  cast<AtomicSDNode>(Node)->getOrdering(),
                                  cast<AtomicSDNode>(Node)->getSynchScope());
     Results.push_back(Swap.getValue(0));
@@ -4160,7 +4200,8 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
   }
   case ISD::SELECT: {
     unsigned ExtOp, TruncOp;
-    if (Node->getValueType(0).isVector()) {
+    if (Node->getValueType(0).isVector() ||
+        Node->getValueType(0).getSizeInBits() == NVT.getSizeInBits()) {
       ExtOp   = ISD::BITCAST;
       TruncOp = ISD::BITCAST;
     } else if (Node->getValueType(0).isInteger()) {

@@ -18,6 +18,7 @@
 #define LLVM_IR_DEBUGINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -103,7 +104,7 @@ protected:
   void replaceFunctionField(unsigned Elt, Function *F);
 
 public:
-  explicit DIDescriptor(const MDNode *N = 0) : DbgNode(N) {}
+  explicit DIDescriptor(const MDNode *N = nullptr) : DbgNode(N) {}
 
   bool Verify() const;
 
@@ -115,7 +116,7 @@ public:
   // FIXME: This operator bool isn't actually protecting anything at the
   // moment due to the conversion operator above making DIDescriptor nodes
   // implicitly convertable to bool.
-  LLVM_EXPLICIT operator bool() const { return DbgNode != 0; }
+  LLVM_EXPLICIT operator bool() const { return DbgNode != nullptr; }
 
   bool operator==(DIDescriptor Other) const { return DbgNode == Other.DbgNode; }
   bool operator!=(DIDescriptor Other) const { return !operator==(Other); }
@@ -158,7 +159,7 @@ class DISubrange : public DIDescriptor {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DISubrange(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DISubrange(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   int64_t getLo() const { return getInt64Field(1); }
   int64_t getCount() const { return getInt64Field(2); }
@@ -168,7 +169,7 @@ public:
 /// DIArray - This descriptor holds an array of descriptors.
 class DIArray : public DIDescriptor {
 public:
-  explicit DIArray(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIArray(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   unsigned getNumElements() const;
   DIDescriptor getElement(unsigned Idx) const {
@@ -184,7 +185,7 @@ class DIEnumerator : public DIDescriptor {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIEnumerator(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIEnumerator(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   StringRef getName() const { return getStringField(1); }
   int64_t getEnumValue() const { return getInt64Field(2); }
@@ -196,13 +197,20 @@ typedef DIRef<DIScope> DIScopeRef;
 typedef DIRef<DIType> DITypeRef;
 
 /// DIScope - A base class for various scopes.
+///
+/// Although, implementation-wise, DIScope is the parent class of most
+/// other DIxxx classes, including DIType and its descendants, most of
+/// DIScope's descendants are not a substitutable subtype of
+/// DIScope. The DIDescriptor::isScope() method only is true for
+/// DIScopes that are scopes in the strict lexical scope sense
+/// (DICompileUnit, DISubprogram, etc.), but not for, e.g., a DIType.
 class DIScope : public DIDescriptor {
 protected:
   friend class DIDescriptor;
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIScope(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIScope(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   /// Gets the parent scope for this scope node or returns a
   /// default constructed scope.
@@ -224,6 +232,7 @@ template <typename T> class DIRef {
   friend DescTy DIDescriptor::getFieldAs(unsigned Elt) const;
   friend DIScopeRef DIScope::getContext() const;
   friend DIScopeRef DIScope::getRef() const;
+  friend class DIType;
 
   /// Val can be either a MDNode or a MDString, in the latter,
   /// MDString specifies the type identifier.
@@ -283,7 +292,12 @@ protected:
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIType(const MDNode *N = 0) : DIScope(N) {}
+  explicit DIType(const MDNode *N = nullptr) : DIScope(N) {}
+  operator DITypeRef () const {
+    assert(isType() &&
+           "constructing DITypeRef from an MDNode that is not a type");
+    return DITypeRef(&*getRef());
+  }
 
   /// Verify - Verify that a type descriptor is well formed.
   bool Verify() const;
@@ -332,7 +346,7 @@ public:
 /// DIBasicType - A basic type, like 'int' or 'float'.
 class DIBasicType : public DIType {
 public:
-  explicit DIBasicType(const MDNode *N = 0) : DIType(N) {}
+  explicit DIBasicType(const MDNode *N = nullptr) : DIType(N) {}
 
   unsigned getEncoding() const { return getUnsignedField(9); }
 
@@ -348,7 +362,7 @@ class DIDerivedType : public DIType {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIDerivedType(const MDNode *N = 0) : DIType(N) {}
+  explicit DIDerivedType(const MDNode *N = nullptr) : DIType(N) {}
 
   DITypeRef getTypeDerivedFrom() const { return getFieldAs<DITypeRef>(9); }
 
@@ -381,7 +395,7 @@ class DICompositeType : public DIDerivedType {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DICompositeType(const MDNode *N = 0) : DIDerivedType(N) {}
+  explicit DICompositeType(const MDNode *N = nullptr) : DIDerivedType(N) {}
 
   DIArray getTypeArray() const { return getFieldAs<DIArray>(10); }
   void setTypeArray(DIArray Elements, DIArray TParams = DIArray());
@@ -400,7 +414,7 @@ class DIFile : public DIScope {
   friend class DIDescriptor;
 
 public:
-  explicit DIFile(const MDNode *N = 0) : DIScope(N) {}
+  explicit DIFile(const MDNode *N = nullptr) : DIScope(N) {}
   MDNode *getFileNode() const;
   bool Verify() const;
 };
@@ -411,7 +425,7 @@ class DICompileUnit : public DIScope {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DICompileUnit(const MDNode *N = 0) : DIScope(N) {}
+  explicit DICompileUnit(const MDNode *N = nullptr) : DIScope(N) {}
 
   unsigned getLanguage() const { return getUnsignedField(2); }
   StringRef getProducer() const { return getStringField(3); }
@@ -439,7 +453,7 @@ class DISubprogram : public DIScope {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DISubprogram(const MDNode *N = 0) : DIScope(N) {}
+  explicit DISubprogram(const MDNode *N = nullptr) : DIScope(N) {}
 
   DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(2); }
   StringRef getName() const { return getStringField(3); }
@@ -518,7 +532,7 @@ public:
 /// DILexicalBlock - This is a wrapper for a lexical block.
 class DILexicalBlock : public DIScope {
 public:
-  explicit DILexicalBlock(const MDNode *N = 0) : DIScope(N) {}
+  explicit DILexicalBlock(const MDNode *N = nullptr) : DIScope(N) {}
   DIScope getContext() const { return getFieldAs<DIScope>(2); }
   unsigned getLineNumber() const { return getUnsignedField(3); }
   unsigned getColumnNumber() const { return getUnsignedField(4); }
@@ -530,7 +544,7 @@ public:
 /// a filename change.
 class DILexicalBlockFile : public DIScope {
 public:
-  explicit DILexicalBlockFile(const MDNode *N = 0) : DIScope(N) {}
+  explicit DILexicalBlockFile(const MDNode *N = nullptr) : DIScope(N) {}
   DIScope getContext() const {
     if (getScope().isSubprogram())
       return getScope();
@@ -548,7 +562,7 @@ class DINameSpace : public DIScope {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DINameSpace(const MDNode *N = 0) : DIScope(N) {}
+  explicit DINameSpace(const MDNode *N = nullptr) : DIScope(N) {}
   DIScope getContext() const { return getFieldAs<DIScope>(2); }
   StringRef getName() const { return getStringField(3); }
   unsigned getLineNumber() const { return getUnsignedField(4); }
@@ -558,14 +572,16 @@ public:
 /// DIUnspecifiedParameter - This is a wrapper for unspecified parameters.
 class DIUnspecifiedParameter : public DIDescriptor {
 public:
-  explicit DIUnspecifiedParameter(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIUnspecifiedParameter(const MDNode *N = nullptr)
+    : DIDescriptor(N) {}
   bool Verify() const;
 };
 
 /// DITemplateTypeParameter - This is a wrapper for template type parameter.
 class DITemplateTypeParameter : public DIDescriptor {
 public:
-  explicit DITemplateTypeParameter(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DITemplateTypeParameter(const MDNode *N = nullptr)
+    : DIDescriptor(N) {}
 
   DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(1); }
   StringRef getName() const { return getStringField(2); }
@@ -582,7 +598,8 @@ public:
 /// DITemplateValueParameter - This is a wrapper for template value parameter.
 class DITemplateValueParameter : public DIDescriptor {
 public:
-  explicit DITemplateValueParameter(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DITemplateValueParameter(const MDNode *N = nullptr)
+    : DIDescriptor(N) {}
 
   DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(1); }
   StringRef getName() const { return getStringField(2); }
@@ -603,7 +620,7 @@ class DIGlobalVariable : public DIDescriptor {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIGlobalVariable(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIGlobalVariable(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   DIScope getContext() const { return getFieldAs<DIScope>(2); }
   StringRef getName() const { return getStringField(3); }
@@ -615,7 +632,7 @@ public:
   }
 
   unsigned getLineNumber() const { return getUnsignedField(7); }
-  DIType getType() const { return getFieldAs<DIType>(8); }
+  DITypeRef getType() const { return getFieldAs<DITypeRef>(8); }
   unsigned isLocalToUnit() const { return getUnsignedField(9); }
   unsigned isDefinition() const { return getUnsignedField(10); }
 
@@ -636,7 +653,7 @@ class DIVariable : public DIDescriptor {
   void printInternal(raw_ostream &OS) const;
 
 public:
-  explicit DIVariable(const MDNode *N = 0) : DIDescriptor(N) {}
+  explicit DIVariable(const MDNode *N = nullptr) : DIDescriptor(N) {}
 
   DIScope getContext() const { return getFieldAs<DIScope>(1); }
   StringRef getName() const { return getStringField(2); }
@@ -646,7 +663,7 @@ public:
     unsigned L = getUnsignedField(4);
     return L >> 24;
   }
-  DIType getType() const { return getFieldAs<DIType>(5); }
+  DITypeRef getType() const { return getFieldAs<DITypeRef>(5); }
 
   /// isArtificial - Return true if this variable is marked as "artificial".
   bool isArtificial() const {
@@ -679,7 +696,9 @@ public:
 
   /// isBlockByrefVariable - Return true if the variable was declared as
   /// a "__block" variable (Apple Blocks).
-  bool isBlockByrefVariable() const { return getType().isBlockByrefStruct(); }
+  bool isBlockByrefVariable(const DITypeIdentifierMap &Map) const {
+    return (getType().resolve(Map)).isBlockByrefStruct();
+  }
 
   /// isInlinedFnArgument - Return true if this variable provides debugging
   /// information for an inlined function arguments.
@@ -756,6 +775,8 @@ public:
     return (getUnsignedField(6) & dwarf::DW_APPLE_PROPERTY_nonatomic) != 0;
   }
 
+  /// Objective-C doesn't have an ODR, so there is no benefit in storing
+  /// the type as a DITypeRef here.
   DIType getType() const { return getFieldAs<DIType>(7); }
 
   /// Verify - Verify that a derived type descriptor is well formed.
@@ -770,7 +791,7 @@ class DIImportedEntity : public DIDescriptor {
 public:
   explicit DIImportedEntity(const MDNode *N) : DIDescriptor(N) {}
   DIScope getContext() const { return getFieldAs<DIScope>(1); }
-  DIDescriptor getEntity() const { return getFieldAs<DIDescriptor>(2); }
+  DIScopeRef getEntity() const { return getFieldAs<DIScopeRef>(2); }
   unsigned getLineNumber() const { return getUnsignedField(3); }
   StringRef getName() const { return getStringField(4); }
   bool Verify() const;
@@ -843,9 +864,6 @@ private:
   /// processType - Process DIType.
   void processType(DIType DT);
 
-  /// processLexicalBlock - Process DILexicalBlock.
-  void processLexicalBlock(DILexicalBlock LB);
-
   /// processSubprogram - Process DISubprogram.
   void processSubprogram(DISubprogram SP);
 
@@ -866,17 +884,31 @@ private:
   bool addScope(DIScope Scope);
 
 public:
-  typedef SmallVectorImpl<MDNode *>::const_iterator iterator;
-  iterator compile_unit_begin() const { return CUs.begin(); }
-  iterator compile_unit_end() const { return CUs.end(); }
-  iterator subprogram_begin() const { return SPs.begin(); }
-  iterator subprogram_end() const { return SPs.end(); }
-  iterator global_variable_begin() const { return GVs.begin(); }
-  iterator global_variable_end() const { return GVs.end(); }
-  iterator type_begin() const { return TYs.begin(); }
-  iterator type_end() const { return TYs.end(); }
-  iterator scope_begin() const { return Scopes.begin(); }
-  iterator scope_end() const { return Scopes.end(); }
+  typedef SmallVectorImpl<DICompileUnit>::const_iterator compile_unit_iterator;
+  typedef SmallVectorImpl<DISubprogram>::const_iterator subprogram_iterator;
+  typedef SmallVectorImpl<DIGlobalVariable>::const_iterator global_variable_iterator;
+  typedef SmallVectorImpl<DIType>::const_iterator type_iterator;
+  typedef SmallVectorImpl<DIScope>::const_iterator scope_iterator;
+
+  iterator_range<compile_unit_iterator> compile_units() const {
+    return iterator_range<compile_unit_iterator>(CUs.begin(), CUs.end());
+  }
+
+  iterator_range<subprogram_iterator> subprograms() const {
+    return iterator_range<subprogram_iterator>(SPs.begin(), SPs.end());
+  }
+
+  iterator_range<global_variable_iterator> global_variables() const {
+    return iterator_range<global_variable_iterator>(GVs.begin(), GVs.end());
+  }
+
+  iterator_range<type_iterator> types() const {
+    return iterator_range<type_iterator>(TYs.begin(), TYs.end());
+  }
+
+  iterator_range<scope_iterator> scopes() const {
+    return iterator_range<scope_iterator>(Scopes.begin(), Scopes.end());
+  }
 
   unsigned compile_unit_count() const { return CUs.size(); }
   unsigned global_variable_count() const { return GVs.size(); }
@@ -885,11 +917,11 @@ public:
   unsigned scope_count() const { return Scopes.size(); }
 
 private:
-  SmallVector<MDNode *, 8> CUs;    // Compile Units
-  SmallVector<MDNode *, 8> SPs;    // Subprograms
-  SmallVector<MDNode *, 8> GVs;    // Global Variables;
-  SmallVector<MDNode *, 8> TYs;    // Types
-  SmallVector<MDNode *, 8> Scopes; // Scopes
+  SmallVector<DICompileUnit, 8> CUs;    // Compile Units
+  SmallVector<DISubprogram, 8> SPs;    // Subprograms
+  SmallVector<DIGlobalVariable, 8> GVs;    // Global Variables;
+  SmallVector<DIType, 8> TYs;    // Types
+  SmallVector<DIScope, 8> Scopes; // Scopes
   SmallPtrSet<MDNode *, 64> NodesSeen;
   DITypeIdentifierMap TypeIdentifierMap;
   /// Specify if TypeIdentifierMap is initialized.

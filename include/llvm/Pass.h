@@ -90,7 +90,8 @@ protected: // MollyPassManager needs access to Resolver
   Pass(const Pass &) LLVM_DELETED_FUNCTION;
 
 public:
-  explicit Pass(PassKind K, char &pid) : Resolver(0), PassID(&pid), Kind(K) { }
+  explicit Pass(PassKind K, char &pid)
+    : Resolver(nullptr), PassID(&pid), Kind(K) { }
   virtual ~Pass();
 
 

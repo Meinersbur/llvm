@@ -153,9 +153,9 @@ public:
   /// @{
 
   bool is64Bit() const { return TargetObjectWriter->is64Bit(); }
-  bool isARM() const {
-    uint32_t CPUType = TargetObjectWriter->getCPUType() & ~MachO::CPU_ARCH_MASK;
-    return CPUType == MachO::CPU_TYPE_ARM;
+  bool isX86_64() const {
+    uint32_t CPUType = TargetObjectWriter->getCPUType();
+    return CPUType == MachO::CPU_TYPE_X86_64;
   }
 
   /// @}
@@ -230,7 +230,8 @@ public:
 
   void RecordRelocation(const MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
-                        MCValue Target, uint64_t &FixedValue) override;
+                        MCValue Target, bool &IsPCRel,
+                        uint64_t &FixedValue) override;
 
   void BindIndirectSymbols(MCAssembler &Asm);
 

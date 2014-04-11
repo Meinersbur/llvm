@@ -172,7 +172,8 @@ public:
 
   void RecordRelocation(const MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
-                        MCValue Target, uint64_t &FixedValue) override;
+                        MCValue Target, bool &IsPCRel,
+                        uint64_t &FixedValue) override;
 
   void WriteObject(MCAssembler &Asm, const MCAsmLayout &Layout) override;
 };
@@ -393,7 +394,7 @@ void WinCOFFObjectWriter::DefineSection(MCSectionData const &SectionData) {
   SectionMap[&SectionData.getSection()] = coff_section;
 }
 
-/// This function takes a section data object from the assembler
+/// This function takes a symbol data object from the assembler
 /// and creates the associated COFF symbol staging object.
 void WinCOFFObjectWriter::DefineSymbol(MCSymbolData const &SymbolData,
                                        MCAssembler &Assembler,
@@ -442,6 +443,8 @@ void WinCOFFObjectWriter::DefineSymbol(MCSymbolData const &SymbolData,
       int64_t Addr;
       if (Symbol.getVariableValue()->EvaluateAsAbsolute(Addr, Layout))
         coff_symbol->Data.Value = Addr;
+    } else if (SymbolData.isExternal() && SymbolData.isCommon()) {
+      coff_symbol->Data.Value = SymbolData.getCommonSize();
     }
 
     coff_symbol->Data.Type         = (ResSymData.getFlags() & 0x0000FFFF) >>  0;
@@ -656,6 +659,7 @@ void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
                                            const MCFragment *Fragment,
                                            const MCFixup &Fixup,
                                            MCValue Target,
+                                           bool &IsPCRel,
                                            uint64_t &FixedValue) {
   assert(Target.getSymA() != NULL && "Relocation must reference a symbol!");
 

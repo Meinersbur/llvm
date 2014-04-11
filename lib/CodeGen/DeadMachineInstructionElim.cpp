@@ -84,6 +84,9 @@ bool DeadMachineInstructionElim::isDead(const MachineInstr *MI) const {
 }
 
 bool DeadMachineInstructionElim::runOnMachineFunction(MachineFunction &MF) {
+  if (skipOptnoneFunction(*MF.getFunction()))
+    return false;
+
   bool AnyChanges = false;
   MRI = &MF.getRegInfo();
   TRI = MF.getTarget().getRegisterInfo();
@@ -127,17 +130,7 @@ bool DeadMachineInstructionElim::runOnMachineFunction(MachineFunction &MF) {
           unsigned Reg = MO.getReg();
           if (!TargetRegisterInfo::isVirtualRegister(Reg))
             continue;
-          MachineRegisterInfo::use_iterator nextI;
-          for (MachineRegisterInfo::use_iterator I = MRI->use_begin(Reg),
-               E = MRI->use_end(); I!=E; I=nextI) {
-            nextI = std::next(I);  // I is invalidated by the setReg
-            MachineOperand& Use = I.getOperand();
-            MachineInstr *UseMI = Use.getParent();
-            if (UseMI==MI)
-              continue;
-            assert(Use.isDebug());
-            UseMI->getOperand(0).setReg(0U);
-          }
+          MRI->markUsesInDebugValueAsUndef(Reg);
         }
         AnyChanges = true;
         MI->eraseFromParent();

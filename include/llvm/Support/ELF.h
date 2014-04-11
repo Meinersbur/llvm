@@ -839,7 +839,6 @@ enum {
   R_MIPS_GPREL16           =  7,
   R_MIPS_LITERAL           =  8,
   R_MIPS_GOT16             =  9,
-  R_MIPS_GOT               =  9,
   R_MIPS_PC16              = 10,
   R_MIPS_CALL16            = 11,
   R_MIPS_GPREL32           = 12,
@@ -881,6 +880,9 @@ enum {
   R_MIPS_TLS_TPREL_HI16    = 49,
   R_MIPS_TLS_TPREL_LO16    = 50,
   R_MIPS_GLOB_DAT          = 51,
+  R_MIPS16_GOT16           = 102,
+  R_MIPS16_HI16            = 104,
+  R_MIPS16_LO16            = 105,
   R_MIPS_COPY              = 126,
   R_MIPS_JUMP_SLOT         = 127,
   R_MICROMIPS_26_S1        = 133,
@@ -898,7 +900,8 @@ enum {
   R_MICROMIPS_TLS_DTPREL_LO16 = 165,
   R_MICROMIPS_TLS_TPREL_HI16  = 169,
   R_MICROMIPS_TLS_TPREL_LO16  = 170,
-  R_MIPS_NUM               = 218
+  R_MIPS_NUM               = 218,
+  R_MIPS_PC32              = 248
 };
 
 // Special values for the st_other field in the symbol table entry for MIPS.

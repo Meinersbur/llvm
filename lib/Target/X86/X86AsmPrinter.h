@@ -10,14 +10,10 @@
 #ifndef X86ASMPRINTER_H
 #define X86ASMPRINTER_H
 
-#include "X86.h"
-#include "X86MachineFunctionInfo.h"
-#include "X86TargetMachine.h"
+#include "X86Subtarget.h"
 #include "llvm/CodeGen/AsmPrinter.h"
-#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/StackMaps.h"
-#include "llvm/CodeGen/ValueTypes.h"
-#include "llvm/Support/Compiler.h"
+#include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
 
@@ -33,26 +29,26 @@ class LLVM_LIBRARY_VISIBILITY X86AsmPrinter : public AsmPrinter {
     Subtarget = &TM.getSubtarget<X86Subtarget>();
   }
 
-  virtual const char *getPassName() const override {
+  const char *getPassName() const override {
     return "X86 Assembly / Object Emitter";
   }
 
   const X86Subtarget &getSubtarget() const { return *Subtarget; }
 
-  virtual void EmitStartOfAsmFile(Module &M) override;
+  void EmitStartOfAsmFile(Module &M) override;
 
-  virtual void EmitEndOfAsmFile(Module &M) override;
+  void EmitEndOfAsmFile(Module &M) override;
 
-  virtual void EmitInstruction(const MachineInstr *MI) override;
+  void EmitInstruction(const MachineInstr *MI) override;
 
-  virtual bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
-                               unsigned AsmVariant, const char *ExtraCode,
-                               raw_ostream &OS) override;
-  virtual bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
-                                     unsigned AsmVariant, const char *ExtraCode,
-                                     raw_ostream &OS) override;
+  bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
+                       unsigned AsmVariant, const char *ExtraCode,
+                       raw_ostream &OS) override;
+  bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
+                             unsigned AsmVariant, const char *ExtraCode,
+                             raw_ostream &OS) override;
 
-  virtual bool runOnMachineFunction(MachineFunction &F) override;
+  bool runOnMachineFunction(MachineFunction &F) override;
 };
 
 } // end namespace llvm

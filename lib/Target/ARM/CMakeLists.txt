@@ -21,6 +21,7 @@ endif ()
 add_llvm_target(ARMCodeGen
   A15SDOptimizer.cpp
   ARMAsmPrinter.cpp
+  ARMAtomicExpandPass.cpp
   ARMBaseInstrInfo.cpp
   ARMBaseRegisterInfo.cpp
   ARMCodeEmitter.cpp
@@ -38,6 +39,7 @@ add_llvm_target(ARMCodeGen
   ARMMCInstLower.cpp
   ARMMachineFunctionInfo.cpp
   ARMRegisterInfo.cpp
+  ARMOptimizeBarriersPass.cpp
   ARMSelectionDAGInfo.cpp
   ARMSubtarget.cpp
   ARMTargetMachine.cpp

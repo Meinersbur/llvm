@@ -166,7 +166,6 @@ for i in `ls ${srcdir}/projects`
 do
   if test -d ${srcdir}/projects/${i} ; then
     case ${i} in
-      sample)       AC_CONFIG_SUBDIRS([projects/sample])    ;;
       safecode)     AC_CONFIG_SUBDIRS([projects/safecode]) ;;
       compiler-rt)       ;;
       test-suite)     ;;
@@ -420,6 +419,7 @@ AC_CACHE_CHECK([target architecture],[llvm_cv_target_arch],
   amd64-* | x86_64-*)     llvm_cv_target_arch="x86_64" ;;
   sparc*-*)               llvm_cv_target_arch="Sparc" ;;
   powerpc*-*)             llvm_cv_target_arch="PowerPC" ;;
+  arm64*-*)               llvm_cv_target_arch="ARM64" ;;
   arm*-*)                 llvm_cv_target_arch="ARM" ;;
   aarch64*-*)             llvm_cv_target_arch="AArch64" ;;
   mips-* | mips64-*)      llvm_cv_target_arch="Mips" ;;
@@ -455,6 +455,7 @@ case $host in
   amd64-* | x86_64-*)     host_arch="x86_64" ;;
   sparc*-*)               host_arch="Sparc" ;;
   powerpc*-*)             host_arch="PowerPC" ;;
+  arm64*-*)               host_arch="ARM64" ;;
   arm*-*)                 host_arch="ARM" ;;
   aarch64*-*)             host_arch="AArch64" ;;
   mips-* | mips64-*)      host_arch="Mips" ;;
@@ -641,6 +642,20 @@ case "$enableval" in
   *) AC_MSG_ERROR([Invalid setting for --enable-clang-arcmt. Use "yes" or "no"]) ;;
 esac
 
+dnl --enable-clang-plugin-support: check whether to enable plugins in clang
+clang_plugin_support="yes"
+AC_ARG_ENABLE(clang-plugin-support,
+              AS_HELP_STRING([--enable-clang-plugin-support],
+                             [Enable plugin support in clang (default is YES)]),
+                             clang_plugin_support="$enableval",
+                             enableval="yes")
+case "$enableval" in
+  yes) AC_SUBST(CLANG_PLUGIN_SUPPORT,[1]) ;;
+  no)  AC_SUBST(CLANG_PLUGIN_SUPPORT,[0]) ;;
+  default) AC_SUBST(CLANG_PLUGIN_SUPPORT,[1]);;
+  *) AC_MSG_ERROR([Invalid setting for --enable-clang-plugin-support. Use "yes" or "no"]) ;;
+esac
+
 dnl --enable-clang-static-analyzer: check whether to enable static-analyzer
 clang_static_analyzer="yes"
 AC_ARG_ENABLE(clang-static-analyzer,
@@ -782,7 +797,7 @@ else
   esac
 fi
 
-TARGETS_WITH_JIT="AArch64 ARM Mips PowerPC SystemZ X86"
+TARGETS_WITH_JIT="AArch64 ARM ARM64 Mips PowerPC SystemZ X86"
 AC_SUBST(TARGETS_WITH_JIT,$TARGETS_WITH_JIT)
 
 dnl Allow enablement of building and installing docs
@@ -935,14 +950,14 @@ if test "$llvm_cv_enable_crash_overrides" = "yes" ; then
 fi
 
 dnl List all possible targets
-ALL_TARGETS="X86 Sparc PowerPC AArch64 ARM Mips XCore MSP430 CppBackend NVPTX Hexagon SystemZ R600 CBackend"
+ALL_TARGETS="X86 Sparc PowerPC AArch64 ARM ARM64 Mips XCore MSP430 CppBackend NVPTX Hexagon SystemZ R600 CBackend"
 AC_SUBST(ALL_TARGETS,$ALL_TARGETS)
 
 dnl Allow specific targets to be specified for building (or not)
 TARGETS_TO_BUILD=""
 AC_ARG_ENABLE([targets],AS_HELP_STRING([--enable-targets],
     [Build specific host targets: all or target1,target2,... Valid targets are:
-     host, x86, x86_64, sparc, powerpc, arm, aarch64, mips, hexagon,
+     host, x86, x86_64, sparc, powerpc, arm64, arm, aarch64, mips, hexagon,
      xcore, msp430, nvptx, systemz, r600, and cpp (default=all)]),,
     enableval=all)
 if test "$enableval" = host-only ; then
@@ -957,6 +972,7 @@ case "$enableval" in
         sparc)    TARGETS_TO_BUILD="Sparc $TARGETS_TO_BUILD" ;;
         powerpc)  TARGETS_TO_BUILD="PowerPC $TARGETS_TO_BUILD" ;;
         aarch64)  TARGETS_TO_BUILD="AArch64 $TARGETS_TO_BUILD" ;;
+        arm64)    TARGETS_TO_BUILD="ARM64 $TARGETS_TO_BUILD" ;;
         arm)      TARGETS_TO_BUILD="ARM $TARGETS_TO_BUILD" ;;
         mips)     TARGETS_TO_BUILD="Mips $TARGETS_TO_BUILD" ;;
         mipsel)   TARGETS_TO_BUILD="Mips $TARGETS_TO_BUILD" ;;

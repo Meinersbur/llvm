@@ -62,8 +62,6 @@ public:
   void moveSymbolNext(DataRefImpl &Symb) const override;
   error_code getSymbolName(DataRefImpl Symb, StringRef &Res) const override;
   error_code getSymbolAddress(DataRefImpl Symb, uint64_t &Res) const override;
-  error_code getSymbolFileOffset(DataRefImpl Symb,
-                                 uint64_t &Res) const override;
   error_code getSymbolAlignment(DataRefImpl Symb, uint32_t &Res) const override;
   error_code getSymbolSize(DataRefImpl Symb, uint64_t &Res) const override;
   error_code getSymbolType(DataRefImpl Symb,
@@ -71,7 +69,6 @@ public:
   uint32_t getSymbolFlags(DataRefImpl Symb) const override;
   error_code getSymbolSection(DataRefImpl Symb,
                               section_iterator &Res) const override;
-  error_code getSymbolValue(DataRefImpl Symb, uint64_t &Val) const override;
 
   void moveSectionNext(DataRefImpl &Sec) const override;
   error_code getSectionName(DataRefImpl Sec, StringRef &Res) const override;
@@ -178,6 +175,8 @@ public:
   getSegment64LoadCommand(const LoadCommandInfo &L) const;
   MachO::linker_options_command
   getLinkerOptionsLoadCommand(const LoadCommandInfo &L) const;
+  MachO::version_min_command
+  getVersionMinLoadCommand(const LoadCommandInfo &L) const;
 
   MachO::any_relocation_info getRelocation(DataRefImpl Rel) const;
   MachO::data_in_code_entry getDice(DataRefImpl Rel) const;

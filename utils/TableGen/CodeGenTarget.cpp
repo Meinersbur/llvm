@@ -173,7 +173,8 @@ Record *CodeGenTarget::getInstructionSet() const {
 Record *CodeGenTarget::getAsmParser() const {
   std::vector<Record*> LI = TargetRec->getValueAsListOfDefs("AssemblyParsers");
   if (AsmParserNum >= LI.size())
-    PrintFatalError("Target does not have an AsmParser #" + utostr(AsmParserNum) + "!");
+    PrintFatalError("Target does not have an AsmParser #" +
+                    Twine(AsmParserNum) + "!");
   return LI[AsmParserNum];
 }
 
@@ -184,7 +185,8 @@ Record *CodeGenTarget::getAsmParserVariant(unsigned i) const {
   std::vector<Record*> LI =
     TargetRec->getValueAsListOfDefs("AssemblyParserVariants");
   if (i >= LI.size())
-    PrintFatalError("Target does not have an AsmParserVariant #" + utostr(i) + "!");
+    PrintFatalError("Target does not have an AsmParserVariant #" + Twine(i) +
+                    "!");
   return LI[i];
 }
 
@@ -202,7 +204,8 @@ unsigned CodeGenTarget::getAsmParserVariantCount() const {
 Record *CodeGenTarget::getAsmWriter() const {
   std::vector<Record*> LI = TargetRec->getValueAsListOfDefs("AssemblyWriters");
   if (AsmWriterNum >= LI.size())
-    PrintFatalError("Target does not have an AsmWriter #" + utostr(AsmWriterNum) + "!");
+    PrintFatalError("Target does not have an AsmWriter #" +
+                    Twine(AsmWriterNum) + "!");
   return LI[AsmWriterNum];
 }
 
@@ -285,7 +288,7 @@ GetInstByName(const char *Name,
   DenseMap<const Record*, CodeGenInstruction*>::const_iterator
     I = Insts.find(Rec);
   if (Rec == 0 || I == Insts.end())
-    PrintFatalError(std::string("Could not find '") + Name + "' instruction!");
+    PrintFatalError(Twine("Could not find '") + Name + "' instruction!");
   return I->second;
 }
 
@@ -446,6 +449,7 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
   isCommutative = false;
   canThrow = false;
   isNoReturn = false;
+  isNoDuplicate = false;
 
   if (DefName.size() <= 4 ||
       std::string(DefName.begin(), DefName.begin() + 4) != "int_")
@@ -497,8 +501,8 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
       // It only makes sense to use the extended and truncated vector element
       // variants with iAny types; otherwise, if the intrinsic is not
       // overloaded, all the types can be specified directly.
-      assert(((!TyEl->isSubClassOf("LLVMExtendedElementVectorType") &&
-               !TyEl->isSubClassOf("LLVMTruncatedElementVectorType")) ||
+      assert(((!TyEl->isSubClassOf("LLVMExtendedType") &&
+               !TyEl->isSubClassOf("LLVMTruncatedType")) ||
               VT == MVT::iAny || VT == MVT::vAny) &&
              "Expected iAny or vAny type");
     } else {
@@ -531,8 +535,8 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
       // It only makes sense to use the extended and truncated vector element
       // variants with iAny types; otherwise, if the intrinsic is not
       // overloaded, all the types can be specified directly.
-      assert(((!TyEl->isSubClassOf("LLVMExtendedElementVectorType") &&
-               !TyEl->isSubClassOf("LLVMTruncatedElementVectorType")) ||
+      assert(((!TyEl->isSubClassOf("LLVMExtendedType") &&
+               !TyEl->isSubClassOf("LLVMTruncatedType")) ||
               VT == MVT::iAny || VT == MVT::vAny) &&
              "Expected iAny or vAny type");
     } else
@@ -570,6 +574,8 @@ CodeGenIntrinsic::CodeGenIntrinsic(Record *R) {
       isCommutative = true;
     else if (Property->getName() == "Throws")
       canThrow = true;
+    else if (Property->getName() == "IntrNoDuplicate")
+      isNoDuplicate = true;
     else if (Property->getName() == "IntrNoReturn")
       isNoReturn = true;
     else if (Property->isSubClassOf("NoCapture")) {

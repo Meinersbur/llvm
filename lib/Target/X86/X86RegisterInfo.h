@@ -24,7 +24,7 @@ namespace llvm {
   class TargetInstrInfo;
   class X86TargetMachine;
 
-class X86RegisterInfo : public X86GenRegisterInfo {
+class X86RegisterInfo final : public X86GenRegisterInfo {
 public:
   X86TargetMachine &TM;
 
@@ -100,8 +100,8 @@ public:
 
   /// getCalleeSavedRegs - Return a null-terminated list of all of the
   /// callee-save registers on this target.
-  const uint16_t *
-  getCalleeSavedRegs(const MachineFunction* MF = 0) const override;
+  const MCPhysReg *
+  getCalleeSavedRegs(const MachineFunction* MF) const override;
   const uint32_t *getCallPreservedMask(CallingConv::ID) const override;
   const uint32_t *getNoPreservedMask() const;
 

@@ -487,8 +487,6 @@ static unsigned getEncodedLinkage(const GlobalValue *GV) {
   case GlobalValue::WeakODRLinkage:                  return 10;
   case GlobalValue::LinkOnceODRLinkage:              return 11;
   case GlobalValue::AvailableExternallyLinkage:      return 12;
-  case GlobalValue::LinkerPrivateLinkage:            return 13;
-  case GlobalValue::LinkerPrivateWeakLinkage:        return 14;
   }
   llvm_unreachable("Invalid linkage");
 }
@@ -1441,9 +1439,11 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
     pushValue(I.getOperand(2), InstID, Vals, VE);         // newval.
     Vals.push_back(cast<AtomicCmpXchgInst>(I).isVolatile());
     Vals.push_back(GetEncodedOrdering(
-                     cast<AtomicCmpXchgInst>(I).getOrdering()));
+                     cast<AtomicCmpXchgInst>(I).getSuccessOrdering()));
     Vals.push_back(GetEncodedSynchScope(
                      cast<AtomicCmpXchgInst>(I).getSynchScope()));
+    Vals.push_back(GetEncodedOrdering(
+                     cast<AtomicCmpXchgInst>(I).getFailureOrdering()));
     break;
   case Instruction::AtomicRMW:
     Code = bitc::FUNC_CODE_INST_ATOMICRMW;
