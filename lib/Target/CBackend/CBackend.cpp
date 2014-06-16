@@ -1262,7 +1262,7 @@ std::string CWriter::GetValueName(const Value *Operand) {
 
   // Resolve potential alias.
   if (const GlobalAlias *GA = dyn_cast<GlobalAlias>(Operand)) {
-    if (const Value *V = GA->getAliasedGlobal())
+    if (const Value *V = GA->getAliasee())
       Operand = V;
   }
 

@@ -12,6 +12,9 @@
 //===----------------------------------------------------------------------===//
 
 
+#ifdef MOLLY
+#define DEBUG_TYPE "pass"
+#endif /* MOLLY */
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/LegacyPassManager.h"

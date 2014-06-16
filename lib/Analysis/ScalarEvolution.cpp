@@ -5419,6 +5419,10 @@ static Constant *BuildConstantFromSCEV(const SCEV *V) {
             return ConstantExpr::getUDiv(LHS, RHS);
       break;
     }
+    case scModExpr: {
+      // TODO: Constant fold mod
+      break;
+    }
     case scSMaxExpr:
     case scUMaxExpr:
       break; // TODO: smax, umax.
@@ -7187,10 +7191,8 @@ public:
   void visitCouldNotCompute(const SCEVCouldNotCompute *Numerator) {}
 
 #ifdef MOLLY
-  const SCEV *visitModExpr(const SCEVModExpr *Expr) {
-    if (GCD != Expr)
-      Remainder = Expr;
-    return GCD;
+  void visitModExpr(const SCEVModExpr *Expr) {
+    int a = 0;
   }
 #endif /* MOLLY */
 
@@ -7432,14 +7434,6 @@ containsParameters(SmallVectorImpl<const SCEV *> &Terms) {
       return true;
   return false;
 }
-
-#ifdef MOLLY
-  const SCEV *visitModExpr(const SCEVModExpr *Expr) {
-    if (GCD == Expr)
-      return One;
-    return Expr;
-  }
-#endif /* MOLLY */
 
 // Return the number of product terms in S.
 static inline int numberOfTerms(const SCEV *S) {
@@ -7908,6 +7902,17 @@ ScalarEvolution::computeLoopDisposition(const SCEV *S, const Loop *L) {
     return (LD == LoopInvariant && RD == LoopInvariant) ?
            LoopInvariant : LoopComputable;
   }
+  case scModExpr: {
+    const SCEVModExpr *Mod = cast<SCEVModExpr>(S);
+    LoopDisposition LD = getLoopDisposition(Mod->getLHS(), L);
+    if (LD == LoopVariant)
+      return LoopVariant;
+    LoopDisposition RD = getLoopDisposition(Mod->getRHS(), L);
+    if (RD == LoopVariant)
+      return LoopVariant;
+    return (LD == LoopInvariant && RD == LoopInvariant) ?
+            LoopInvariant : LoopVariant;
+  }
   case scUnknown:
     // All non-instruction values are loop invariant.  All instructions are loop
     // invariant if they are not contained in the specified loop.
@@ -7995,6 +8000,18 @@ ScalarEvolution::computeBlockDisposition(const SCEV *S, const BasicBlock *BB) {
       return DoesNotDominateBlock;
     return (LD == ProperlyDominatesBlock && RD == ProperlyDominatesBlock) ?
       ProperlyDominatesBlock : DominatesBlock;
+  }
+  case scModExpr: {
+    const SCEVModExpr *Mod = cast<SCEVModExpr>(S);
+    const SCEV *LHS = Mod->getLHS(), *RHS = Mod->getRHS();
+    BlockDisposition LD = getBlockDisposition(LHS, BB);
+    if (LD == DoesNotDominateBlock)
+      return DoesNotDominateBlock;
+    BlockDisposition RD = getBlockDisposition(RHS, BB);
+    if (RD == DoesNotDominateBlock)
+      return DoesNotDominateBlock;
+    return (LD == ProperlyDominatesBlock && RD == ProperlyDominatesBlock) ?
+            ProperlyDominatesBlock : DominatesBlock;
   }
   case scUnknown:
     if (Instruction *I =
