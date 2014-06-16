@@ -828,7 +828,7 @@ SDNode *PPCDAGToDAGISel::SelectSETCC(SDNode *N) {
   // Altivec Vector compare instructions do not set any CR register by default and
   // vector compare operations return the same type as the operands.
   if (LHS.getValueType().isVector()) {
-    if (PPCSubTarget.hasQPX())
+    if (PPCSubTarget->hasQPX())
       return 0;
 
     EVT VecVT = LHS.getValueType();
@@ -1337,6 +1337,12 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
       SelectCCOp = PPC::SELECT_CC_F4;
     else if (N->getValueType(0) == MVT::f64)
       SelectCCOp = PPC::SELECT_CC_F8;
+    else if (PPCSubTarget->hasQPX() && N->getValueType(0) == MVT::v4f64)
+      SelectCCOp = PPC::SELECT_CC_QFRC;
+    else if (PPCSubTarget->hasQPX() && N->getValueType(0) == MVT::v4f32)
+      SelectCCOp = PPC::SELECT_CC_QSRC;
+    else if (PPCSubTarget->hasQPX() && N->getValueType(0) == MVT::v4i1)
+      SelectCCOp = PPC::SELECT_CC_QBRC;
     else
       SelectCCOp = PPC::SELECT_CC_VRRC;
 
@@ -1695,7 +1701,10 @@ void PPCDAGToDAGISel::PeepholeCROps() {
       case PPC::SELECT_I8:
       case PPC::SELECT_F4:
       case PPC::SELECT_F8:
-      case PPC::SELECT_VRRC: {
+      case PPC::SELECT_VRRC:
+      case PPC::SELECT_QFRC:
+      case PPC::SELECT_QSRC:
+      case PPC::SELECT_QBRC: {
         SDValue Op = MachineNode->getOperand(0);
         if (Op.isMachineOpcode()) {
           if (Op.getMachineOpcode() == PPC::CRSET)
@@ -2001,6 +2010,9 @@ void PPCDAGToDAGISel::PeepholeCROps() {
       case PPC::SELECT_F4:
       case PPC::SELECT_F8:
       case PPC::SELECT_VRRC:
+      case PPC::SELECT_QFRC:
+      case PPC::SELECT_QSRC:
+      case PPC::SELECT_QBRC:
         if (Op1Set)
           ResNode = MachineNode->getOperand(1).getNode();
         else if (Op1Unset)

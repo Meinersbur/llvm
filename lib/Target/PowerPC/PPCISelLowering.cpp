@@ -637,7 +637,8 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setOperationAction(ISD::LOAD  , MVT::v4f64, Legal);
     setOperationAction(ISD::STORE , MVT::v4f64, Legal);
 
-    setOperationAction(ISD::SELECT, MVT::v4f64, Expand);
+    if (!Subtarget->useCRBits())
+      setOperationAction(ISD::SELECT, MVT::v4f64, Expand);
     setOperationAction(ISD::VSELECT, MVT::v4f64, Legal);
 
     setOperationAction(ISD::EXTRACT_VECTOR_ELT , MVT::v4f64, Legal);
@@ -682,7 +683,8 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setOperationAction(ISD::LOAD  , MVT::v4f32, Legal);
     setOperationAction(ISD::STORE , MVT::v4f32, Legal);
 
-    setOperationAction(ISD::SELECT, MVT::v4f32, Expand);
+    if (!Subtarget->useCRBits())
+      setOperationAction(ISD::SELECT, MVT::v4f32, Expand);
     setOperationAction(ISD::VSELECT, MVT::v4f32, Legal);
 
     setOperationAction(ISD::EXTRACT_VECTOR_ELT , MVT::v4f32, Legal);
@@ -716,6 +718,8 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setOperationAction(ISD::OR , MVT::v4i1, Legal);
     setOperationAction(ISD::XOR , MVT::v4i1, Legal);
 
+    if (!Subtarget->useCRBits())
+      setOperationAction(ISD::SELECT, MVT::v4i1, Expand);
     setOperationAction(ISD::VSELECT, MVT::v4i1, Legal);
 
     setOperationAction(ISD::LOAD  , MVT::v4i1, Custom);
@@ -6069,10 +6073,10 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
       SmallVector<EVT, 2> ValueVTs;
       ValueVTs.push_back(MVT::v4i1);
       ValueVTs.push_back(MVT::Other); // chain
-      SDVTList VTs = DAG.getVTList(ValueVTs.data(), ValueVTs.size());
+      SDVTList VTs = DAG.getVTList(ValueVTs);
 
       return DAG.getMemIntrinsicNode(PPCISD::QVLFSb,
-        dl, VTs, &Ops[0], Ops.size(), MVT::v4f32,
+        dl, VTs, Ops, MVT::v4f32,
         MachinePointerInfo::getConstantPool());
     }
 
@@ -6104,8 +6108,7 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
 
     SDValue StoreChain;
     if (!Stores.empty())
-      StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
-                               &Stores[0], Stores.size());
+      StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, Stores);
     else
       StoreChain = DAG.getEntryNode();
 
@@ -6122,10 +6125,10 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
     SmallVector<EVT, 2> ValueVTs;
     ValueVTs.push_back(MVT::v4f64);
     ValueVTs.push_back(MVT::Other); // chain
-    SDVTList VTs = DAG.getVTList(ValueVTs.data(), ValueVTs.size());
+    SDVTList VTs = DAG.getVTList(ValueVTs);
 
     SDValue LoadedVect = DAG.getMemIntrinsicNode(ISD::INTRINSIC_W_CHAIN,
-      dl, VTs, &Ops[0], Ops.size(), MVT::v4i32, PtrInfo);
+      dl, VTs, Ops, MVT::v4i32, PtrInfo);
     LoadedVect = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, dl, MVT::v4f64,
       DAG.getConstant(Intrinsic::ppc_qpx_qvfcfidu, MVT::i32),
       LoadedVect);
@@ -6729,10 +6732,10 @@ SDValue PPCTargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
 
   SmallVector<EVT, 2> ValueVTs;
   ValueVTs.push_back(MVT::Other); // chain
-  SDVTList VTs = DAG.getVTList(ValueVTs.data(), ValueVTs.size());
+  SDVTList VTs = DAG.getVTList(ValueVTs);
 
   StoreChain = DAG.getMemIntrinsicNode(ISD::INTRINSIC_VOID,
-    dl, VTs, &Ops[0], Ops.size(), MVT::v4i32, PtrInfo);
+    dl, VTs, Ops, MVT::v4i32, PtrInfo);
 
   // Extract the value requested.
   unsigned Offset = 4*cast<ConstantSDNode>(N->getOperand(1))->getZExtValue();
@@ -6837,10 +6840,8 @@ SDValue PPCTargetLowering::LowerVectorLoad(SDValue Op,
     VectElmtChains.push_back(VectElmts[i].getValue(1));
   }
 
-  LoadChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
-                          &VectElmtChains[0], VectElmtChains.size());
-  SDValue Value = DAG.getNode(ISD::BUILD_VECTOR, dl, MVT::v4i1,
-                              &VectElmts[0], VectElmts.size());
+  LoadChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, VectElmtChains);
+  SDValue Value = DAG.getNode(ISD::BUILD_VECTOR, dl, MVT::v4i1, VectElmts);
 
   return Op.getResNo() ? LoadChain : Value;
 }
@@ -6889,10 +6890,10 @@ SDValue PPCTargetLowering::LowerVectorStore(SDValue Op,
 
   SmallVector<EVT, 2> ValueVTs;
   ValueVTs.push_back(MVT::Other); // chain
-  SDVTList VTs = DAG.getVTList(ValueVTs.data(), ValueVTs.size());
+  SDVTList VTs = DAG.getVTList(ValueVTs);
 
   StoreChain = DAG.getMemIntrinsicNode(ISD::INTRINSIC_VOID,
-    dl, VTs, &Ops[0], Ops.size(), MVT::v4i32, PtrInfo);
+    dl, VTs, Ops, MVT::v4i32, PtrInfo);
 
   // Move data into the byte array.
   SmallVector<SDValue, 4> Loads, LoadChains;
@@ -6907,8 +6908,7 @@ SDValue PPCTargetLowering::LowerVectorStore(SDValue Op,
     LoadChains.push_back(Loads[i].getValue(1));
   }
 
-  StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
-                           &LoadChains[0], LoadChains.size());
+  StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, LoadChains);
 
   SmallVector<SDValue, 4> Stores;
   for (unsigned i = 0; i < 4; ++i) {
@@ -6922,8 +6922,7 @@ SDValue PPCTargetLowering::LowerVectorStore(SDValue Op,
                                        1 /* alignment */, SN->getTBAAInfo()));
   }
 
-  StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
-                           &Stores[0], Stores.size());
+  StoreChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, Stores);
 
   return StoreChain;
 }
@@ -7050,11 +7049,11 @@ SDValue PPCTargetLowering::LowerSLEEF(SDValue Op, SelectionDAG &DAG) const {
   SDValue TCChain = InChain;
   bool isTailCall = TLI.isInTailCallPosition(DAG, Node, TCChain);
 
-  TargetLowering::
-  CallLoweringInfo CLI(InChain, RetTy, false, true, false, false,
-                       0, CallingConv::C, isTailCall,
-                       /*doesNotReturn=*/false, /*isReturnValueUsed=*/true,
-                       Callee, Args, DAG, dl);
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(dl).setChain(InChain)
+    .setCallee(CallingConv::C, RetTy, Callee, &Args, 0)
+    .setTailCall(isTailCall).setZExtResult();
+
   std::pair<SDValue, SDValue> CallInfo = TLI.LowerCallTo(CLI);
 
   if (!CallInfo.second.getNode())
@@ -7712,11 +7711,17 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
              MI->getOpcode() == PPC::SELECT_CC_F4 ||
              MI->getOpcode() == PPC::SELECT_CC_F8 ||
              MI->getOpcode() == PPC::SELECT_CC_VRRC ||
+             MI->getOpcode() == PPC::SELECT_CC_QFRC ||
+             MI->getOpcode() == PPC::SELECT_CC_QSRC ||
+             MI->getOpcode() == PPC::SELECT_CC_QBRC ||
              MI->getOpcode() == PPC::SELECT_I4 ||
              MI->getOpcode() == PPC::SELECT_I8 ||
              MI->getOpcode() == PPC::SELECT_F4 ||
              MI->getOpcode() == PPC::SELECT_F8 ||
-             MI->getOpcode() == PPC::SELECT_VRRC) {
+             MI->getOpcode() == PPC::SELECT_VRRC ||
+             MI->getOpcode() == PPC::SELECT_QFRC ||
+             MI->getOpcode() == PPC::SELECT_QSRC ||
+             MI->getOpcode() == PPC::SELECT_QBRC) {
     // The incoming instruction knows the destination vreg to set, the
     // condition code register to branch on, the true/false values to
     // select between, and a branch opcode to use.
@@ -7747,7 +7752,10 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
         MI->getOpcode() == PPC::SELECT_I8 ||
         MI->getOpcode() == PPC::SELECT_F4 ||
         MI->getOpcode() == PPC::SELECT_F8 ||
-        MI->getOpcode() == PPC::SELECT_VRRC) {
+        MI->getOpcode() == PPC::SELECT_VRRC ||
+        MI->getOpcode() == PPC::SELECT_QFRC ||
+        MI->getOpcode() == PPC::SELECT_QSRC ||
+        MI->getOpcode() == PPC::SELECT_QBRC) {
       BuildMI(BB, dl, TII->get(PPC::BC))
         .addReg(MI->getOperand(1).getReg()).addMBB(sinkMBB);
     } else {

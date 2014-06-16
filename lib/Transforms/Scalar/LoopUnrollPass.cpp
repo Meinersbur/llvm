@@ -252,19 +252,9 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
       }
       if (TripCount) {
         // Reduce unroll count to be modulo of TripCount for partial unrolling
-        unsigned PrefCount = PartialThreshold / LoopSize;
-
-        Count = PrefCount;
-        while (Count != 0 && (TripCount%Count != 0 || !isPowerOf2_32(Count)))
+        Count = PartialThreshold / LoopSize;
+        while (Count != 0 && TripCount%Count != 0)
           Count--;
-
-        // Prefer a power of two unroll count, but if that makes the count too
-        // small, then try again without the power-of-two preference.
-        if (Count < PrefCount/2) {
-          Count = PrefCount;
-          while (Count != 0 && TripCount%Count != 0)
-            Count--;
-        }
       }
       else if (Runtime) {
         // Reduce unroll count to be a lower power-of-two value

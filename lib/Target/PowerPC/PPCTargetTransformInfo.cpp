@@ -28,6 +28,13 @@ using namespace llvm;
 static cl::opt<bool> DisablePPCConstHoist("disable-ppc-constant-hoisting",
 cl::desc("disable constant hoisting on PPC"), cl::init(false), cl::Hidden);
 
+static cl::opt<bool> DisablePPCPrefetch("disable-ppc-prefetching",
+cl::desc("disable software prefetching on PPC"), cl::init(false), cl::Hidden);
+
+static cl::opt<bool> DisablePPCPreIncPrep("disable-ppc-preinc-prep",
+cl::desc("disable pre-increment load/store loop transformation on PPC"),
+cl::init(false), cl::Hidden);
+
 // Declare the pass initialization routine locally as target-specific passes
 // don't have a target-wide initialization entry point, and so we rely on the
 // pass constructor initialization.
@@ -285,7 +292,7 @@ void PPCTTI::getUnrollingPreferences(Loop *L, UnrollingPreferences &UP) const {
 bool PPCTTI::useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const {
   PrefWrites = false;
   Dist = 300;
-  return ST->isBGQ();
+  return ST->isBGQ() && !DisablePPCPrefetch;
 }
 
 unsigned PPCTTI::getL1CacheLineSize() const {
@@ -294,7 +301,7 @@ unsigned PPCTTI::getL1CacheLineSize() const {
 
 bool PPCTTI::prepForPreIncAM(unsigned &MaxVars) const {
   MaxVars = 16;
-  return ST->getDarwinDirective() == PPC::DIR_A2;
+  return ST->getDarwinDirective() == PPC::DIR_A2 && !DisablePPCPreIncPrep;
 }
 
 unsigned PPCTTI::getNumberOfRegisters(bool Vector) const {

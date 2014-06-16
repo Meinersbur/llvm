@@ -19,6 +19,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "tti"
+
 // Loop data prefetching.
 static cl::opt<unsigned>
 L1CacheLineSize("l1-cache-line-size", cl::init(64), cl::Hidden,
