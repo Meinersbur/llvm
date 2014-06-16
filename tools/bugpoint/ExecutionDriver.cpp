@@ -149,7 +149,7 @@ bool BugDriver::initializeExecutionEnvironment() {
 
   // Create an instance of the AbstractInterpreter interface as specified on
   // the command line
-  SafeInterpreter = 0;
+  SafeInterpreter = nullptr;
   std::string Message;
 
   switch (InterpreterSel) {
@@ -297,7 +297,7 @@ bool BugDriver::initializeExecutionEnvironment() {
   if (!gcc) { outs() << Message << "\nExiting.\n"; exit(1); }
 
   // If there was an error creating the selected interpreter, quit with error.
-  return Interpreter == 0;
+  return Interpreter == nullptr;
 }
 
 /// compileProgram - Try to compile the specified module, returning false and
@@ -339,7 +339,7 @@ std::string BugDriver::executeProgram(const Module *Program,
                                       const std::string &SharedObj,
                                       AbstractInterpreter *AI,
                                       std::string *Error) const {
-  if (AI == 0) AI = Interpreter;
+  if (!AI) AI = Interpreter;
   assert(AI && "Interpreter should have been created already!");
   bool CreatedBitcode = false;
   if (BitcodeFile.empty()) {
@@ -486,7 +486,7 @@ bool BugDriver::diffProgram(const Module *Program,
                             std::string *ErrMsg) const {
   // Execute the program, generating an output file...
   std::string Output(
-      executeProgram(Program, "", BitcodeFile, SharedObject, 0, ErrMsg));
+      executeProgram(Program, "", BitcodeFile, SharedObject, nullptr, ErrMsg));
   if (!ErrMsg->empty())
     return false;
 

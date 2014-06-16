@@ -115,6 +115,17 @@ void *LLVMContext::getDiagnosticContext() const {
   return pImpl->DiagnosticContext;
 }
 
+void LLVMContext::setYieldCallback(YieldCallbackTy Callback, void *OpaqueHandle)
+{
+  pImpl->YieldCallback = Callback;
+  pImpl->YieldOpaqueHandle = OpaqueHandle;
+}
+
+void LLVMContext::yield() {
+  if (pImpl->YieldCallback)
+    pImpl->YieldCallback(this, pImpl->YieldOpaqueHandle);
+}
+
 void LLVMContext::emitError(const Twine &ErrorStr) {
   diagnose(DiagnosticInfoInlineAsm(ErrorStr));
 }
@@ -130,6 +141,28 @@ void LLVMContext::diagnose(const DiagnosticInfo &DI) {
     pImpl->DiagnosticHandler(DI, pImpl->DiagnosticContext);
     return;
   }
+
+  // Optimization remarks are selective. They need to check whether the regexp
+  // pattern, passed via one of the -pass-remarks* flags, matches the name of
+  // the pass that is emitting the diagnostic. If there is no match, ignore the
+  // diagnostic and return.
+  switch (DI.getKind()) {
+  case llvm::DK_OptimizationRemark:
+    if (!cast<DiagnosticInfoOptimizationRemark>(DI).isEnabled())
+      return;
+    break;
+  case llvm::DK_OptimizationRemarkMissed:
+    if (!cast<DiagnosticInfoOptimizationRemarkMissed>(DI).isEnabled())
+      return;
+    break;
+  case llvm::DK_OptimizationRemarkAnalysis:
+    if (!cast<DiagnosticInfoOptimizationRemarkAnalysis>(DI).isEnabled())
+      return;
+    break;
+  default:
+    break;
+  }
+
   // Otherwise, print the message with a prefix based on the severity.
   std::string MsgStorage;
   raw_string_ostream Stream(MsgStorage);
@@ -154,14 +187,6 @@ void LLVMContext::diagnose(const DiagnosticInfo &DI) {
 
 void LLVMContext::emitError(unsigned LocCookie, const Twine &ErrorStr) {
   diagnose(DiagnosticInfoInlineAsm(LocCookie, ErrorStr));
-}
-
-void LLVMContext::emitOptimizationRemark(const char *PassName,
-                                         const Function &Fn,
-                                         const DebugLoc &DLoc,
-                                         const Twine &Msg) {
-  if (pImpl->optimizationRemarksEnabledFor(PassName))
-    diagnose(DiagnosticInfoOptimizationRemark(PassName, Fn, DLoc, Msg));
 }
 
 //===----------------------------------------------------------------------===//

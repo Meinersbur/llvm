@@ -125,7 +125,7 @@ cross-compile-build-tools:
 	  fi; \
 	  $(PROJ_SRC_DIR)/configure --build=$(BUILD_TRIPLE) \
 		--host=$(BUILD_TRIPLE) --target=$(BUILD_TRIPLE) \
-	        --disable-polly $$configure_opts; \
+	        --disable-polly CC=$(CC) CXX=$(CXX) AR=$(AR) AS=$(AS) LD=$(LD) $$configure_opts; \
 	  cd .. ; \
 	fi; \
 	($(MAKE) -C BuildTools \

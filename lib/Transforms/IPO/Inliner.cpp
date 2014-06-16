@@ -13,7 +13,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "inline"
 #include "llvm/Transforms/IPO/InlinerPass.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
@@ -32,6 +31,8 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "inline"
 
 STATISTIC(NumInlined, "Number of functions inlined");
 STATISTIC(NumCallsDeleted, "Number of call sites deleted, not inlined");
@@ -184,7 +185,7 @@ static bool InlineCallIfPossible(CallSite CS, InlineFunctionInfo &IFI,
     // canonicalized to be an allocation *of* an array), or allocations whose
     // type is not itself an array (because we're afraid of pessimizing SRoA).
     ArrayType *ATy = dyn_cast<ArrayType>(AI->getAllocatedType());
-    if (ATy == 0 || AI->isArrayAllocation())
+    if (!ATy || AI->isArrayAllocation())
       continue;
     
     // Get the list of all available allocas for this array type.
@@ -240,7 +241,7 @@ static bool InlineCallIfPossible(CallSite CS, InlineFunctionInfo &IFI,
       AI->eraseFromParent();
       MergedAwayAlloca = true;
       ++NumMergedAllocas;
-      IFI.StaticAllocas[AllocaNo] = 0;
+      IFI.StaticAllocas[AllocaNo] = nullptr;
       break;
     }
 
@@ -289,10 +290,22 @@ unsigned Inliner::getInlineThreshold(CallSite CS) const {
   bool ColdCallee = Callee && !Callee->isDeclaration() &&
     Callee->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
                                          Attribute::Cold);
-  if (ColdCallee && ColdThreshold < thres)
+  // Command line argument for InlineLimit will override the default
+  // ColdThreshold. If we have -inline-threshold but no -inlinecold-threshold,
+  // do not use the default cold threshold even if it is smaller.
+  if ((InlineLimit.getNumOccurrences() == 0 ||
+       ColdThreshold.getNumOccurrences() > 0) && ColdCallee &&
+      ColdThreshold < thres)
     thres = ColdThreshold;
 
   return thres;
+}
+
+static void emitAnalysis(CallSite CS, const Twine &Msg) {
+  Function *Caller = CS.getCaller();
+  LLVMContext &Ctx = Caller->getContext();
+  DebugLoc DLoc = CS.getInstruction()->getDebugLoc();
+  emitOptimizationRemarkAnalysis(Ctx, DEBUG_TYPE, *Caller, DLoc, Msg);
 }
 
 /// shouldInline - Return true if the inliner should attempt to inline
@@ -303,12 +316,16 @@ bool Inliner::shouldInline(CallSite CS) {
   if (IC.isAlways()) {
     DEBUG(dbgs() << "    Inlining: cost=always"
           << ", Call: " << *CS.getInstruction() << "\n");
+    emitAnalysis(CS, Twine(CS.getCalledFunction()->getName()) +
+                         " should always be inlined (cost=always)");
     return true;
   }
   
   if (IC.isNever()) {
     DEBUG(dbgs() << "    NOT Inlining: cost=never"
           << ", Call: " << *CS.getInstruction() << "\n");
+    emitAnalysis(CS, Twine(CS.getCalledFunction()->getName() +
+                           " should never be inlined (cost=never)"));
     return false;
   }
   
@@ -317,6 +334,10 @@ bool Inliner::shouldInline(CallSite CS) {
     DEBUG(dbgs() << "    NOT Inlining: cost=" << IC.getCost()
           << ", thres=" << (IC.getCostDelta() + IC.getCost())
           << ", Call: " << *CS.getInstruction() << "\n");
+    emitAnalysis(CS, Twine(CS.getCalledFunction()->getName() +
+                           " too costly to inline (cost=") +
+                         Twine(IC.getCost()) + ", threshold=" +
+                         Twine(IC.getCostDelta() + IC.getCost()) + ")");
     return false;
   }
   
@@ -384,6 +405,11 @@ bool Inliner::shouldInline(CallSite CS) {
       DEBUG(dbgs() << "    NOT Inlining: " << *CS.getInstruction() <<
            " Cost = " << IC.getCost() <<
            ", outer Cost = " << TotalSecondaryCost << '\n');
+      emitAnalysis(
+          CS, Twine("Not inlining. Cost of inlining " +
+                    CS.getCalledFunction()->getName() +
+                    " increases the cost of inlining " +
+                    CS.getCaller()->getName() + " in other contexts"));
       return false;
     }
   }
@@ -391,6 +417,10 @@ bool Inliner::shouldInline(CallSite CS) {
   DEBUG(dbgs() << "    Inlining: cost=" << IC.getCost()
         << ", thres=" << (IC.getCostDelta() + IC.getCost())
         << ", Call: " << *CS.getInstruction() << '\n');
+  emitAnalysis(
+      CS, CS.getCalledFunction()->getName() + Twine(" can be inlined into ") +
+              CS.getCaller()->getName() + " with cost=" + Twine(IC.getCost()) +
+              " (threshold=" + Twine(IC.getCostDelta() + IC.getCost()) + ")");
   return true;
 }
 
@@ -411,7 +441,7 @@ static bool InlineHistoryIncludes(Function *F, int InlineHistoryID,
 bool Inliner::runOnSCC(CallGraphSCC &SCC) {
   CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  const DataLayout *DL = DLP ? &DLP->getDataLayout() : 0;
+  const DataLayout *DL = DLP ? &DLP->getDataLayout() : nullptr;
   const TargetLibraryInfo *TLI = getAnalysisIfAvailable<TargetLibraryInfo>();
 
   SmallPtrSet<Function*, 8> SCCFunctions;
@@ -500,7 +530,7 @@ bool Inliner::runOnSCC(CallGraphSCC &SCC) {
         ++NumCallsDeleted;
       } else {
         // We can only inline direct calls to non-declarations.
-        if (Callee == 0 || Callee->isDeclaration()) continue;
+        if (!Callee || Callee->isDeclaration()) continue;
       
         // If this call site was obtained by inlining another function, verify
         // that the include path for the function did not include the callee
@@ -512,21 +542,35 @@ bool Inliner::runOnSCC(CallGraphSCC &SCC) {
             InlineHistoryIncludes(Callee, InlineHistoryID, InlineHistory))
           continue;
         
-        
+        LLVMContext &CallerCtx = Caller->getContext();
+
+        // Get DebugLoc to report. CS will be invalid after Inliner.
+        DebugLoc DLoc = CS.getInstruction()->getDebugLoc();
+
         // If the policy determines that we should inline this function,
         // try to do so.
-        if (!shouldInline(CS))
+        if (!shouldInline(CS)) {
+          emitOptimizationRemarkMissed(CallerCtx, DEBUG_TYPE, *Caller, DLoc,
+                                       Twine(Callee->getName() +
+                                             " will not be inlined into " +
+                                             Caller->getName()));
           continue;
+        }
 
         // Attempt to inline the function.
         if (!InlineCallIfPossible(CS, InlineInfo, InlinedArrayAllocas,
-                                  InlineHistoryID, InsertLifetime, DL))
+                                  InlineHistoryID, InsertLifetime, DL)) {
+          emitOptimizationRemarkMissed(CallerCtx, DEBUG_TYPE, *Caller, DLoc,
+                                       Twine(Callee->getName() +
+                                             " will not be inlined into " +
+                                             Caller->getName()));
           continue;
+        }
         ++NumInlined;
 
         // Report the inline decision.
-        Caller->getContext().emitOptimizationRemark(
-            DEBUG_TYPE, *Caller, CS.getInstruction()->getDebugLoc(),
+        emitOptimizationRemark(
+            CallerCtx, DEBUG_TYPE, *Caller, DLoc,
             Twine(Callee->getName() + " inlined into " + Caller->getName()));
 
         // If inlining this function gave us any new call sites, throw them

@@ -12,7 +12,6 @@
 // counts of loops easily.
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "loop-unroll"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -28,6 +27,8 @@
 #include <climits>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "loop-unroll"
 
 static cl::opt<unsigned>
 UnrollThreshold("unroll-threshold", cl::init(150), cl::Hidden,
@@ -237,9 +238,12 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
       return false;
     }
     uint64_t Size = (uint64_t)LoopSize*Count;
-    if (TripCount != 1 && Size > Threshold) {
-      DEBUG(dbgs() << "  Too large to fully unroll with count: " << Count
-            << " because size: " << Size << ">" << Threshold << "\n");
+    if (TripCount != 1 &&
+        (Size > Threshold || (Count != TripCount && Size > PartialThreshold))) {
+      if (Size > Threshold)
+        DEBUG(dbgs() << "  Too large to fully unroll with count: " << Count
+                     << " because size: " << Size << ">" << Threshold << "\n");
+
       bool AllowPartial = UserAllowPartial ? CurrentAllowPartial : UP.Partial;
       if (!AllowPartial && !(Runtime && TripCount == 0)) {
         DEBUG(dbgs() << "  will not try to unroll partially because "
@@ -248,19 +252,9 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
       }
       if (TripCount) {
         // Reduce unroll count to be modulo of TripCount for partial unrolling
-        unsigned PrefCount = PartialThreshold / LoopSize;
-
-        Count = PrefCount;
-        while (Count != 0 && (TripCount%Count != 0 || !isPowerOf2_32(Count)))
+        Count = PartialThreshold / LoopSize;
+        while (Count != 0 && TripCount%Count != 0)
           Count--;
-
-        // Prefer a power of two unroll count, but if that makes the count too
-        // small, then try again without the power-of-two preference.
-        if (Count < PrefCount/2) {
-          Count = PrefCount;
-          while (Count != 0 && TripCount%Count != 0)
-            Count--;
-        }
       }
       else if (Runtime) {
         // Reduce unroll count to be a lower power-of-two value

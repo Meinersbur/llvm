@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "mccodeemitter"
 #include "MCTargetDesc/ARM64AddressingModes.h"
 #include "MCTargetDesc/ARM64FixupKinds.h"
 #include "MCTargetDesc/ARM64MCExpr.h"
@@ -25,6 +24,8 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "mccodeemitter"
 
 STATISTIC(MCNumEmitted, "Number of MC instructions emitted.");
 STATISTIC(MCNumFixups, "Number of MC fixups created.");
@@ -55,12 +56,11 @@ public:
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const;
 
-  /// getAMIndexed8OpValue - Return encoding info for base register
-  /// and 12-bit unsigned immediate attached to a load, store or prfm
-  /// instruction. If operand requires a relocation, record it and
-  /// return zero in that part of the encoding.
+  /// getLdStUImm12OpValue - Return encoding info for 12-bit unsigned immediate
+  /// attached to a load, store or prfm instruction. If operand requires a
+  /// relocation, record it and return zero in that part of the encoding.
   template <uint32_t FixupKind>
-  uint32_t getAMIndexed8OpValue(const MCInst &MI, unsigned OpIdx,
+  uint32_t getLdStUImm12OpValue(const MCInst &MI, unsigned OpIdx,
                                 SmallVectorImpl<MCFixup> &Fixups,
                                 const MCSubtargetInfo &STI) const;
 
@@ -81,6 +81,19 @@ public:
   uint32_t getCondBranchTargetOpValue(const MCInst &MI, unsigned OpIdx,
                                       SmallVectorImpl<MCFixup> &Fixups,
                                       const MCSubtargetInfo &STI) const;
+
+  /// getLoadLiteralOpValue - Return the encoded value for a load-literal
+  /// pc-relative address.
+  uint32_t getLoadLiteralOpValue(const MCInst &MI, unsigned OpIdx,
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const;
+
+  /// getMemExtendOpValue - Return the encoded value for a reg-extend load/store
+  /// instruction: bit 0 is whether a shift is present, bit 1 is whether the
+  /// operation is a sign extend (as opposed to a zero extend).
+  uint32_t getMemExtendOpValue(const MCInst &MI, unsigned OpIdx,
+                               SmallVectorImpl<MCFixup> &Fixups,
+                               const MCSubtargetInfo &STI) const;
 
   /// getTestBranchTargetOpValue - Return the encoded value for a test-bit-and-
   /// branch target.
@@ -175,7 +188,7 @@ public:
 
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                          SmallVectorImpl<MCFixup> &Fixups,
-                         const MCSubtargetInfo &STI) const;
+                         const MCSubtargetInfo &STI) const override;
 
   unsigned fixMulHigh(const MCInst &MI, unsigned EncodedValue,
                       const MCSubtargetInfo &STI) const;
@@ -214,15 +227,11 @@ ARM64MCCodeEmitter::getMachineOpValue(const MCInst &MI, const MCOperand &MO,
   return 0;
 }
 
-template <uint32_t FixupKind>
-uint32_t
-ARM64MCCodeEmitter::getAMIndexed8OpValue(const MCInst &MI, unsigned OpIdx,
+template<unsigned FixupKind> uint32_t
+ARM64MCCodeEmitter::getLdStUImm12OpValue(const MCInst &MI, unsigned OpIdx,
                                          SmallVectorImpl<MCFixup> &Fixups,
                                          const MCSubtargetInfo &STI) const {
-  unsigned BaseReg = MI.getOperand(OpIdx).getReg();
-  BaseReg = Ctx.getRegisterInfo()->getEncodingValue(BaseReg);
-
-  const MCOperand &MO = MI.getOperand(OpIdx + 1);
+  const MCOperand &MO = MI.getOperand(OpIdx);
   uint32_t ImmVal = 0;
 
   if (MO.isImm())
@@ -234,7 +243,7 @@ ARM64MCCodeEmitter::getAMIndexed8OpValue(const MCInst &MI, unsigned OpIdx,
     ++MCNumFixups;
   }
 
-  return BaseReg | (ImmVal << 5);
+  return ImmVal;
 }
 
 /// getAdrLabelOpValue - Return encoding info for 21-bit immediate ADR label
@@ -248,7 +257,7 @@ ARM64MCCodeEmitter::getAdrLabelOpValue(const MCInst &MI, unsigned OpIdx,
   // If the destination is an immediate, we have nothing to do.
   if (MO.isImm())
     return MO.getImm();
-  assert(MO.isExpr() && "Unexpected ADR target type!");
+  assert(MO.isExpr() && "Unexpected target type!");
   const MCExpr *Expr = MO.getExpr();
 
   MCFixupKind Kind = MI.getOpcode() == ARM64::ADR
@@ -281,7 +290,6 @@ ARM64MCCodeEmitter::getAddSubImmOpValue(const MCInst &MI, unsigned OpIdx,
     return MO.getImm() | (ShiftVal == 0 ? 0 : (1 << 12));
   assert(MO.isExpr() && "Unable to encode MCOperand!");
   const MCExpr *Expr = MO.getExpr();
-  assert(ShiftVal == 0 && "shift not allowed on add/sub immediate with fixup");
 
   // Encode the 12 bits of the fixup.
   MCFixupKind Kind = MCFixupKind(ARM64::fixup_arm64_add_imm12);
@@ -304,13 +312,44 @@ uint32_t ARM64MCCodeEmitter::getCondBranchTargetOpValue(
     return MO.getImm();
   assert(MO.isExpr() && "Unexpected target type!");
 
-  MCFixupKind Kind = MCFixupKind(ARM64::fixup_arm64_pcrel_imm19);
+  MCFixupKind Kind = MCFixupKind(ARM64::fixup_arm64_pcrel_branch19);
   Fixups.push_back(MCFixup::Create(0, MO.getExpr(), Kind, MI.getLoc()));
 
   ++MCNumFixups;
 
   // All of the information is in the fixup.
   return 0;
+}
+
+/// getLoadLiteralOpValue - Return the encoded value for a load-literal
+/// pc-relative address.
+uint32_t
+ARM64MCCodeEmitter::getLoadLiteralOpValue(const MCInst &MI, unsigned OpIdx,
+                                          SmallVectorImpl<MCFixup> &Fixups,
+                                          const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(OpIdx);
+
+  // If the destination is an immediate, we have nothing to do.
+  if (MO.isImm())
+    return MO.getImm();
+  assert(MO.isExpr() && "Unexpected target type!");
+
+  MCFixupKind Kind = MCFixupKind(ARM64::fixup_arm64_ldr_pcrel_imm19);
+  Fixups.push_back(MCFixup::Create(0, MO.getExpr(), Kind, MI.getLoc()));
+
+  ++MCNumFixups;
+
+  // All of the information is in the fixup.
+  return 0;
+}
+
+uint32_t
+ARM64MCCodeEmitter::getMemExtendOpValue(const MCInst &MI, unsigned OpIdx,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const {
+  unsigned SignExtend = MI.getOperand(OpIdx).getImm();
+  unsigned DoShift = MI.getOperand(OpIdx + 1).getImm();
+  return (SignExtend << 1) | DoShift;
 }
 
 uint32_t
@@ -549,6 +588,22 @@ unsigned ARM64MCCodeEmitter::fixMOVZ(const MCInst &MI, unsigned EncodedValue,
   // Nothing to do if there's no fixup.
   if (UImm16MO.isImm())
     return EncodedValue;
+
+  const ARM64MCExpr *A64E = cast<ARM64MCExpr>(UImm16MO.getExpr());
+  switch (A64E->getKind()) {
+  case ARM64MCExpr::VK_DTPREL_G2:
+  case ARM64MCExpr::VK_DTPREL_G1:
+  case ARM64MCExpr::VK_DTPREL_G0:
+  case ARM64MCExpr::VK_GOTTPREL_G1:
+  case ARM64MCExpr::VK_TPREL_G2:
+  case ARM64MCExpr::VK_TPREL_G1:
+  case ARM64MCExpr::VK_TPREL_G0:
+    return EncodedValue & ~(1u << 30);
+  default:
+    // Nothing to do for an unsigned fixup.
+    return EncodedValue;
+  }
+
 
   return EncodedValue & ~(1u << 30);
 }
