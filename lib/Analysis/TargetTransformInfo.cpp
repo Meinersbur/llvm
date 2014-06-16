@@ -14,11 +14,39 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
 
-#define DEBUG_TYPE "tti"
+// Loop data prefetching.
+static cl::opt<unsigned>
+L1CacheLineSize("l1-cache-line-size", cl::init(64), cl::Hidden,
+  cl::desc("The size of the an L1 cache line"));
+
+static cl::opt<bool>
+LoopDataPref("prefetch-loop-data", cl::init(false), cl::Hidden,
+  cl::desc("Prefetch loop data"));
+
+static cl::opt<unsigned>
+LoopDataPrefDist("loop-data-prefetch-distance", cl::init(300), cl::Hidden,
+  cl::desc("Loop data prefetch code-metric distance"));
+
+static cl::opt<bool>
+PrefetchWrites("loop-data-prefetch-writes", cl::init(false), cl::Hidden,
+  cl::desc("Prefetch writes in loops"));
+
+// Pre/Post-Inc prep.
+static cl::opt<bool>
+PreIncPrep("loop-prep-for-pre-inc", cl::init(false), cl::Hidden,
+  cl::desc("Prepare loop memory operations for pre-increment addressing"));
+static cl::opt<bool>
+PostIncPrep("loop-prep-for-post-inc", cl::init(false), cl::Hidden,
+  cl::desc("Prepare loop memory operations for post-increment addressing"));
+
+static cl::opt<unsigned>
+MaxPrepVars("loop-prep-max-vars", cl::init(16), cl::Hidden,
+  cl::desc("Don't prepare loops with more than this number of variables"));
 
 // Setup the analysis group to manage the TargetTransformInfo passes.
 INITIALIZE_ANALYSIS_GROUP(TargetTransformInfo, "Target Information", NoTTI)
@@ -157,6 +185,23 @@ unsigned TargetTransformInfo::getIntImmCost(unsigned Opc, unsigned Idx,
 unsigned TargetTransformInfo::getIntImmCost(Intrinsic::ID IID, unsigned Idx,
                                             const APInt &Imm, Type *Ty) const {
   return PrevTTI->getIntImmCost(IID, Idx, Imm, Ty);
+}
+
+bool TargetTransformInfo::useSoftwarePrefetching(bool &PrefWrites,
+                                                 unsigned &Dist) const {
+  return PrevTTI->useSoftwarePrefetching(PrefWrites, Dist);
+}
+
+unsigned TargetTransformInfo::getL1CacheLineSize() const {
+  return PrevTTI->getL1CacheLineSize();
+}
+
+bool TargetTransformInfo::prepForPreIncAM(unsigned &MaxVars) const {
+  return PrevTTI->prepForPreIncAM(MaxVars);
+}
+
+bool TargetTransformInfo::prepForPostIncAM(unsigned &MaxVars) const {
+  return PrevTTI->prepForPostIncAM(MaxVars);
 }
 
 unsigned TargetTransformInfo::getNumberOfRegisters(bool Vector) const {
@@ -548,6 +593,26 @@ struct NoTTI final : ImmutablePass, TargetTransformInfo {
   unsigned getIntImmCost(Intrinsic::ID IID, unsigned Idx, const APInt &Imm,
                          Type *Ty) const override {
     return TCC_Free;
+  }
+
+  bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const override {
+    PrefWrites = PrefetchWrites;
+    Dist = LoopDataPrefDist;
+    return LoopDataPref;
+  }
+
+  unsigned getL1CacheLineSize() const override {
+    return L1CacheLineSize;
+  }
+
+  bool prepForPreIncAM(unsigned &MaxVars) const override {
+    MaxVars = MaxPrepVars;
+    return PreIncPrep;
+  }
+
+  bool prepForPostIncAM(unsigned &MaxVars) const override {
+    MaxVars = MaxPrepVars;
+    return PostIncPrep;
   }
 
   unsigned getNumberOfRegisters(bool Vector) const override {

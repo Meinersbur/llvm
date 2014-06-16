@@ -54,6 +54,7 @@ using namespace llvm;
 #define DEBUG_TYPE "asan"
 
 static const uint64_t kDefaultShadowScale = 3;
+static const uint64_t kBGQ_DefaultShadowScale = 5;
 static const uint64_t kDefaultShadowOffset32 = 1ULL << 29;
 static const uint64_t kIOSShadowOffset32 = 1ULL << 30;
 static const uint64_t kDefaultShadowOffset64 = 1ULL << 44;
@@ -84,6 +85,12 @@ static const char *const kAsanCovName = "__sanitizer_cov";
 static const char *const kAsanPtrCmp = "__sanitizer_ptr_cmp";
 static const char *const kAsanPtrSub = "__sanitizer_ptr_sub";
 static const char *const kAsanHandleNoReturnName = "__asan_handle_no_return";
+static const char *const kAsanMappingOffsetName = "__asan_mapping_offset";
+static const char *const kAsanMappingOffset2Name = "__asan_mapping_offset2";
+static const char *const kAsanMappingOffset3Name = "__asan_mapping_offset3";
+static const char *const kAsanMappingScaleName = "__asan_mapping_scale";
+static const char *const kAsanMappingBeginName = "__asan_mapping_begin";
+static const char *const kAsanMappingBegin2Name = "__asan_mapping_begin2";
 static const int         kMaxAsanStackMallocSizeClass = 10;
 static const char *const kAsanStackMallocNameTemplate = "__asan_stack_malloc_";
 static const char *const kAsanStackFreeNameTemplate = "__asan_stack_free_";
@@ -246,6 +253,18 @@ struct ShadowMapping {
   int Scale;
   uint64_t Offset;
   bool OrShadowOffset;
+
+  GlobalValue *OffsetGV;
+  GlobalValue *Offset2GV;
+  GlobalValue *Offset3GV;
+  GlobalValue *BeginGV;
+  GlobalValue *Begin2GV;
+
+  Value *OffsetValue;
+  Value *Offset2Value;
+  Value *Offset3Value;
+  Value *BeginValue;
+  Value *Begin2Value;
 };
 
 static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
@@ -259,6 +278,7 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
   bool IsX86_64 = TargetTriple.getArch() == llvm::Triple::x86_64;
   bool IsMIPS32 = TargetTriple.getArch() == llvm::Triple::mips ||
                   TargetTriple.getArch() == llvm::Triple::mipsel;
+  bool isBGQ = TargetTriple.getVendor() == Triple::BGQ;
 
   ShadowMapping Mapping;
 
@@ -275,7 +295,7 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
       Mapping.Offset = kDefaultShadowOffset32;
   } else {  // LongSize == 64
     if (IsPPC64)
-      Mapping.Offset = kPPC64_ShadowOffset64;
+      Mapping.Offset = (isBGQ ? ((uint64_t) -1) : kPPC64_ShadowOffset64);
     else if (IsFreeBSD)
       Mapping.Offset = kFreeBSD_ShadowOffset64;
     else if (IsLinux && IsX86_64)
@@ -284,7 +304,8 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
       Mapping.Offset = kDefaultShadowOffset64;
   }
 
-  Mapping.Scale = kDefaultShadowScale;
+  // On the BGQ, we have 32-byte alignment for stack and heap allocations.
+  Mapping.Scale = isBGQ ? kBGQ_DefaultShadowScale : kDefaultShadowScale;
   if (ClMappingScale) {
     Mapping.Scale = ClMappingScale;
   }
@@ -294,12 +315,26 @@ static ShadowMapping getShadowMapping(const Module &M, int LongSize) {
   // offset is not necessary 1/8-th of the address space.
   Mapping.OrShadowOffset = !IsPPC64 && !(Mapping.Offset & (Mapping.Offset - 1));
 
+  Mapping.OffsetGV = 0;
+  Mapping.Offset2GV = 0;
+  Mapping.Offset3GV = 0;
+  Mapping.BeginGV = 0;
+  Mapping.Begin2GV = 0;
+  Mapping.OffsetValue = 0;
+  Mapping.Offset2Value = 0;
+  Mapping.Offset3Value = 0;
+  Mapping.BeginValue = 0;
+  Mapping.Begin2Value = 0;
+
   return Mapping;
 }
 
 static size_t RedzoneSizeForScale(int MappingScale) {
   // Redzone used for stack and globals is at least 32 bytes.
   // For scales 6 and 7, the redzone has to be 64 and 128 bytes respectively.
+  // FIXME: Restore this version once we have large alignment in stack/alloca
+  // working.
+  //return std::max(32U, 4*(1U << MappingScale));
   return std::max(32U, 1U << MappingScale);
 }
 
@@ -333,6 +368,7 @@ struct AddressSanitizer : public FunctionPass {
   bool runOnFunction(Function &F) override;
   bool maybeInsertAsanInitAtFunctionEntry(Function &F);
   bool doInitialization(Module &M) override;
+  void emitShadowMapping(Module &M, IRBuilder<> &IRB);
   static char ID;  // Pass identification, replacement for typeid
 
  private:
@@ -592,15 +628,33 @@ static bool GlobalWasGeneratedByAsan(GlobalVariable *G) {
 }
 
 Value *AddressSanitizer::memToShadow(Value *Shadow, IRBuilder<> &IRB) {
+  // (Shadow >> scale) | offset
+  Value *OV, *AV;
+  if (Mapping.Offset == (uint64_t) -1) {
+    Value *Cmp = IRB.CreateICmpULT(Shadow /* AddrLong */, Mapping.BeginValue);
+    Value *Cmp2 = IRB.CreateICmpULT(Shadow /* AddrLong */, Mapping.Begin2Value);
+    Value *Sub = IRB.CreateSub(Shadow, Mapping.BeginValue);
+    Value *Sub2 = IRB.CreateSub(Shadow, Mapping.Begin2Value);
+
+    OV = IRB.CreateSelect(Cmp2,
+           IRB.CreateSelect(Cmp, Mapping.OffsetValue, Mapping.Offset2Value),
+           Mapping.Offset3Value);
+    AV = IRB.CreateSelect(Cmp2,
+           IRB.CreateSelect(Cmp, Shadow, Sub), Sub2);
+  } else {
+    OV = ConstantInt::get(IntptrTy, Mapping.Offset);
+    AV = Shadow;
+  }
+
   // Shadow >> scale
-  Shadow = IRB.CreateLShr(Shadow, Mapping.Scale);
+  Shadow = IRB.CreateLShr(AV, Mapping.Scale);
   if (Mapping.Offset == 0)
     return Shadow;
-  // (Shadow >> scale) | offset
+
   if (Mapping.OrShadowOffset)
-    return IRB.CreateOr(Shadow, ConstantInt::get(IntptrTy, Mapping.Offset));
+    return IRB.CreateOr(Shadow, OV);
   else
-    return IRB.CreateAdd(Shadow, ConstantInt::get(IntptrTy, Mapping.Offset));
+    return IRB.CreateAdd(Shadow, OV);
 }
 
 // Instrument memset/memmove/memcpy
@@ -1198,6 +1252,65 @@ void AddressSanitizer::initializeCallbacks(Module &M) {
                             /*hasSideEffects=*/true);
 }
 
+void AddressSanitizer::emitShadowMapping(Module &M, IRBuilder<> &IRB) {
+  // Tell the values of mapping offset and scale to the run-time.
+  GlobalValue *asan_mapping_offset =
+      new GlobalVariable(M, IntptrTy, (Mapping.Offset != (uint64_t) -1),
+                     GlobalValue::LinkOnceODRLinkage,
+                     ConstantInt::get(IntptrTy, Mapping.Offset),
+                     kAsanMappingOffsetName);
+  Mapping.OffsetGV = asan_mapping_offset;
+  // Read the global, otherwise it may be optimized away.
+  IRB.CreateLoad(asan_mapping_offset, true);
+
+  if (Mapping.Offset == (uint64_t) -1) {
+    GlobalValue *asan_mapping_offset2 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingOffset2Name);
+    Mapping.Offset2GV = asan_mapping_offset2;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_offset2, true);
+
+    GlobalValue *asan_mapping_offset3 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingOffset3Name);
+    Mapping.Offset3GV = asan_mapping_offset3;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_offset3, true);
+  }
+
+  GlobalValue *asan_mapping_scale =
+      new GlobalVariable(M, IntptrTy, true, GlobalValue::LinkOnceODRLinkage,
+                         ConstantInt::get(IntptrTy, Mapping.Scale),
+                         kAsanMappingScaleName);
+  // Read the global, otherwise it may be optimized away.
+  IRB.CreateLoad(asan_mapping_scale, true);
+
+  if (Mapping.Offset == (uint64_t) -1) {
+    GlobalValue *asan_mapping_begin =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingBeginName);
+    Mapping.BeginGV = asan_mapping_begin;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_begin, true);
+
+    GlobalValue *asan_mapping_begin2 =
+        new GlobalVariable(M, IntptrTy, false,
+                       GlobalValue::LinkOnceODRLinkage,
+                       ConstantInt::get(IntptrTy, 0),
+                       kAsanMappingBegin2Name);
+    Mapping.Begin2GV = asan_mapping_begin2;
+    // Read the global, otherwise it may be optimized away.
+    IRB.CreateLoad(asan_mapping_begin2, true);
+  }
+}
+
 // virtual
 bool AddressSanitizer::doInitialization(Module &M) {
   // Initialize the private fields. No one has accessed them before.
@@ -1225,12 +1338,22 @@ bool AddressSanitizer::doInitialization(Module &M) {
   IRB.CreateCall(AsanInitFunction);
 
   Mapping = getShadowMapping(M, LongSize);
+  emitShadowMapping(M, IRB);
 
   appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndCtorPriority);
   return true;
 }
 
 bool AddressSanitizer::maybeInsertAsanInitAtFunctionEntry(Function &F) {
+  if (Mapping.Offset == (uint64_t) -1) {
+    IRBuilder<> IRB(F.begin()->begin());
+    Mapping.OffsetValue = IRB.CreateLoad(Mapping.OffsetGV);
+    Mapping.Offset2Value = IRB.CreateLoad(Mapping.Offset2GV);
+    Mapping.Offset3Value = IRB.CreateLoad(Mapping.Offset3GV);
+    Mapping.BeginValue = IRB.CreateLoad(Mapping.BeginGV);
+    Mapping.Begin2Value = IRB.CreateLoad(Mapping.Begin2GV);
+  }
+
   // For each NSObject descendant having a +load method, this method is invoked
   // by the ObjC runtime before any of the static constructors is called.
   // Therefore we need to instrument such methods with a call to __asan_init
@@ -1678,7 +1801,7 @@ void FunctionStackPoisoner::poisonStack() {
       SplitBlockAndInsertIfThenElse(Cmp, Ret, &ThenTerm, &ElseTerm);
 
       IRBuilder<> IRBPoison(ThenTerm);
-      if (StackMallocIdx <= 4) {
+      if (StackMallocIdx <= 4 && Mapping.Offset != (uint64_t) -1) {
         int ClassSize = kMinStackMallocSize << StackMallocIdx;
         SetShadowToStackAfterReturnInlined(IRBPoison, ShadowBase,
                                            ClassSize >> Mapping.Scale);

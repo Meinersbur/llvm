@@ -84,6 +84,10 @@ public:
   virtual void getUnrollingPreferences(
     Loop *L, UnrollingPreferences &UP) const override;
 
+  virtual bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const;
+  virtual unsigned getL1CacheLineSize() const;
+
+  virtual bool prepForPreIncAM(unsigned &MaxVars) const;
   /// @}
 
   /// \name Vector TTI Implementations
@@ -106,7 +110,6 @@ public:
   virtual unsigned getMemoryOpCost(unsigned Opcode, Type *Src,
                                    unsigned Alignment,
                                    unsigned AddressSpace) const override;
-
   /// @}
 };
 
@@ -279,14 +282,30 @@ void PPCTTI::getUnrollingPreferences(Loop *L, UnrollingPreferences &UP) const {
   }
 }
 
+bool PPCTTI::useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const {
+  PrefWrites = false;
+  Dist = 300;
+  return ST->isBGQ();
+}
+
+unsigned PPCTTI::getL1CacheLineSize() const {
+  return 64;
+}
+
+bool PPCTTI::prepForPreIncAM(unsigned &MaxVars) const {
+  MaxVars = 16;
+  return ST->getDarwinDirective() == PPC::DIR_A2;
+}
+
 unsigned PPCTTI::getNumberOfRegisters(bool Vector) const {
-  if (Vector && !ST->hasAltivec())
+  if (Vector && !ST->hasAltivec() && !ST->hasQPX())
     return 0;
   return ST->hasVSX() ? 64 : 32;
 }
 
 unsigned PPCTTI::getRegisterBitWidth(bool Vector) const {
   if (Vector) {
+    if (ST->hasQPX()) return 256;
     if (ST->hasAltivec()) return 128;
     return 0;
   }
@@ -347,6 +366,15 @@ unsigned PPCTTI::getCmpSelInstrCost(unsigned Opcode, Type *ValTy,
 unsigned PPCTTI::getVectorInstrCost(unsigned Opcode, Type *Val,
                                     unsigned Index) const {
   assert(Val->isVectorTy() && "This must be a vector type");
+
+  // Floating point scalars are already located in index #0.
+  if (ST->getDarwinDirective() == PPC::DIR_A2) {
+    if (ST->hasQPX() &&
+        Val->getScalarType()->isFloatingPointTy() && Index == 0)
+      return 0;
+
+    return TargetTransformInfo::getVectorInstrCost(Opcode, Val, Index);
+  }
 
   int ISD = TLI->InstructionOpcodeToISD(Opcode);
   assert(ISD && "Invalid opcode");

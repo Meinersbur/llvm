@@ -35,6 +35,21 @@ static inline bool isTriviallyVectorizable(Intrinsic::ID ID) {
   case Intrinsic::log:
   case Intrinsic::log10:
   case Intrinsic::log2:
+  case Intrinsic::tan:
+  case Intrinsic::asin:
+  case Intrinsic::acos:
+  case Intrinsic::atan:
+  case Intrinsic::atan2:
+  case Intrinsic::cbrt:
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+  case Intrinsic::asinh:
+  case Intrinsic::acosh:
+  case Intrinsic::atanh:
+  case Intrinsic::exp10:
+  case Intrinsic::expm1:
+  case Intrinsic::log1p:
   case Intrinsic::fabs:
   case Intrinsic::copysign:
   case Intrinsic::floor:

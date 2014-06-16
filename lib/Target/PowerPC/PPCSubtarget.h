@@ -96,6 +96,11 @@ protected:
   bool IsJITCodeModel;
   bool IsLittleEndian;
 
+  /// When targeting QPX running a stock PPC64 Linux kernel where the stack
+  /// alignment has not been changed, we need to keep the 16-byte alignment
+  /// of the stack.
+  bool IsQPXStackUnaligned;
+
   /// TargetTriple - What processor and OS we're targeting.
   Triple TargetTriple;
 
@@ -189,6 +194,14 @@ public:
   bool isBookE() const { return IsBookE; }
   bool isDeprecatedMFTB() const { return DeprecatedMFTB; }
   bool isDeprecatedDST() const { return DeprecatedDST; }
+
+  bool isQPXStackUnaligned() const { return IsQPXStackUnaligned; }
+  unsigned getPlatformStackAlignment() const {
+    if ((hasQPX() || isBGQ()) && !isQPXStackUnaligned())
+      return 32;
+
+    return 16;
+  }
 
   const Triple &getTargetTriple() const { return TargetTriple; }
 

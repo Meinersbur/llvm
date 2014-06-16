@@ -19,6 +19,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
@@ -31,6 +32,10 @@ using namespace llvm;
 #define GET_SUBTARGETINFO_TARGET_DESC
 #define GET_SUBTARGETINFO_CTOR
 #include "PPCGenSubtargetInfo.inc"
+
+static cl::opt<bool> QPXStackUnaligned("qpx-stack-unaligned",
+  cl::desc("Even when QPX is enabled the stack is not 32-byte aligned"),
+  cl::Hidden);
 
 PPCSubtarget::PPCSubtarget(const std::string &TT, const std::string &CPU,
                            const std::string &FS, bool is64Bit,
@@ -98,6 +103,7 @@ void PPCSubtarget::initializeEnvironment() {
   DeprecatedDST = false;
   HasLazyResolverStubs = false;
   IsJITCodeModel = false;
+  IsQPXStackUnaligned = false;
 }
 
 void PPCSubtarget::resetSubtargetFeatures(StringRef CPU, StringRef FS) {
@@ -151,8 +157,8 @@ void PPCSubtarget::resetSubtargetFeatures(StringRef CPU, StringRef FS) {
   // QPX requires a 32-byte aligned stack. Note that we need to do this if
   // we're compiling for a BG/Q system regardless of whether or not QPX
   // is enabled because external functions will assume this alignment.
-  if (hasQPX() || isBGQ())
-    StackAlignment = 32;
+  IsQPXStackUnaligned = QPXStackUnaligned;
+  StackAlignment = getPlatformStackAlignment();
 
   // Determine endianness.
   IsLittleEndian = (TargetTriple.getArch() == Triple::ppc64le);

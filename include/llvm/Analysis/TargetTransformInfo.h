@@ -313,6 +313,28 @@ public:
                                  Type *Ty) const;
   virtual unsigned getIntImmCost(Intrinsic::ID IID, unsigned Idx,
                                  const APInt &Imm, Type *Ty) const;
+
+  /// Return true if software prefetching should be used. If true is
+  /// returned, the first parameter is set to indicate whether or not writes
+  /// should also be prefetched and the second parameter is set to the
+  /// prefetching distance.
+  virtual bool useSoftwarePrefetching(bool &PrefWrites, unsigned &Dist) const;
+
+  /// Return the L1 cache-line size.
+  virtual unsigned getL1CacheLineSize() const;
+
+  /// Return true if loops should be prepared for pre-increment load
+  /// and store generation. If true is returned, the parameter is set to
+  /// specify the maximum number of loop values to prepare (loops with more
+  /// than this number of relevant variables are not prepared).
+  virtual bool prepForPreIncAM(unsigned &MaxVars) const;
+
+  /// Return true if loops should be prepared for post-increment load
+  /// and store generation. If true is returned, the parameter is set to
+  /// specify the maximum number of loop values to prepare (loops with more
+  /// than this number of relevant variables are not prepared).
+  virtual bool prepForPostIncAM(unsigned &MaxVars) const;
+
   /// @}
 
   /// \name Vector Target Information

@@ -159,6 +159,18 @@ Pass *createLoopRotatePass();
 
 //===----------------------------------------------------------------------===//
 //
+// LoopDataPrefetch - This pass is a simple loop data prefetch pass.
+//
+Pass *createLoopDataPrefetchPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LoopIncAMPrep - Prepare loop memory operations for pre/post-inc modes.
+//
+Pass *createLoopIncAMPrepPass();
+
+//===----------------------------------------------------------------------===//
+//
 // LoopIdiom - This pass recognizes and replaces idioms in loops.
 //
 Pass *createLoopIdiomPass();

@@ -828,6 +828,9 @@ SDNode *PPCDAGToDAGISel::SelectSETCC(SDNode *N) {
   // Altivec Vector compare instructions do not set any CR register by default and
   // vector compare operations return the same type as the operands.
   if (LHS.getValueType().isVector()) {
+    if (PPCSubTarget.hasQPX())
+      return 0;
+
     EVT VecVT = LHS.getValueType();
     MVT::SimpleValueType VT = VecVT.getSimpleVT().SimpleTy;
     unsigned int VCmpInst = getVCmpInst(VT, CC, PPCSubTarget->hasVSX());
@@ -1113,6 +1116,8 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
         assert((!isSExt || LoadedVT == MVT::i16) && "Invalid sext update load");
         switch (LoadedVT.getSimpleVT().SimpleTy) {
           default: llvm_unreachable("Invalid PPC load type!");
+          case MVT::v4f64: Opcode = PPC::QVLFDUX; break; // QPX
+          case MVT::v4f32: Opcode = PPC::QVLFSUX; break; // QPX
           case MVT::f64: Opcode = PPC::LFDUX; break;
           case MVT::f32: Opcode = PPC::LFSUX; break;
           case MVT::i32: Opcode = PPC::LWZUX; break;

@@ -2297,6 +2297,66 @@ LoopVectorizationLegality::getReductionIdentity(ReductionKind K, Type *Tp) {
   }
 }
 
+  case LibFunc::tan:
+  case LibFunc::tanf:
+  case LibFunc::tanl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::tan);
+  case LibFunc::asin:
+  case LibFunc::asinf:
+  case LibFunc::asinl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::asin);
+  case LibFunc::acos:
+  case LibFunc::acosf:
+  case LibFunc::acosl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::acos);
+  case LibFunc::atan:
+  case LibFunc::atanf:
+  case LibFunc::atanl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::atan);
+  case LibFunc::atan2:
+  case LibFunc::atan2f:
+  case LibFunc::atan2l:
+    return checkBinaryFloatSignature(*CI, Intrinsic::atan2);
+  case LibFunc::cbrt:
+  case LibFunc::cbrtf:
+  case LibFunc::cbrtl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::cbrt);
+  case LibFunc::sinh:
+  case LibFunc::sinhf:
+  case LibFunc::sinhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::sinh);
+  case LibFunc::cosh:
+  case LibFunc::coshf:
+  case LibFunc::coshl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::cosh);
+  case LibFunc::tanh:
+  case LibFunc::tanhf:
+  case LibFunc::tanhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::tanh);
+  case LibFunc::asinh:
+  case LibFunc::asinhf:
+  case LibFunc::asinhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::asinh);
+  case LibFunc::acosh:
+  case LibFunc::acoshf:
+  case LibFunc::acoshl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::acosh);
+  case LibFunc::atanh:
+  case LibFunc::atanhf:
+  case LibFunc::atanhl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::atanh);
+  case LibFunc::exp10:
+  case LibFunc::exp10f:
+  case LibFunc::exp10l:
+    return checkUnaryFloatSignature(*CI, Intrinsic::exp10);
+  case LibFunc::expm1:
+  case LibFunc::expm1f:
+  case LibFunc::expm1l:
+    return checkUnaryFloatSignature(*CI, Intrinsic::expm1);
+  case LibFunc::log1p:
+  case LibFunc::log1pf:
+  case LibFunc::log1pl:
+    return checkUnaryFloatSignature(*CI, Intrinsic::log1p);
 /// This function translates the reduction kind to an LLVM binary operator.
 static unsigned
 getReductionBinOp(LoopVectorizationLegality::ReductionKind Kind) {
@@ -5119,6 +5179,9 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   R.MaxLocalUsers = std::max(R.MaxLocalUsers, 1U);
   R.NumInstructions = std::max(R.NumInstructions, 1U);
 
+// Don't restrict unrolling to powers of 2.
+#define PowerOf2Floor(x) (x)
+
   // We calculate the unroll factor using the following formula.
   // Subtract the number of loop invariants from the number of available
   // registers. These registers are used by all of the unrolled instances.
@@ -5194,6 +5257,8 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
     DEBUG(dbgs() << "LV: Unrolling to reduce branch cost.\n");
     return SmallUF;
   }
+
+#undef PowerOf2Floor
 
   DEBUG(dbgs() << "LV: Not Unrolling.\n");
   return 1;

@@ -3469,6 +3469,81 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
                                       RTLIB::POW_F80, RTLIB::POW_F128,
                                       RTLIB::POW_PPCF128));
     break;
+  case ISD::FTAN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::TAN_F32, RTLIB::TAN_F64,
+                                      RTLIB::TAN_F80, RTLIB::TAN_F128,
+                                      RTLIB::TAN_PPCF128));
+    break;
+  case ISD::FASIN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ASIN_F32, RTLIB::ASIN_F64,
+                                      RTLIB::ASIN_F80, RTLIB::ASIN_F128,
+                                      RTLIB::ASIN_PPCF128));
+    break;
+  case ISD::FACOS:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ACOS_F32, RTLIB::ACOS_F64,
+                                      RTLIB::ACOS_F80, RTLIB::ACOS_F128,
+                                      RTLIB::ACOS_PPCF128));
+    break;
+  case ISD::FATAN:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATAN_F32, RTLIB::ATAN_F64,
+                                      RTLIB::ATAN_F80, RTLIB::ATAN_F128,
+                                      RTLIB::ATAN_PPCF128));
+    break;
+  case ISD::FATAN2:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATAN2_F32, RTLIB::ATAN2_F64,
+                                      RTLIB::ATAN2_F80, RTLIB::ATAN2_F128,
+                                      RTLIB::ATAN2_PPCF128));
+    break;
+  case ISD::FCBRT:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::CBRT_F32, RTLIB::CBRT_F64,
+                                      RTLIB::CBRT_F80, RTLIB::CBRT_F128,
+                                      RTLIB::CBRT_PPCF128));
+    break;
+  case ISD::FSINH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::SINH_F32, RTLIB::SINH_F64,
+                                      RTLIB::SINH_F80, RTLIB::SINH_F128,
+                                      RTLIB::SINH_PPCF128));
+    break;
+  case ISD::FCOSH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::COSH_F32, RTLIB::COSH_F64,
+                                      RTLIB::COSH_F80, RTLIB::COSH_F128,
+                                      RTLIB::COSH_PPCF128));
+    break;
+  case ISD::FTANH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::TANH_F32, RTLIB::TANH_F64,
+                                      RTLIB::TANH_F80, RTLIB::TANH_F128,
+                                      RTLIB::TANH_PPCF128));
+    break;
+  case ISD::FASINH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ASINH_F32, RTLIB::ASINH_F64,
+                                      RTLIB::ASINH_F80, RTLIB::ASINH_F128,
+                                      RTLIB::ASINH_PPCF128));
+    break;
+  case ISD::FACOSH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ACOSH_F32, RTLIB::ACOSH_F64,
+                                      RTLIB::ACOSH_F80, RTLIB::ACOSH_F128,
+                                      RTLIB::ACOSH_PPCF128));
+    break;
+  case ISD::FATANH:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::ATANH_F32, RTLIB::ATANH_F64,
+                                      RTLIB::ATANH_F80, RTLIB::ATANH_F128,
+                                      RTLIB::ATANH_PPCF128));
+    break;
+  case ISD::FEXP10:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::EXP10_F32, RTLIB::EXP10_F64,
+                                      RTLIB::EXP10_F80, RTLIB::EXP10_F128,
+                                      RTLIB::EXP10_PPCF128));
+    break;
+  case ISD::FEXPM1:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::EXPM1_F32, RTLIB::EXPM1_F64,
+                                      RTLIB::EXPM1_F80, RTLIB::EXPM1_F128,
+                                      RTLIB::EXPM1_PPCF128));
+    break;
+  case ISD::FLOG1P:
+    Results.push_back(ExpandFPLibCall(Node, RTLIB::LOG1P_F32, RTLIB::LOG1P_F64,
+                                      RTLIB::LOG1P_F80, RTLIB::LOG1P_F128,
+                                      RTLIB::LOG1P_PPCF128));
+    break;
   case ISD::FDIV:
     Results.push_back(ExpandFPLibCall(Node, RTLIB::DIV_F32, RTLIB::DIV_F64,
                                       RTLIB::DIV_F80, RTLIB::DIV_F128,
@@ -4189,6 +4264,7 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
   }
   case ISD::FDIV:
   case ISD::FREM:
+  case ISD::FATAN2:
   case ISD::FPOW: {
     Tmp1 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(0));
     Tmp2 = DAG.getNode(ISD::FP_EXTEND, dl, NVT, Node->getOperand(1));
@@ -4197,6 +4273,20 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
                                   Tmp3, DAG.getIntPtrConstant(0)));
     break;
   }
+  case ISD::FTAN:
+  case ISD::FASIN:
+  case ISD::FACOS:
+  case ISD::FATAN:
+  case ISD::FCBRT:
+  case ISD::FSINH:
+  case ISD::FCOSH:
+  case ISD::FTANH:
+  case ISD::FASINH:
+  case ISD::FACOSH:
+  case ISD::FATANH:
+  case ISD::FEXP10:
+  case ISD::FEXPM1:
+  case ISD::FLOG1P:
   case ISD::FLOG2:
   case ISD::FEXP2:
   case ISD::FLOG:

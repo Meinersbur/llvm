@@ -389,12 +389,18 @@ void TargetPassConfig::addIRPasses() {
     addPass(createDebugInfoVerifierPass());
   }
 
+  if (getOptLevel() != CodeGenOpt::None)
+    addPass(createLoopDataPrefetchPass());
+
   // Run loop strength reduction before anything else.
   if (getOptLevel() != CodeGenOpt::None && !DisableLSR) {
     addPass(createLoopStrengthReducePass());
     if (PrintLSR)
       addPass(createPrintFunctionPass(dbgs(), "\n\n*** Code after LSR ***\n"));
   }
+
+  if (getOptLevel() != CodeGenOpt::None)
+    addPass(createLoopIncAMPrepPass());
 
   addPass(createGCLoweringPass());
 

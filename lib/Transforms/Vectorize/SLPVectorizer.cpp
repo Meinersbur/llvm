@@ -2186,7 +2186,7 @@ bool SLPVectorizer::tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R,
     else
       OpsWidth = VF;
 
-    if (!isPowerOf2_32(OpsWidth) || OpsWidth < 2)
+    if (/*!isPowerOf2_32(OpsWidth) ||*/ OpsWidth < 2)
       break;
 
     // Check that a previous iteration of this loop did not delete the Value.
