@@ -457,7 +457,7 @@ namespace {
 static bool isLegalMaskCompare(SDNode *N, const X86Subtarget *Subtarget) {
   unsigned Opcode = N->getOpcode();
   if (Opcode == X86ISD::CMPM || Opcode == X86ISD::CMPMU ||
-      Opcode == X86ISD::CMPM_RND) {
+      Opcode == X86ISD::CMPM_RND || Opcode == X86ISD::VFPCLASS) {
     // We can get 256-bit 8 element types here without VLX being enabled. When
     // this happens we will use 512-bit operations and the mask will not be
     // zero extended.
@@ -467,6 +467,10 @@ static bool isLegalMaskCompare(SDNode *N, const X86Subtarget *Subtarget) {
 
     return true;
   }
+  // Scalar opcodes use 128 bit registers, but aren't subject to the VLX check.
+  if (Opcode == X86ISD::VFPCLASSS || Opcode == X86ISD::FSETCCM ||
+      Opcode == X86ISD::FSETCCM_RND)
+    return true;
 
   return false;
 }
@@ -2109,55 +2113,47 @@ static bool isFusableLoadOpStorePattern(StoreSDNode *StoreNode,
   // the load output chain as an operand. Return InputChain by reference.
   SDValue Chain = StoreNode->getChain();
 
+  bool ChainCheck = false;
   if (Chain == Load.getValue(1)) {
+    ChainCheck = true;
     InputChain = LoadNode->getChain();
-    return true;
-  }
-
-  if (Chain.getOpcode() == ISD::TokenFactor) {
-    // Fusing Load-Op-Store requires predecessors of store must also
-    // be predecessors of the load. This addition may cause a loop. We
-    // can check this by doing a search for Load in the new
-    // dependencies. As this can be expensive, heuristically prune
-    // this search by visiting the uses and make sure they all have
-    // smaller node id than the load.
-
-  bool FoundLoad = false;
-  SmallVector<SDValue, 4> ChainOps;
-  SmallVector<const SDNode *, 4> LoopWorklist;
-  SmallPtrSet<const SDNode *, 16> Visited;
+  } else if (Chain.getOpcode() == ISD::TokenFactor) {
+    SmallVector<SDValue, 4> ChainOps;
     for (unsigned i = 0, e = Chain.getNumOperands(); i != e; ++i) {
       SDValue Op = Chain.getOperand(i);
       if (Op == Load.getValue(1)) {
-        FoundLoad = true;
+        ChainCheck = true;
         // Drop Load, but keep its chain. No cycle check necessary.
         ChainOps.push_back(Load.getOperand(0));
         continue;
       }
-      LoopWorklist.push_back(Op.getNode());
+
+      // Make sure using Op as part of the chain would not cause a cycle here.
+      // In theory, we could check whether the chain node is a predecessor of
+      // the load. But that can be very expensive. Instead visit the uses and
+      // make sure they all have smaller node id than the load.
+      int LoadId = LoadNode->getNodeId();
+      for (SDNode::use_iterator UI = Op.getNode()->use_begin(),
+             UE = UI->use_end(); UI != UE; ++UI) {
+        if (UI.getUse().getResNo() != 0)
+          continue;
+        if (UI->getNodeId() > LoadId)
+          return false;
+      }
+
       ChainOps.push_back(Op);
     }
 
-    if (!FoundLoad)
-      return false;
-
-    // If Loop Worklist is not empty. Check if we would make a loop.
-    if (!LoopWorklist.empty()) {
-      const unsigned int Max = 8192;
-      // if Load is predecessor to potentially loop inducing chain
-      // dependencies.
-      if (SDNode::hasPredecessorHelper(Load.getNode(), Visited, LoopWorklist,
-                                       Max, true))
-        return false;
-    }
-
-    // Make a new TokenFactor with all the other input chains except
-    // for the load.
-    InputChain =
-        CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain), MVT::Other, ChainOps);
-    return true;
+    if (ChainCheck)
+      // Make a new TokenFactor with all the other input chains except
+      // for the load.
+      InputChain = CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain),
+                                   MVT::Other, ChainOps);
   }
-  return false;
+  if (!ChainCheck)
+    return false;
+
+  return true;
 }
 
 // Change a chain of {load; op; store} of the same value into a simple op
@@ -2387,8 +2383,6 @@ bool X86DAGToDAGISel::foldLoadStoreIntoMemOperand(SDNode *Node) {
   MemOp[1] = LoadNode->getMemOperand();
   Result->setMemRefs(MemOp, MemOp + 2);
 
-  // Update Load Chain uses as well.
-  ReplaceUses(SDValue(LoadNode, 1), SDValue(Result, 1));
   ReplaceUses(SDValue(StoreNode, 0), SDValue(Result, 1));
   ReplaceUses(SDValue(StoredVal.getNode(), 1), SDValue(Result, 0));
   CurDAG->RemoveDeadNode(Node);

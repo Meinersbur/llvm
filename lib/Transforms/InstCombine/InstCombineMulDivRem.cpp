@@ -251,22 +251,20 @@ Instruction *InstCombiner::visitMul(BinaryOperator &I) {
     }
   }
 
+  if (Instruction *FoldedMul = foldBinOpIntoSelectOrPhi(I))
+    return FoldedMul;
+
   // Simplify mul instructions with a constant RHS.
   if (isa<Constant>(Op1)) {
-    if (Instruction *FoldedMul = foldOpWithConstantIntoOperand(I))
-      return FoldedMul;
-
     // Canonicalize (X+C1)*CI -> X*CI+C1*CI.
-    {
-      Value *X;
-      Constant *C1;
-      if (match(Op0, m_OneUse(m_Add(m_Value(X), m_Constant(C1))))) {
-        Value *Mul = Builder.CreateMul(C1, Op1);
-        // Only go forward with the transform if C1*CI simplifies to a tidier
-        // constant.
-        if (!match(Mul, m_Mul(m_Value(), m_Value())))
-          return BinaryOperator::CreateAdd(Builder.CreateMul(X, Op1), Mul);
-      }
+    Value *X;
+    Constant *C1;
+    if (match(Op0, m_OneUse(m_Add(m_Value(X), m_Constant(C1))))) {
+      Value *Mul = Builder.CreateMul(C1, Op1);
+      // Only go forward with the transform if C1*CI simplifies to a tidier
+      // constant.
+      if (!match(Mul, m_Mul(m_Value(), m_Value())))
+        return BinaryOperator::CreateAdd(Builder.CreateMul(X, Op1), Mul);
     }
   }
 
@@ -478,35 +476,6 @@ static void detectLog2OfHalf(Value *&Op, Value *&Y, IntrinsicInst *&Log2) {
     Y = I->getOperand(0);
 }
 
-static bool isFiniteNonZeroFp(Constant *C) {
-  if (C->getType()->isVectorTy()) {
-    for (unsigned I = 0, E = C->getType()->getVectorNumElements(); I != E;
-         ++I) {
-      ConstantFP *CFP = dyn_cast_or_null<ConstantFP>(C->getAggregateElement(I));
-      if (!CFP || !CFP->getValueAPF().isFiniteNonZero())
-        return false;
-    }
-    return true;
-  }
-
-  return isa<ConstantFP>(C) &&
-         cast<ConstantFP>(C)->getValueAPF().isFiniteNonZero();
-}
-
-static bool isNormalFp(Constant *C) {
-  if (C->getType()->isVectorTy()) {
-    for (unsigned I = 0, E = C->getType()->getVectorNumElements(); I != E;
-         ++I) {
-      ConstantFP *CFP = dyn_cast_or_null<ConstantFP>(C->getAggregateElement(I));
-      if (!CFP || !CFP->getValueAPF().isNormal())
-        return false;
-    }
-    return true;
-  }
-
-  return isa<ConstantFP>(C) && cast<ConstantFP>(C)->getValueAPF().isNormal();
-}
-
 /// Helper function of InstCombiner::visitFMul(). Return true iff the given
 /// value is FMul or FDiv with one and only one operand being a finite-non-zero
 /// constant (i.e. not Zero/NaN/Infinity).
@@ -514,7 +483,7 @@ static bool isFMulOrFDivWithConstant(Value *V) {
   Constant *C;
   return (match(V, m_FMul(m_Value(), m_Constant(C))) ||
           match(V, m_FDiv(m_Value(), m_Constant(C))) ||
-          match(V, m_FDiv(m_Constant(C), m_Value()))) && isFiniteNonZeroFp(C);
+          match(V, m_FDiv(m_Constant(C), m_Value()))) && C->isFiniteNonZeroFP();
 }
 
 /// foldFMulConst() is a helper routine of InstCombiner::visitFMul().
@@ -538,7 +507,7 @@ Value *InstCombiner::foldFMulConst(Instruction *FMulOrDiv, Constant *C,
   // (X * C0) * C => X * (C0*C)
   if (FMulOrDiv->getOpcode() == Instruction::FMul) {
     Constant *F = ConstantExpr::getFMul(C1 ? C1 : C0, C);
-    if (isNormalFp(F))
+    if (F->isNormalFP())
       R = BinaryOperator::CreateFMul(C1 ? Opnd0 : Opnd1, F);
   } else {
     if (C0) {
@@ -546,18 +515,18 @@ Value *InstCombiner::foldFMulConst(Instruction *FMulOrDiv, Constant *C,
       if (FMulOrDiv->hasOneUse()) {
         // It would otherwise introduce another div.
         Constant *F = ConstantExpr::getFMul(C0, C);
-        if (isNormalFp(F))
+        if (F->isNormalFP())
           R = BinaryOperator::CreateFDiv(F, Opnd1);
       }
     } else {
       // (X / C1) * C => X * (C/C1) if C/C1 is not a denormal
       Constant *F = ConstantExpr::getFDiv(C, C1);
-      if (isNormalFp(F)) {
+      if (F->isNormalFP()) {
         R = BinaryOperator::CreateFMul(Opnd0, F);
       } else {
         // (X / C1) * C => X / (C1/C)
         Constant *F = ConstantExpr::getFDiv(C1, C);
-        if (isNormalFp(F))
+        if (F->isNormalFP())
           R = BinaryOperator::CreateFDiv(Opnd0, F);
       }
     }
@@ -578,29 +547,27 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (isa<Constant>(Op0))
-    std::swap(Op0, Op1);
-
   if (Value *V = SimplifyFMulInst(Op0, Op1, I.getFastMathFlags(),
                                   SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
   bool AllowReassociate = I.isFast();
 
+  if (Instruction *FoldedMul = foldBinOpIntoSelectOrPhi(I))
+    return FoldedMul;
+
   // Simplify mul instructions with a constant RHS.
   if (auto *C = dyn_cast<Constant>(Op1)) {
-    if (Instruction *FoldedMul = foldOpWithConstantIntoOperand(I))
-      return FoldedMul;
+    // -X * C --> X * -C
+    Value *X;
+    if (match(Op0, m_FNeg(m_Value(X))))
+      return BinaryOperator::CreateFMulFMF(X, ConstantExpr::getFNeg(C), &I);
 
-    // (fmul X, -1.0) --> (fsub -0.0, X)
-    if (match(C, m_SpecificFP(-1.0))) {
-      Constant *NegZero = ConstantFP::getNegativeZero(Op1->getType());
-      Instruction *RI = BinaryOperator::CreateFSub(NegZero, Op0);
-      RI->copyFastMathFlags(&I);
-      return RI;
-    }
+    // X * -1.0 --> -X
+    if (match(C, m_SpecificFP(-1.0)))
+      return BinaryOperator::CreateFNegFMF(Op0, &I);
 
-    if (AllowReassociate && isFiniteNonZeroFp(C)) {
+    if (AllowReassociate && C->isFiniteNonZeroFP()) {
       // Let MDC denote an expression in one of these forms:
       // X * C, C/X, X/C, where C is a constant.
       //
@@ -625,11 +592,11 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
           Swap = true;
         }
 
-        if (C1 && isFiniteNonZeroFp(C1) && isFMulOrFDivWithConstant(Opnd0)) {
+        if (C1 && C1->isFiniteNonZeroFP() && isFMulOrFDivWithConstant(Opnd0)) {
           Value *M1 = ConstantExpr::getFMul(C1, C);
-          Value *M0 = isNormalFp(cast<Constant>(M1)) ?
-                      foldFMulConst(cast<Instruction>(Opnd0), C, &I) :
-                      nullptr;
+          Value *M0 = cast<Constant>(M1)->isNormalFP() ?
+                          foldFMulConst(cast<Instruction>(Opnd0), C, &I) :
+                          nullptr;
           if (M0 && M1) {
             if (Swap && FAddSub->getOpcode() == Instruction::FSub)
               std::swap(M0, M1);
@@ -645,22 +612,10 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
     }
   }
 
-  if (Op0 == Op1) {
-    if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Op0)) {
-      // sqrt(X) * sqrt(X) -> X
-      if (AllowReassociate && II->getIntrinsicID() == Intrinsic::sqrt)
-        return replaceInstUsesWith(I, II->getOperand(0));
-
-      // fabs(X) * fabs(X) -> X * X
-      if (II->getIntrinsicID() == Intrinsic::fabs) {
-        Instruction *FMulVal = BinaryOperator::CreateFMul(II->getOperand(0),
-                                                          II->getOperand(0),
-                                                          I.getName());
-        FMulVal->copyFastMathFlags(&I);
-        return FMulVal;
-      }
-    }
-  }
+  // fabs(X) * fabs(X) -> X * X
+  Value *X, *Y;
+  if (Op0 == Op1 && match(Op0, m_Intrinsic<Intrinsic::fabs>(m_Value(X))))
+    return BinaryOperator::CreateFMulFMF(X, X, &I);
 
   // Under unsafe algebra do:
   // X * log2(0.5*Y) = X*log2(Y) - X
@@ -689,54 +644,35 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
     }
   }
 
-  // sqrt(a) * sqrt(b) -> sqrt(a * b)
-  if (AllowReassociate && Op0->hasOneUse() && Op1->hasOneUse()) {
-    Value *Opnd0 = nullptr;
-    Value *Opnd1 = nullptr;
-    if (match(Op0, m_Intrinsic<Intrinsic::sqrt>(m_Value(Opnd0))) &&
-        match(Op1, m_Intrinsic<Intrinsic::sqrt>(m_Value(Opnd1)))) {
-      BuilderTy::FastMathFlagGuard Guard(Builder);
-      Builder.setFastMathFlags(I.getFastMathFlags());
-      Value *FMulVal = Builder.CreateFMul(Opnd0, Opnd1);
-      Value *Sqrt = Intrinsic::getDeclaration(I.getModule(), 
-                                              Intrinsic::sqrt, I.getType());
-      Value *SqrtCall = Builder.CreateCall(Sqrt, FMulVal);
-      return replaceInstUsesWith(I, SqrtCall);
-    }
+  // sqrt(X) * sqrt(Y) -> sqrt(X * Y)
+  if (I.hasAllowReassoc() &&
+      match(Op0, m_OneUse(m_Intrinsic<Intrinsic::sqrt>(m_Value(X)))) &&
+      match(Op1, m_OneUse(m_Intrinsic<Intrinsic::sqrt>(m_Value(Y))))) {
+    Value *XY = Builder.CreateFMulFMF(X, Y, &I);
+    Value *Sqrt = Builder.CreateIntrinsic(Intrinsic::sqrt, { XY }, &I);
+    return replaceInstUsesWith(I, Sqrt);
   }
+
+  // -X * -Y --> X * Y
+  if (match(Op0, m_FNeg(m_Value(X))) && match(Op1, m_FNeg(m_Value(Y))))
+    return BinaryOperator::CreateFMulFMF(X, Y, &I);
+
+  // Sink negation: -X * Y --> -(X * Y)
+  if (match(Op0, m_OneUse(m_FNeg(m_Value(X)))))
+    return BinaryOperator::CreateFNegFMF(Builder.CreateFMulFMF(X, Op1, &I), &I);
+
+  // Sink negation: Y * -X --> -(X * Y)
+  if (match(Op1, m_OneUse(m_FNeg(m_Value(X)))))
+    return BinaryOperator::CreateFNegFMF(Builder.CreateFMulFMF(X, Op0, &I), &I);
+
+  // (select A, B, C) * (select A, D, E) --> select A, (B*D), (C*E)
+  if (Value *V = SimplifySelectsFeedingBinaryOp(I, Op0, Op1))
+    return replaceInstUsesWith(I, V);
 
   // Handle symmetric situation in a 2-iteration loop
   Value *Opnd0 = Op0;
   Value *Opnd1 = Op1;
   for (int i = 0; i < 2; i++) {
-    bool IgnoreZeroSign = I.hasNoSignedZeros();
-    if (BinaryOperator::isFNeg(Opnd0, IgnoreZeroSign)) {
-      BuilderTy::FastMathFlagGuard Guard(Builder);
-      Builder.setFastMathFlags(I.getFastMathFlags());
-
-      Value *N0 = dyn_castFNegVal(Opnd0, IgnoreZeroSign);
-      Value *N1 = dyn_castFNegVal(Opnd1, IgnoreZeroSign);
-
-      // -X * -Y => X*Y
-      if (N1) {
-        Value *FMul = Builder.CreateFMul(N0, N1);
-        FMul->takeName(&I);
-        return replaceInstUsesWith(I, FMul);
-      }
-
-      if (Opnd0->hasOneUse()) {
-        // -X * Y => -(X*Y) (Promote negation as high as possible)
-        Value *T = Builder.CreateFMul(N0, Opnd1);
-        Value *Neg = Builder.CreateFNeg(T);
-        Neg->takeName(&I);
-        return replaceInstUsesWith(I, Neg);
-      }
-    }
-
-    // Handle specials cases for FMul with selects feeding the operation
-    if (Value *V = SimplifySelectsFeedingBinaryOp(I, Op0, Op1))
-      return replaceInstUsesWith(I, V);
-
     // (X*Y) * X => (X*X) * Y where Y != X
     //  The purpose is two-fold:
     //   1) to form a power expression (of X).
@@ -958,7 +894,7 @@ Instruction *InstCombiner::commonIDivTransforms(BinaryOperator &I) {
     }
 
     if (!C2->isNullValue()) // avoid X udiv 0
-      if (Instruction *FoldedDiv = foldOpWithConstantIntoOperand(I))
+      if (Instruction *FoldedDiv = foldBinOpIntoSelectOrPhi(I))
         return FoldedDiv;
   }
 
@@ -1317,32 +1253,66 @@ Instruction *InstCombiner::visitSDiv(BinaryOperator &I) {
   return nullptr;
 }
 
-/// Try to convert X/C into X * (1/C).
-static Instruction *foldFDivConstantDivisor(BinaryOperator &FDiv) {
-  // TODO: Handle non-splat vector constants.
-  const APFloat *C;
-  if (!match(FDiv.getOperand(1), m_APFloat(C)))
+/// Remove negation and try to convert division into multiplication.
+static Instruction *foldFDivConstantDivisor(BinaryOperator &I) {
+  Constant *C;
+  if (!match(I.getOperand(1), m_Constant(C)))
     return nullptr;
 
-  // This returns false if the inverse would be a denormal.
-  APFloat Reciprocal(C->getSemantics());
-  bool HasRecip = C->getExactInverse(&Reciprocal);
-  // If the inverse is not exact, we may still be able to convert if we are
-  // not operating with strict math.
-  if (!HasRecip && FDiv.hasAllowReciprocal() && C->isFiniteNonZero()) {
-    Reciprocal = APFloat(C->getSemantics(), 1.0f);
-    Reciprocal.divide(*C, APFloat::rmNearestTiesToEven);
-    // Disallow denormal constants because we don't know what would happen
-    // on all targets.
-    // TODO: Function attributes can tell us that denorms are flushed?
-    HasRecip = !Reciprocal.isDenormal();
+  // -X / C --> X / -C
+  Value *X;
+  if (match(I.getOperand(0), m_FNeg(m_Value(X))))
+    return BinaryOperator::CreateFDivFMF(X, ConstantExpr::getFNeg(C), &I);
+
+  // If the constant divisor has an exact inverse, this is always safe. If not,
+  // then we can still create a reciprocal if fast-math-flags allow it and the
+  // constant is a regular number (not zero, infinite, or denormal).
+  if (!(C->hasExactInverseFP() || (I.hasAllowReciprocal() && C->isNormalFP())))
+    return nullptr;
+
+  // Disallow denormal constants because we don't know what would happen
+  // on all targets.
+  // TODO: Use Intrinsic::canonicalize or let function attributes tell us that
+  // denorms are flushed?
+  auto *RecipC = ConstantExpr::getFDiv(ConstantFP::get(I.getType(), 1.0), C);
+  if (!RecipC->isNormalFP())
+    return nullptr;
+
+  // X / C --> X * (1 / C)
+  return BinaryOperator::CreateFMulFMF(I.getOperand(0), RecipC, &I);
+}
+
+/// Remove negation and try to reassociate constant math.
+static Instruction *foldFDivConstantDividend(BinaryOperator &I) {
+  Constant *C;
+  if (!match(I.getOperand(0), m_Constant(C)))
+    return nullptr;
+
+  // C / -X --> -C / X
+  Value *X;
+  if (match(I.getOperand(1), m_FNeg(m_Value(X))))
+    return BinaryOperator::CreateFDivFMF(ConstantExpr::getFNeg(C), X, &I);
+
+  if (!I.hasAllowReassoc() || !I.hasAllowReciprocal())
+    return nullptr;
+
+  // Try to reassociate C / X expressions where X includes another constant.
+  Constant *C2, *NewC = nullptr;
+  if (match(I.getOperand(1), m_FMul(m_Value(X), m_Constant(C2)))) {
+    // C / (X * C2) --> (C / C2) / X
+    NewC = ConstantExpr::getFDiv(C, C2);
+  } else if (match(I.getOperand(1), m_FDiv(m_Value(X), m_Constant(C2)))) {
+    // C / (X / C2) --> (C * C2) / X
+    NewC = ConstantExpr::getFMul(C, C2);
   }
-
-  if (!HasRecip)
+  // Disallow denormal constants because we don't know what would happen
+  // on all targets.
+  // TODO: Use Intrinsic::canonicalize or let function attributes tell us that
+  // denorms are flushed?
+  if (!NewC || !NewC->isNormalFP())
     return nullptr;
 
-  auto *RecipCFP = ConstantFP::get(FDiv.getType(), Reciprocal);
-  return BinaryOperator::CreateFMul(FDiv.getOperand(0), RecipCFP);
+  return BinaryOperator::CreateFDivFMF(NewC, X, &I);
 }
 
 Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
@@ -1355,107 +1325,35 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
                                   SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
-  if (Instruction *FMul = foldFDivConstantDivisor(I)) {
-    FMul->copyFastMathFlags(&I);
-    return FMul;
-  }
+  if (Instruction *R = foldFDivConstantDivisor(I))
+    return R;
+
+  if (Instruction *R = foldFDivConstantDividend(I))
+    return R;
 
   if (isa<Constant>(Op0))
     if (SelectInst *SI = dyn_cast<SelectInst>(Op1))
       if (Instruction *R = FoldOpIntoSelect(I, SI))
         return R;
 
-  bool AllowReassociate = I.isFast();
-  if (Constant *Op1C = dyn_cast<Constant>(Op1)) {
+  if (isa<Constant>(Op1))
     if (SelectInst *SI = dyn_cast<SelectInst>(Op0))
       if (Instruction *R = FoldOpIntoSelect(I, SI))
         return R;
 
-    if (AllowReassociate) {
-      Constant *C1 = nullptr;
-      Constant *C2 = Op1C;
-      Value *X;
-      Instruction *Res = nullptr;
-
-      if (match(Op0, m_FMul(m_Value(X), m_Constant(C1)))) {
-        // (X*C1)/C2 => X * (C1/C2)
-        Constant *C = ConstantExpr::getFDiv(C1, C2);
-        if (isNormalFp(C))
-          Res = BinaryOperator::CreateFMul(X, C);
-      } else if (match(Op0, m_FDiv(m_Value(X), m_Constant(C1)))) {
-        // (X/C1)/C2 => X /(C2*C1)
-        Constant *C = ConstantExpr::getFMul(C1, C2);
-        if (isNormalFp(C))
-          Res = BinaryOperator::CreateFDiv(X, C);
-      }
-
-      if (Res) {
-        Res->setFastMathFlags(I.getFastMathFlags());
-        return Res;
-      }
-    }
-    return nullptr;
-  }
-
-  if (AllowReassociate && isa<Constant>(Op0)) {
-    Constant *C1 = cast<Constant>(Op0), *C2;
-    Constant *Fold = nullptr;
-    Value *X;
-    bool CreateDiv = true;
-
-    // C1 / (X*C2) => (C1/C2) / X
-    if (match(Op1, m_FMul(m_Value(X), m_Constant(C2))))
-      Fold = ConstantExpr::getFDiv(C1, C2);
-    else if (match(Op1, m_FDiv(m_Value(X), m_Constant(C2)))) {
-      // C1 / (X/C2) => (C1*C2) / X
-      Fold = ConstantExpr::getFMul(C1, C2);
-    } else if (match(Op1, m_FDiv(m_Constant(C2), m_Value(X)))) {
-      // C1 / (C2/X) => (C1/C2) * X
-      Fold = ConstantExpr::getFDiv(C1, C2);
-      CreateDiv = false;
-    }
-
-    if (Fold && isNormalFp(Fold)) {
-      Instruction *R = CreateDiv ? BinaryOperator::CreateFDiv(Fold, X)
-                                 : BinaryOperator::CreateFMul(X, Fold);
-      R->setFastMathFlags(I.getFastMathFlags());
-      return R;
-    }
-    return nullptr;
-  }
-
-  if (AllowReassociate) {
+  if (I.hasAllowReassoc() && I.hasAllowReciprocal()) {
     Value *X, *Y;
-    Value *NewInst = nullptr;
-    Instruction *SimpR = nullptr;
-
-    if (match(Op0, m_OneUse(m_FDiv(m_Value(X), m_Value(Y))))) {
-      // (X/Y) / Z => X / (Y*Z)
-      if (!isa<Constant>(Y) || !isa<Constant>(Op1)) {
-        NewInst = Builder.CreateFMul(Y, Op1);
-        if (Instruction *RI = dyn_cast<Instruction>(NewInst)) {
-          FastMathFlags Flags = I.getFastMathFlags();
-          Flags &= cast<Instruction>(Op0)->getFastMathFlags();
-          RI->setFastMathFlags(Flags);
-        }
-        SimpR = BinaryOperator::CreateFDiv(X, NewInst);
-      }
-    } else if (match(Op1, m_OneUse(m_FDiv(m_Value(X), m_Value(Y))))) {
-      // Z / (X/Y) => Z*Y / X
-      if (!isa<Constant>(Y) || !isa<Constant>(Op0)) {
-        NewInst = Builder.CreateFMul(Op0, Y);
-        if (Instruction *RI = dyn_cast<Instruction>(NewInst)) {
-          FastMathFlags Flags = I.getFastMathFlags();
-          Flags &= cast<Instruction>(Op1)->getFastMathFlags();
-          RI->setFastMathFlags(Flags);
-        }
-        SimpR = BinaryOperator::CreateFDiv(NewInst, X);
-      }
+    if (match(Op0, m_OneUse(m_FDiv(m_Value(X), m_Value(Y)))) &&
+        (!isa<Constant>(Y) || !isa<Constant>(Op1))) {
+      // (X / Y) / Z => X / (Y * Z)
+      Value *YZ = Builder.CreateFMulFMF(Y, Op1, &I);
+      return BinaryOperator::CreateFDivFMF(X, YZ, &I);
     }
-
-    if (NewInst) {
-      SimpR->setFastMathFlags(I.getFastMathFlags());
-      return SimpR;
+    if (match(Op1, m_OneUse(m_FDiv(m_Value(X), m_Value(Y)))) &&
+        (!isa<Constant>(Y) || !isa<Constant>(Op0))) {
+      // Z / (X / Y) => (Y * Z) / X
+      Value *YZ = Builder.CreateFMulFMF(Y, Op0, &I);
+      return BinaryOperator::CreateFDivFMF(YZ, X, &I);
     }
   }
 

@@ -269,7 +269,7 @@ define i64 @test14(<8 x i64>%a, <8 x i64>%b, i64 %a1, i64 %b1) {
 ; SKX-LABEL: test14:
 ; SKX:       ## %bb.0:
 ; SKX-NEXT:    vpcmpgtq %zmm0, %zmm1, %k0
-; SKX-NEXT:    kshiftrb $4, %k0, %k0
+; SKX-NEXT:    kshiftrw $4, %k0, %k0
 ; SKX-NEXT:    kmovd %k0, %eax
 ; SKX-NEXT:    testb $1, %al
 ; SKX-NEXT:    cmoveq %rsi, %rdi
@@ -287,8 +287,9 @@ define i16 @test15(i1 *%addr) {
 ; CHECK:       ## %bb.0:
 ; CHECK-NEXT:    xorl %ecx, %ecx
 ; CHECK-NEXT:    cmpb $0, (%rdi)
-; CHECK-NEXT:    movw $-1, %ax
-; CHECK-NEXT:    cmovew %cx, %ax
+; CHECK-NEXT:    movl $65535, %eax ## imm = 0xFFFF
+; CHECK-NEXT:    cmovel %ecx, %eax
+; CHECK-NEXT:    ## kill: def $ax killed $ax killed $eax
 ; CHECK-NEXT:    retq
   %x = load i1 , i1 * %addr, align 1
   %x1 = insertelement <16 x i1> undef, i1 %x, i32 10
