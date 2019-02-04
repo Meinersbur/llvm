@@ -55,6 +55,9 @@ using namespace llvm;
 namespace {
 
 	enum class LoopHierarchyKind {
+		Root,
+		Block,
+
 		Statement,
 		Loop,
 		Instruction,
@@ -71,9 +74,10 @@ namespace {
 
 	class GreenInst;
 	class GreenExpr;
+	class GreenBlock;
 
 	// Immutable (sub-)tree, only contains references to its children
-	class GreenNode {	
+	class GreenNode {
 	public:
 		virtual ~GreenNode() {};
 
@@ -86,6 +90,177 @@ namespace {
 
 		virtual ArrayRef <const GreenNode * const> getChildren() const = 0;
 	};
+
+
+	/// Node in an immutable tree, contains reference to parent and corresponding green node (which stores the children) 
+	/// TODO: Make it a stack object
+	class RedNode {
+	public:
+		virtual ~RedNode() {};
+
+		virtual LoopHierarchyKind getKind() const = 0;
+		static bool classof(const RedNode *) {	return true;	}
+
+		void dump() const { printText(errs()); }
+		virtual void printLine(raw_ostream &OS) const {}
+		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
+
+		virtual GreenNode* getGreen() const = 0;
+
+		virtual RedNode *getParent() const = 0; 
+	};
+
+
+
+
+	class GreenRoot : public GreenNode {
+	private :
+		GreenBlock *Block;
+
+	public:
+		GreenRoot (GreenBlock *Block): Block(Block) {}
+		virtual ~GreenRoot() {};
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
+		static bool classof(const GreenRoot *) {	return true;	}
+
+		virtual ArrayRef <const GreenNode * const> getChildren() const override { return Block; };
+	}; 
+
+
+	class RedRoot:public RedNode {
+	private:
+		GreenRoot *Green;
+	public:
+		RedRoot(GreenRoot *Green) : Green(Green) {}
+		virtual ~RedRoot() {};
+
+		virtual LoopHierarchyKind getKind() const = 0;
+		static bool classof(const RedNode *) {	return true;	}
+
+		void dump() const { printText(errs()); }
+		virtual void printLine(raw_ostream &OS) const {}
+		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
+
+		virtual GreenNode* getGreen() const override {return Green;}
+
+		virtual RedNode *getParent() const override {return nullptr;}
+	};
+
+
+
+	class GreenSequence final : public GreenNode {
+	private:
+		std::vector<GreenBlock *> Blocks;
+	public:
+		
+	};
+
+	class RedSequence final : public RedNode {
+	private:
+	public:
+	};
+
+
+// A statement or loop
+	class GreenBlock  : public GreenNode  {
+	private :
+	
+	public:
+		//GreenBlock (ArrayRef<const GreenSequence*const> Stmts): Stmts(Stmts) {}
+		virtual ~GreenBlock() {};
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Block; }
+		static bool classof(const GreenRoot *) {	return true;	}
+
+	//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
+	}; 
+
+	class RedBlock : public RedNode {
+	private:
+		//GreenBlock *Green;
+	public:
+		//RedBlock(GreenBlock *Green) : Green(Green){}
+	};
+
+
+
+	class GreenLoop final : public GreenBlock {
+	private:
+	public:
+	};
+
+	class RedLoop final : public RedBlock {
+	private:
+		GreenLoop *Green;
+	public:
+		RedLoop(GreenLoop*Green) : Green(Green){}
+	};
+
+
+
+	class GreenStmt final : public GreenBlock {
+	private:
+		std::vector<GreenInst*> Insts;
+	public:
+		GreenStmt(ArrayRef<GreenInst*> Insts) : Insts(Insts) {}
+	};
+
+	class RedStmt final : public RedBlock {
+	private:
+		GreenStmt *Green;
+	public:
+		RedStmt(GreenStmt*Green) : Green(Green){}
+	};
+
+
+
+	class GreenInst final : public GreenNode {
+	private:
+	public:
+	};
+
+	class RedInst final : public RedNode {
+	private:
+		GreenInst *Green;
+	public:
+		RedInst (GreenInst *Green) : Green(Green){}
+	};
+
+
+
+
+
+	class GreenExpr final : GreenNode {
+		private:
+		public:
+	};
+
+	class RedExpr final : public RedNode {
+	private:
+		GreenExpr *Green;
+	public:
+		RedExpr(GreenExpr*Green) : Green(Green){}
+
+		static GreenExpr *create(Constant C) {
+			
+		}
+	};
+
+
+
+
+
+
+#if 0
+	class RedLoop : public RedBlock {
+		GreenLoop *Green;
+	public:
+	};
+
+
+
+
 
 	// Something executable: a loop or statement
 	class GreenBlock : public GreenNode {
@@ -182,18 +357,7 @@ namespace {
 	};
 
 
-	/// Node in an immutable tree, contains reference to parent and corresponding green node (which stores the children) 
-	/// TODO: Make it a stack object
-	class RedNode {	
-	public:
-		virtual RedNode *getParent() const = 0; 
-	};
-
-	class RedLoop : public RedBlock {
-		GreenLoop *Green;
-	public:
-	};
-
+	
 
 	class	RedBlock : public RedNode {
 		RedLoop *Parent;
@@ -238,9 +402,7 @@ namespace {
 	public:
 		const RedConstExpr *create(GreenConstExpr *Green) { return new RedConstExpr(Green); }
 	};
-
-
-
+#endif
 
 
 
@@ -254,7 +416,7 @@ namespace {
 		GreenLoop *createHierarchy(Loop *L) const;
 		GreenStmt *createHierarchy(BasicBlock *BB) const;
 		GreenInst *createInst(Instruction *I) const;
-	const	GreenExpr *createExpr(Value *I) const;
+		GreenExpr *createExpr(Value *I) const;
 
 	public:
 		LoopOptimizer(Function *F) : F(F) {}
@@ -319,10 +481,10 @@ GreenInst *LoopOptimizer::createInst(Instruction *I) const {
 	llvm_unreachable("unimplemented");
 }
 
-const GreenExpr *LoopOptimizer::createExpr(Value *I) const {
+GreenExpr *LoopOptimizer::createExpr(Value *I) const {
 	if (auto C = dyn_cast<Constant>(I)) {
 		// TODO: Lookup cache
-		auto Green = GreenConstExpr::create(C);
+		auto Green = GreenExpr::create(C);
 		return Green;
 	}
 	llvm_unreachable("unimplemented");
