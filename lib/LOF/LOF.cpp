@@ -56,21 +56,30 @@ namespace {
 
 	enum class LoopHierarchyKind {
 		Root,
-		Block,
 
-		Statement,
+		// Blocks
+		Stmt,
 		Loop,
-		Instruction,
-		InstExpression,
-		SCEVExpression,
-		ConstExpr,
 
-		Block_First= Statement,
+		// Instructions
+		Load,
+		Store,
+		Call,
+
+		// Expressions
+		Const,
+		Op,
+
+		Block_First= Stmt,
 		Block_Last = Loop,
 
-		Expression_First = InstExpression,
-		Expression_Last = ConstExpr
+		Inst_First = Load,
+		Inst_Last = Call,
+
+		Expr_First = Const,
+		Expr_Last = Op,
 	};
+
 
 	class GreenInst;
 	class GreenExpr;
@@ -88,26 +97,32 @@ namespace {
 		virtual void printLine(raw_ostream &OS) const {}
 		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
 
-		virtual ArrayRef <const GreenNode * const> getChildren() const = 0;
+		virtual ArrayRef <GreenNode * > getChildren() const = 0;
 	};
 
 
 	/// Node in an immutable tree, contains reference to parent and corresponding green node (which stores the children) 
 	/// TODO: Make it a stack object
 	class RedNode {
+	private:
+		RedNode *Parent;
+		GreenNode *Green;
+
+	protected:
+		RedNode(RedNode*Parent, GreenNode *Green): Parent(Parent),Green(Green) {}
+
 	public:
 		virtual ~RedNode() {};
 
-		virtual LoopHierarchyKind getKind() const = 0;
-		static bool classof(const RedNode *) {	return true;	}
+		virtual LoopHierarchyKind getKind() const {return getGreen()->getKind();}
+		static bool classof(const RedNode *) {	return true; }
 
 		void dump() const { printText(errs()); }
-		virtual void printLine(raw_ostream &OS) const {}
-		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
+		virtual void printLine(raw_ostream &OS) const { getGreen()->printLine(OS); }
+		virtual void printText(raw_ostream &OS) const { getGreen()->printText(OS); }
 
-		virtual GreenNode* getGreen() const = 0;
-
-		virtual RedNode *getParent() const = 0; 
+		 RedNode *getParent() const {return Parent;}
+		 GreenNode* getGreen() const {return Green;}
 	};
 
 
@@ -122,33 +137,27 @@ namespace {
 		virtual ~GreenRoot() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
+		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Root; }
 		static bool classof(const GreenRoot *) {	return true;	}
 
-		virtual ArrayRef <const GreenNode * const> getChildren() const override { return Block; };
+		virtual ArrayRef < GreenNode * > getChildren() const override ;
 	}; 
 
 
 	class RedRoot:public RedNode {
 	private:
-		GreenRoot *Green;
 	public:
-		RedRoot(GreenRoot *Green) : Green(Green) {}
+		RedRoot(RedNode*Parent, GreenRoot *Green) : RedNode(Parent,Green) {}
 		virtual ~RedRoot() {};
 
-		virtual LoopHierarchyKind getKind() const = 0;
-		static bool classof(const RedNode *) {	return true;	}
+		static bool classof(const RedNode *Node) { GreenRoot::classof(Node->getGreen()); }
+		static bool classof(const RedRoot *) {	return true;	}
 
-		void dump() const { printText(errs()); }
-		virtual void printLine(raw_ostream &OS) const {}
-		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
-
-		virtual GreenNode* getGreen() const override {return Green;}
-
-		virtual RedNode *getParent() const override {return nullptr;}
+		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
 	};
 
 
-
+#if 0
 	class GreenSequence final : public GreenNode {
 	private:
 		std::vector<GreenBlock *> Blocks;
@@ -160,27 +169,35 @@ namespace {
 	private:
 	public:
 	};
+#endif
 
 
-// A statement or loop
+// A statement or loop (abstract class)
 	class GreenBlock  : public GreenNode  {
 	private :
-	
+
 	public:
 		//GreenBlock (ArrayRef<const GreenSequence*const> Stmts): Stmts(Stmts) {}
-		virtual ~GreenBlock() {};
+		//virtual ~GreenBlock() {};
 
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Block; }
-		static bool classof(const GreenRoot *) {	return true;	}
+		// virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Block; }
+		static bool classof(const GreenNode *Node) {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Block_First <= Kind && Kind <= LoopHierarchyKind::Block_Last;	}
+		static bool classof(const GreenBlock *) {	return true;	}
+
 
 	//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
 	}; 
 
 	class RedBlock : public RedNode {
 	private:
-		//GreenBlock *Green;
 	public:
-		//RedBlock(GreenBlock *Green) : Green(Green){}
+		RedBlock(RedNode*Parent, GreenBlock *Green) : RedNode(Parent,Green) {}
+
+
+		static bool classof(const RedNode *Node) { GreenBlock::classof(Node->getGreen()); }
+		static bool classof(const RedBlock *) {	return true;	}
+
+		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
 	};
 
 
@@ -188,13 +205,22 @@ namespace {
 	class GreenLoop final : public GreenBlock {
 	private:
 	public:
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
+		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
+		static bool classof(const GreenLoop *) {	return true;	}
+
+		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
 	};
 
 	class RedLoop final : public RedBlock {
 	private:
-		GreenLoop *Green;
 	public:
-		RedLoop(GreenLoop*Green) : Green(Green){}
+		RedLoop(RedNode *Parent, GreenLoop*Green) : RedBlock(Parent,Green) {}
+
+		static bool classof(const RedNode *Node) { GreenLoop::classof(Node->getGreen()); }
+		static bool classof(const RedLoop *) {	return true;	}
+
+		GreenLoop* getGreen() const {return static_cast<GreenLoop*>( getGreen());}
 	};
 
 
@@ -204,50 +230,96 @@ namespace {
 		std::vector<GreenInst*> Insts;
 	public:
 		GreenStmt(ArrayRef<GreenInst*> Insts) : Insts(Insts) {}
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Stmt; }
+		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
+		static bool classof(const GreenStmt *) {	return true;	}
+
+		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
 	};
+
 
 	class RedStmt final : public RedBlock {
 	private:
-		GreenStmt *Green;
 	public:
-		RedStmt(GreenStmt*Green) : Green(Green){}
+		RedStmt(RedNode *Parent, GreenStmt*Green) : RedBlock(Parent,Green) {}
+
+		static bool classof(const RedNode *Node) { GreenStmt::classof(Node->getGreen()); }
+		static bool classof(const RedStmt *) {	return true;	}
+
+		GreenStmt* getGreen() const {return static_cast<GreenStmt*>( getGreen());}
 	};
 
 
 
-	class GreenInst final : public GreenNode {
+	class GreenInst  : public GreenNode {
 	private:
 	public:
+		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Inst_First <= Kind && Kind <= LoopHierarchyKind::Inst_Last;	}
+		static bool classof(const GreenInst *) {	return true;	}
 	};
 
 	class RedInst final : public RedNode {
 	private:
-		GreenInst *Green;
 	public:
-		RedInst (GreenInst *Green) : Green(Green){}
+		RedInst(RedNode *Parent, GreenStmt*Green) : RedNode(Parent,Green) {}
+
+		static bool classof(const RedNode *Node) { GreenInst::classof(Node->getGreen()); }
+		static bool classof(const RedInst *) {	return true;	}
+
+		GreenInst* getGreen() const {return static_cast<GreenInst*>( getGreen());}
 	};
 
 
 
 
 
-	class GreenExpr final : GreenNode {
+	class GreenExpr: public GreenNode {
 		private:
 		public:
+			static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Expr_First <= Kind && Kind <= LoopHierarchyKind::Expr_Last;	}
+			static bool classof(const GreenInst *) {	return true;	}
 	};
 
-	class RedExpr final : public RedNode {
-	private:
-		GreenExpr *Green;
+	class RedExpr : public RedNode {
+	private: 
 	public:
-		RedExpr(GreenExpr*Green) : Green(Green){}
+		RedExpr(RedNode *Parent, GreenExpr*Green) : RedNode(Parent,Green) {}
 
-		static GreenExpr *create(Constant C) {
-			
-		}
+		static bool classof(const RedNode *Node) { GreenExpr::classof(Node->getGreen()); }
+		static bool classof(const RedExpr *) {	return true;	}
+
+		GreenExpr* getGreen() const {return static_cast<GreenExpr*>( getGreen());}
 	};
 
 
+
+	// Expression tree leaf
+	class GreenConst final : public GreenExpr {
+		Constant *Const;
+	public:
+		GreenConst(Constant *Const) : Const(Const) {}
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Const; }
+		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Const; 	}
+		static bool classof(const GreenConst *) {	return true;	}
+
+		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
+
+		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
+	};
+
+
+	class RedConst final : public RedExpr {
+	private:
+	public:
+		RedConst(RedNode *Parent, GreenConst*Green) : RedExpr(Parent,Green) {}
+
+		static bool classof(const RedNode *Node) { GreenConst::classof(Node->getGreen()); }
+		static bool classof(const RedConst *) {	return true;	}
+
+		GreenConst* getGreen() const {return static_cast<GreenConst*>( getGreen());}
+	};
 
 
 
@@ -406,7 +478,15 @@ namespace {
 
 
 
+	 ArrayRef < GreenNode * >  GreenRoot::getChildren() const  {		
+		GreenNode *X = Block;
+		return   {X};		
+	};
+
+
+
 	class LoopOptimizer {
+	private:
 		Function *F;
 
 		LoopInfo *LI;
@@ -417,6 +497,11 @@ namespace {
 		GreenStmt *createHierarchy(BasicBlock *BB) const;
 		GreenInst *createInst(Instruction *I) const;
 		GreenExpr *createExpr(Value *I) const;
+
+
+		DenseMap <Constant *, GreenConst*> ConstCache;
+		GreenConst *createGreen(Constant *C) ;
+
 
 	public:
 		LoopOptimizer(Function *F) : F(F) {}
@@ -458,9 +543,11 @@ namespace {
 }
 
 GreenLoop *LoopOptimizer::createHierarchy(Function *F) const {
+	llvm_unreachable("unimplemented");
 }
 
 GreenLoop *LoopOptimizer::createHierarchy(Loop *L) const {
+	llvm_unreachable("unimplemented");
 }
 
 GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
@@ -468,15 +555,16 @@ GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
 		if (I.mayThrow())
 			return nullptr;
 
-		if (isSafeToSpeculativelyExecute(I))
+
 	}
+	llvm_unreachable("unimplemented");
 }
 
 GreenInst *LoopOptimizer::createInst(Instruction *I) const {
 	if (auto Store = dyn_cast<Instruction>(I)) {
-		auto *Op1 = createExpr( I->getOperand(0));
+		auto *Op1 = createExpr(I->getOperand(0));
 		auto *Op2 = createExpr(I->getOperand(0));
-		auto *Stmt = GreenInst::create(I->getOpcode(), { Op1, Op2 }, I);
+		//auto *Stmt = GreenInst::create(I->getOpcode(), { Op1, Op2 }, I);
 	}
 	llvm_unreachable("unimplemented");
 }
@@ -484,10 +572,18 @@ GreenInst *LoopOptimizer::createInst(Instruction *I) const {
 GreenExpr *LoopOptimizer::createExpr(Value *I) const {
 	if (auto C = dyn_cast<Constant>(I)) {
 		// TODO: Lookup cache
-		auto Green = GreenExpr::create(C);
-		return Green;
+		//auto Green = GreenExpr::create(C);
+		//return Green;
 	}
 	llvm_unreachable("unimplemented");
+}
+
+
+GreenConst *LoopOptimizer::createGreen(Constant *C) {
+	auto &Result =	ConstCache[C];
+	if (!Result)
+		 Result= GreenConst::create(C);
+return Result;
 }
 
 bool LoopOptimizer::optimize() {
