@@ -502,6 +502,9 @@ namespace {
 		DenseMap <Constant *, GreenConst*> ConstCache;
 		GreenConst *createGreen(Constant *C) ;
 
+		DenseMap <Instruction *, GreenInst*> InstCache;
+		GreenInst *createGreen(Instruction *I) ;
+
 
 	public:
 		LoopOptimizer(Function *F) : F(F) {}
@@ -586,8 +589,24 @@ GreenConst *LoopOptimizer::createGreen(Constant *C) {
 return Result;
 }
 
+GreenInst *LoopOptimizer::createGreen(Instruction *I) {
+	auto &Result = InstCache[I];
+	if (!Result) {
+		switch (I->getOpcode()) {
+		case Instruction::Store:
+		default:
+			llvm_unreachable("unimplemented");
+		}
+	}
+	return Result;
+}
+
 bool LoopOptimizer::optimize() {
-	return true;
+	for (auto& BB : *F) {
+		for (auto &I : BB) {
+			createGreen(&I);
+		}
+	}
 }
 
 
