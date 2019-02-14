@@ -67,8 +67,9 @@ namespace {
 		Call,
 
 		// Expressions
-		Const,
-		Op,
+		Const, // Constant/Literal
+		Reg,  // Register/Value read
+		Op, // Operation
 
 		Block_First= Stmt,
 		Block_Last = Loop,
@@ -150,7 +151,7 @@ namespace {
 		RedRoot(RedNode*Parent, GreenRoot *Green) : RedNode(Parent,Green) {}
 		virtual ~RedRoot() {};
 
-		static bool classof(const RedNode *Node) { GreenRoot::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) { return GreenRoot::classof(Node->getGreen()); }
 		static bool classof(const RedRoot *) {	return true;	}
 
 		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
@@ -194,7 +195,7 @@ namespace {
 		RedBlock(RedNode*Parent, GreenBlock *Green) : RedNode(Parent,Green) {}
 
 
-		static bool classof(const RedNode *Node) { GreenBlock::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) { return GreenBlock::classof(Node->getGreen()); }
 		static bool classof(const RedBlock *) {	return true;	}
 
 		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
@@ -217,7 +218,7 @@ namespace {
 	public:
 		RedLoop(RedNode *Parent, GreenLoop*Green) : RedBlock(Parent,Green) {}
 
-		static bool classof(const RedNode *Node) { GreenLoop::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) {return  GreenLoop::classof(Node->getGreen()); }
 		static bool classof(const RedLoop *) {	return true;	}
 
 		GreenLoop* getGreen() const {return static_cast<GreenLoop*>( getGreen());}
@@ -244,7 +245,7 @@ namespace {
 	public:
 		RedStmt(RedNode *Parent, GreenStmt*Green) : RedBlock(Parent,Green) {}
 
-		static bool classof(const RedNode *Node) { GreenStmt::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) {return  GreenStmt::classof(Node->getGreen()); }
 		static bool classof(const RedStmt *) {	return true;	}
 
 		GreenStmt* getGreen() const {return static_cast<GreenStmt*>( getGreen());}
@@ -259,16 +260,56 @@ namespace {
 		static bool classof(const GreenInst *) {	return true;	}
 	};
 
-	class RedInst final : public RedNode {
+	class RedInst  : public RedNode {
 	private:
 	public:
-		RedInst(RedNode *Parent, GreenStmt*Green) : RedNode(Parent,Green) {}
+		RedInst(RedNode *Parent, GreenInst*Green) : RedNode(Parent,Green) {}
 
-		static bool classof(const RedNode *Node) { GreenInst::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) {return  GreenInst::classof(Node->getGreen()); }
 		static bool classof(const RedInst *) {	return true;	}
 
 		GreenInst* getGreen() const {return static_cast<GreenInst*>( getGreen());}
 	};
+
+
+
+
+
+	class GreenStore  : public GreenInst {
+	private:
+		GreenExpr *Operands [2];
+	
+
+	public:
+		GreenStore(GreenExpr *Val, GreenExpr *Ptr) : Operands{Val,Ptr} {}
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Store; }
+		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Store; }
+		static bool classof(const GreenStore *) { return true; }
+
+		GreenExpr * getVal() const {return Operands[0]; }
+		GreenExpr * &getVal()  {return Operands[0]; }
+		GreenExpr * getPtr() const {return Operands[1]; }
+		GreenExpr * &getPtr()  {return Operands[1]; }
+
+		virtual ArrayRef <GreenNode * > getChildren() const ;
+
+		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
+	};
+
+
+	class RedStore final : public RedInst {
+	private:
+	public:
+		RedStore(RedNode *Parent, GreenStore*Green) : RedInst(Parent,Green) {}
+
+		static bool classof(const RedNode *Node) {return  GreenLoop::classof(Node->getGreen()); }
+		static bool classof(const RedStore *) {	return true;	}
+
+		GreenStore* getGreen() const {return static_cast<GreenStore*>( getGreen());}
+	};
+
+
 
 
 
@@ -286,7 +327,7 @@ namespace {
 	public:
 		RedExpr(RedNode *Parent, GreenExpr*Green) : RedNode(Parent,Green) {}
 
-		static bool classof(const RedNode *Node) { GreenExpr::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) {return  GreenExpr::classof(Node->getGreen()); }
 		static bool classof(const RedExpr *) {	return true;	}
 
 		GreenExpr* getGreen() const {return static_cast<GreenExpr*>( getGreen());}
@@ -315,7 +356,7 @@ namespace {
 	public:
 		RedConst(RedNode *Parent, GreenConst*Green) : RedExpr(Parent,Green) {}
 
-		static bool classof(const RedNode *Node) { GreenConst::classof(Node->getGreen()); }
+		static bool classof(const RedNode *Node) {return  GreenConst::classof(Node->getGreen()); }
 		static bool classof(const RedConst *) {	return true;	}
 
 		GreenConst* getGreen() const {return static_cast<GreenConst*>( getGreen());}
@@ -323,166 +364,47 @@ namespace {
 
 
 
-
-#if 0
-	class RedLoop : public RedBlock {
-		GreenLoop *Green;
-	public:
-	};
-
-
-
-
-
-	// Something executable: a loop or statement
-	class GreenBlock : public GreenNode {
-
-	public :
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::Block_First <= Node->getKind() && Node->getKind() <= LoopHierarchyKind::Block_Last; }
-		static bool classof(const GreenBlock *) { return true; }
-	};
-
-
-	class GreenLoop : public GreenBlock   {
-		SmallVector<GreenBlock*,4> Blocks;
-
-		Loop * OriginalLoop;
-	public:
-		virtual LoopHierarchyKind getKind() const { return LoopHierarchyKind::Loop;  }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::Loop == Node->getKind() ; }
-		static bool classof(const GreenBlock *) { return true; }
-
-		ArrayRef <const GreenNode * const> getChildren() const override { return ArrayRef<const GreenNode* const>(reinterpret_cast< GreenNode*const*  >( Blocks.data()) , Blocks .size()); }
-	};
-
-	// Group of statements
-	class GreenStmt : public GreenBlock {	
-		SmallVector<GreenInst*, 8> Insts;
-
-		BasicBlock * OriginalBB;
-	public:
-		virtual LoopHierarchyKind getKind() const { return LoopHierarchyKind::Statement; }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::Statement == Node->getKind(); }
-		static bool classof(const GreenBlock *) { return true; }
-
-		ArrayRef <const GreenNode * const> getChildren() const override;
-	};
-
-	// Instruction with side-effect
-	class GreenInst : public GreenNode {
-		unsigned InstType;
-		SmallVector<GreenExpr*, 2> Operands;
-
-		Instruction *OriginalInst;
-
-		GreenInst(unsigned Ty, ArrayRef<const GreenExpr*> Ops, Instruction *Original) : InstType(Ty), Operands(Ops.begin(), Ops.end()), OriginalInst(Original) {}
-	public:
-		virtual LoopHierarchyKind getKind() const { return LoopHierarchyKind::Instruction; }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::Instruction == Node->getKind(); }
-		static bool classof(const GreenBlock *) { return true; }
-
-		static const GreenInst *create(unsigned Ty, ArrayRef<const GreenExpr*> Ops, Instruction *Original = nullptr) { return new GreenInst(Ty, Ops, Original ); }
-
-		ArrayRef <const GreenNode * const> getChildren() const override;
-	};
-
-
-
-	// Side-effect free instruction, SCEV, or isl::pw_aff
-	class GreenExpr : public GreenNode {
-		Instruction *OriginalInst;
-	public:
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::Instruction == Node->getKind(); }
-		static bool classof(const GreenExpr *) { return true; }
-	};
-
-	class GreenInstExpr : public GreenExpr {
-		Instruction::ValueTy InstType;
-		SmallVector<GreenExpr*, 2> Operands;
-	public:
-		virtual LoopHierarchyKind getKind() const { return LoopHierarchyKind::InstExpression; }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::InstExpression == Node->getKind(); }
-		static bool classof(const GreenInstExpr *) { return true; }
-	};
-
-	class GreenSCEVExpr : public GreenExpr {
-		const SCEV*Expr;
-	public:
-		virtual LoopHierarchyKind getKind() const { return LoopHierarchyKind::SCEVExpression; }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::SCEVExpression == Node->getKind(); }
-		static bool classof(const GreenInstExpr *) { return true; }
-	};
-
 	// Expression tree leaf
-	class GreenConstExpr : public GreenExpr {
-		Constant *Const;
-
-		GreenConstExpr(Constant *Const) : Const(Const) {}
+	class GreenReg final : public GreenExpr {
+		Value *Val;
 	public:
-		static const GreenConstExpr *create(Constant *Const) { return new GreenConstExpr(Const); }
-		
-		LoopHierarchyKind getKind() const override { return LoopHierarchyKind::ConstExpr; }
-		static bool classof(const GreenNode *Node) { return LoopHierarchyKind::ConstExpr == Node->getKind(); }
-		static bool classof(const GreenConstExpr *) { return true; }
+		GreenReg(Value *V) : Val(V) {}
 
-		 ArrayRef <const GreenNode * const> getChildren() const { return ArrayRef <const GreenNode * const>(); }
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
+		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
+		static bool classof(const GreenReg *) {	return true;	}
+
+		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
+
+		static  GreenReg *create(Value *V) { return new GreenReg(V); }
 	};
 
 
-	
-
-	class	RedBlock : public RedNode {
-		RedLoop *Parent;
+	class RedReg final : public RedExpr {
+	private:
 	public:
-		 RedNode *getParent() const override { return Parent; };
- };
+		RedReg(RedNode *Parent, GreenReg*Green) : RedExpr(Parent,Green) {}
 
-	class RedStmt : public RedBlock {
-		RedStmt *Green;
-	public:
+		static bool classof(const RedReg *Node) { return GreenReg::classof(Node->getGreen()); }
+		static bool classof(const RedConst *) {	return true;	}
+
+		GreenReg* getGreen() const {return static_cast<GreenReg*>( getGreen());}
 	};
 
 
 
-
-
-	class RedUser : public RedNode {
-	public:
-	};
-
-
-	class RedInst : public RedUser {
-		GreenInst *Green;
-		RedStmt *Parent;
-	public:
-		RedNode * getParent() const override { return Parent; };
-	};
-
-	class RedExpr :  public RedUser {
-		RedStmt *Stmt;
-		RedExpr *Parent;
-		int ParentOperandNo;
-	public:
-		 RedNode *getParent() const override { return Parent; };
-	};
-
-
-	class RedConstExpr : public RedExpr {
-		GreenConstExpr *Green;
-
-		RedConstExpr(GreenConstExpr *Green) : Green(Green) {}
-	public:
-		const RedConstExpr *create(GreenConstExpr *Green) { return new RedConstExpr(Green); }
-	};
-#endif
 
 
 
 	 ArrayRef < GreenNode * >  GreenRoot::getChildren() const  {		
 		GreenNode *X = Block;
 		return   {X};		
-	};
+	}
 
+
+	  ArrayRef <GreenNode * > GreenStore:: getChildren() const { 
+		 return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],(size_t)2); 
+	 }
 
 
 	class LoopOptimizer {
@@ -500,10 +422,12 @@ namespace {
 
 
 		DenseMap <Constant *, GreenConst*> ConstCache;
-		GreenConst *createGreen(Constant *C) ;
+		GreenConst *getGreen(Constant *C) ;
 
 		DenseMap <Instruction *, GreenInst*> InstCache;
-		GreenInst *createGreen(Instruction *I) ;
+		GreenInst *getGreen(Instruction *I) ;
+
+		GreenExpr *getGreen(Value *V);
 
 
 	public:
@@ -582,18 +506,23 @@ GreenExpr *LoopOptimizer::createExpr(Value *I) const {
 }
 
 
-GreenConst *LoopOptimizer::createGreen(Constant *C) {
+GreenConst *LoopOptimizer::getGreen(Constant *C) {
 	auto &Result =	ConstCache[C];
 	if (!Result)
 		 Result= GreenConst::create(C);
 return Result;
 }
 
-GreenInst *LoopOptimizer::createGreen(Instruction *I) {
+GreenInst *LoopOptimizer::getGreen(Instruction *I) {
 	auto &Result = InstCache[I];
 	if (!Result) {
 		switch (I->getOpcode()) {
-		case Instruction::Store:
+		case Instruction::Store: {
+			auto S = cast<StoreInst>(I);
+			auto Val = getGreen( S->getValueOperand());
+			auto Ptr = getGreen(S->getPointerOperand());
+			Result = GreenStore::create(Val, Ptr);
+		} break;
 		default:
 			llvm_unreachable("unimplemented");
 		}
@@ -601,12 +530,21 @@ GreenInst *LoopOptimizer::createGreen(Instruction *I) {
 	return Result;
 }
 
+GreenExpr *LoopOptimizer::getGreen(Value *V){
+	if (isa<Constant>(V))
+		return getGreen(cast<Constant>(V));
+	if (isa<Instruction>(V))
+		return GreenReg::create(V); // Value can be differnt in different statements.
+	llvm_unreachable("unimplemented");
+}
+
 bool LoopOptimizer::optimize() {
 	for (auto& BB : *F) {
 		for (auto &I : BB) {
-			createGreen(&I);
+			getGreen(&I);
 		}
 	}
+	return false;
 }
 
 
