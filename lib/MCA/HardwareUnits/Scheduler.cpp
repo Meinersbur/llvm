@@ -74,7 +74,7 @@ void Scheduler::issueInstructionImpl(
 
   // Notify the instruction that it started executing.
   // This updates the internal state of each write.
-  IS->execute();
+  IS->execute(IR.getSourceIndex());
 
   if (IS->isExecuting())
     IssuedSet.emplace_back(IR);
@@ -288,7 +288,8 @@ void Scheduler::dispatch(const InstRef &IR) {
 bool Scheduler::isReady(const InstRef &IR) const {
   const InstrDesc &Desc = IR.getInstruction()->getDesc();
   bool IsMemOp = Desc.MayLoad || Desc.MayStore;
-  return IR.getInstruction()->isReady() && (!IsMemOp || LSU.isReady(IR));
+  return IR.getInstruction()->isReady() &&
+         (!IsMemOp || LSU.isReady(IR) == IR.getSourceIndex());
 }
 
 } // namespace mca
