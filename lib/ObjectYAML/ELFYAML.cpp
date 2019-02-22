@@ -446,7 +446,6 @@ void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
   ECase(SHT_GROUP);
   ECase(SHT_SYMTAB_SHNDX);
   ECase(SHT_RELR);
-  ECase(SHT_LOOS);
   ECase(SHT_ANDROID_REL);
   ECase(SHT_ANDROID_RELA);
   ECase(SHT_ANDROID_RELR);
@@ -459,8 +458,6 @@ void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
   ECase(SHT_GNU_verdef);
   ECase(SHT_GNU_verneed);
   ECase(SHT_GNU_versym);
-  ECase(SHT_HIOS);
-  ECase(SHT_LOPROC);
   switch (Object->Header.Machine) {
   case ELF::EM_ARM:
     ECase(SHT_ARM_EXIDX);
@@ -478,6 +475,7 @@ void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
   case ELF::EM_MIPS:
     ECase(SHT_MIPS_REGINFO);
     ECase(SHT_MIPS_OPTIONS);
+    ECase(SHT_MIPS_DWARF);
     ECase(SHT_MIPS_ABIFLAGS);
     break;
   default:
@@ -485,6 +483,7 @@ void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
     break;
   }
 #undef ECase
+  IO.enumFallback<Hex32>(Value);
 }
 
 void ScalarBitSetTraits<ELFYAML::ELF_PF>::bitset(IO &IO,
@@ -833,9 +832,6 @@ StringRef MappingTraits<ELFYAML::Symbol>::validate(IO &IO,
   if (Symbol.Index && *Symbol.Index == ELFYAML::ELF_SHN(ELF::SHN_XINDEX)) {
     return "Large indexes are not supported";
   }
-  if (Symbol.Index && *Symbol.Index < ELFYAML::ELF_SHN(ELF::SHN_LORESERVE)) {
-    return "Use a section name to define which section a symbol is defined in";
-  }
   return StringRef();
 }
 
@@ -870,6 +866,12 @@ static void sectionMapping(IO &IO, ELFYAML::RawContentSection &Section) {
 static void sectionMapping(IO &IO, ELFYAML::NoBitsSection &Section) {
   commonSectionMapping(IO, Section);
   IO.mapOptional("Size", Section.Size, Hex64(0));
+}
+
+static void sectionMapping(IO &IO, ELFYAML::VerdefSection &Section) {
+  commonSectionMapping(IO, Section);
+  IO.mapRequired("Info", Section.Info);
+  IO.mapRequired("Entries", Section.Entries);
 }
 
 static void sectionMapping(IO &IO, ELFYAML::SymverSection &Section) {
@@ -960,6 +962,11 @@ void MappingTraits<std::unique_ptr<ELFYAML::Section>>::mapping(
       Section.reset(new ELFYAML::MipsABIFlags());
     sectionMapping(IO, *cast<ELFYAML::MipsABIFlags>(Section.get()));
     break;
+  case ELF::SHT_GNU_verdef:
+    if (!IO.outputting())
+      Section.reset(new ELFYAML::VerdefSection());
+    sectionMapping(IO, *cast<ELFYAML::VerdefSection>(Section.get()));
+    break;
   case ELF::SHT_GNU_versym:
     if (!IO.outputting())
       Section.reset(new ELFYAML::SymverSection());
@@ -1016,6 +1023,17 @@ void MappingTraits<ELFYAML::DynamicEntry>::mapping(IO &IO,
 
   IO.mapRequired("Tag", Rel.Tag);
   IO.mapRequired("Value", Rel.Val);
+}
+
+void MappingTraits<ELFYAML::VerdefEntry>::mapping(IO &IO,
+                                                  ELFYAML::VerdefEntry &E) {
+  assert(IO.getContext() && "The IO context is not initialized");
+
+  IO.mapRequired("Version", E.Version);
+  IO.mapRequired("Flags", E.Flags);
+  IO.mapRequired("VersionNdx", E.VersionNdx);
+  IO.mapRequired("Hash", E.Hash);
+  IO.mapRequired("Names", E.VerNames);
 }
 
 void MappingTraits<ELFYAML::VerneedEntry>::mapping(IO &IO,
