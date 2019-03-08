@@ -147,9 +147,7 @@ def SIbuffer_store_format_d16 : SDNode <"AMDGPUISD::BUFFER_STORE_FORMAT_D16",
 
 class SDBufferAtomic<string opcode> : SDNode <opcode,
   SDTypeProfile<1, 8,
-      [SDTCisVT<0, i32>,   // dst
-       SDTCisVT<1, i32>,   // vdata
-       SDTCisVT<2, v4i32>, // rsrc
+       [SDTCisVT<2, v4i32>, // rsrc
        SDTCisVT<3, i32>,   // vindex(VGPR)
        SDTCisVT<4, i32>,   // voffset(VGPR)
        SDTCisVT<5, i32>,   // soffset(SGPR)
@@ -863,7 +861,7 @@ def FP32SDWAInputMods : FPSDWAInputMods<FP32SDWAInputModsMatchClass>;
 def FPVRegInputModsMatchClass : AsmOperandClass {
   let Name = "VRegWithFPInputMods";
   let ParserMethod = "parseRegWithFPInputMods";
-  let PredicateMethod = "isVReg";
+  let PredicateMethod = "isVReg32";
 }
 
 def FPVRegInputMods : InputMods <FPVRegInputModsMatchClass> {
@@ -890,7 +888,7 @@ def Int32SDWAInputMods : IntSDWAInputMods<Int32SDWAInputModsMatchClass>;
 def IntVRegInputModsMatchClass : AsmOperandClass {
   let Name = "VRegWithIntInputMods";
   let ParserMethod = "parseRegWithIntInputMods";
-  let PredicateMethod = "isVReg";
+  let PredicateMethod = "isVReg32";
 }
 
 def IntVRegInputMods : InputMods <IntVRegInputModsMatchClass> {

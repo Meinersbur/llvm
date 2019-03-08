@@ -223,18 +223,9 @@ static Error dumpSectionToFile(StringRef SecName, StringRef Filename,
   return createStringError(object_error::parse_failed, "Section not found");
 }
 
-static bool isCompressed(const SectionBase &Section) {
-  const char *Magic = "ZLIB";
-  return StringRef(Section.Name).startswith(".zdebug") ||
-         (Section.OriginalData.size() > strlen(Magic) &&
-          !strncmp(reinterpret_cast<const char *>(Section.OriginalData.data()),
-                   Magic, strlen(Magic))) ||
-         (Section.Flags & ELF::SHF_COMPRESSED);
-}
-
 static bool isCompressable(const SectionBase &Section) {
-  return !isCompressed(Section) && isDebugSection(Section) &&
-         Section.Name != ".gdb_index";
+  return !(Section.Flags & ELF::SHF_COMPRESSED) &&
+         StringRef(Section.Name).startswith(".debug");
 }
 
 static void replaceDebugSections(
@@ -569,11 +560,13 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
   for (const NewSymbolInfo &SI : Config.SymbolsToAdd) {
     SectionBase *Sec = Obj.findSection(SI.SectionName);
     uint64_t Value = Sec ? Sec->Addr + SI.Value : SI.Value;
-    Obj.SymbolTable->addSymbol(SI.SymbolName, SI.Bind, SI.Type, Sec, Value,
-                               SI.Visibility,
-                               Sec ? SYMBOL_SIMPLE_INDEX : SHN_ABS, 0);
+    Obj.SymbolTable->addSymbol(
+        SI.SymbolName, SI.Bind, SI.Type, Sec, Value, SI.Visibility,
+        Sec ? (uint16_t)SYMBOL_SIMPLE_INDEX : (uint16_t)SHN_ABS, 0);
   }
 
+  if (Config.EntryExpr)
+    Obj.Entry = Config.EntryExpr(Obj.Entry);
   return Error::success();
 }
 

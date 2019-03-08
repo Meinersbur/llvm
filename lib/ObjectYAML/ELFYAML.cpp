@@ -232,8 +232,9 @@ void ScalarEnumerationTraits<ELFYAML::ELF_ELFCLASS>::enumeration(
 void ScalarEnumerationTraits<ELFYAML::ELF_ELFDATA>::enumeration(
     IO &IO, ELFYAML::ELF_ELFDATA &Value) {
 #define ECase(X) IO.enumCase(Value, #X, ELF::X)
-  // Since the semantics of ELFDATANONE is "invalid", just don't accept it
-  // here.
+  // ELFDATANONE is an invalid data encoding, but we accept it because
+  // we want to be able to produce invalid binaries for the tests.
+  ECase(ELFDATANONE);
   ECase(ELFDATA2LSB);
   ECase(ELFDATA2MSB);
 #undef ECase
@@ -662,19 +663,44 @@ void ScalarEnumerationTraits<ELFYAML::ELF_REL>::enumeration(
 
 void ScalarEnumerationTraits<ELFYAML::ELF_DYNTAG>::enumeration(
     IO &IO, ELFYAML::ELF_DYNTAG &Value) {
-  assert(IO.getContext() && "The IO context is not initialized");
+  const auto *Object = static_cast<ELFYAML::Object *>(IO.getContext());
+  assert(Object && "The IO context is not initialized");
 
-// TODO: For simplicity we do not handle target specific flags. They are
-// still supported and will be shown as a raw numeric values in the output.
+// Disable architecture specific tags by default. We might enable them below.
 #define MIPS_DYNAMIC_TAG(name, value)
 #define HEXAGON_DYNAMIC_TAG(name, value)
 #define PPC64_DYNAMIC_TAG(name, value)
-// Also ignore marker tags such as DT_HIOS (maps to DT_VERNEEDNUM), etc.
+// Ignore marker tags such as DT_HIOS (maps to DT_VERNEEDNUM), etc.
 #define DYNAMIC_TAG_MARKER(name, value)
 
 #define STRINGIFY(X) (#X)
 #define DYNAMIC_TAG(X, Y) IO.enumCase(Value, STRINGIFY(DT_##X), ELF::DT_##X);
+  switch (Object->Header.Machine) {
+  case ELF::EM_MIPS:
+#undef MIPS_DYNAMIC_TAG
+#define MIPS_DYNAMIC_TAG(name, value) DYNAMIC_TAG(name, value)
 #include "llvm/BinaryFormat/DynamicTags.def"
+#undef MIPS_DYNAMIC_TAG
+#define MIPS_DYNAMIC_TAG(name, value)
+    break;
+  case ELF::EM_HEXAGON:
+#undef HEXAGON_DYNAMIC_TAG
+#define HEXAGON_DYNAMIC_TAG(name, value) DYNAMIC_TAG(name, value)
+#include "llvm/BinaryFormat/DynamicTags.def"
+#undef HEXAGON_DYNAMIC_TAG
+#define HEXAGON_DYNAMIC_TAG(name, value)
+    break;
+  case ELF::EM_PPC64:
+#undef PPC64_DYNAMIC_TAG
+#define PPC64_DYNAMIC_TAG(name, value) DYNAMIC_TAG(name, value)
+#include "llvm/BinaryFormat/DynamicTags.def"
+#undef PPC64_DYNAMIC_TAG
+#define PPC64_DYNAMIC_TAG(name, value)
+    break;
+  default:
+#include "llvm/BinaryFormat/DynamicTags.def"
+    break;
+  }
 
 #undef MIPS_DYNAMIC_TAG
 #undef HEXAGON_DYNAMIC_TAG
@@ -862,6 +888,7 @@ static void sectionMapping(IO &IO, ELFYAML::RawContentSection &Section) {
   commonSectionMapping(IO, Section);
   IO.mapOptional("Content", Section.Content);
   IO.mapOptional("Size", Section.Size, Hex64(Section.Content.binary_size()));
+  IO.mapOptional("Info", Section.Info, Hex64(0));
 }
 
 static void sectionMapping(IO &IO, ELFYAML::NoBitsSection &Section) {

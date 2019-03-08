@@ -176,19 +176,14 @@ void printDynamicSection(const ELFFile<ELFT> *Elf, StringRef Filename) {
     if (Dyn.d_tag == ELF::DT_NULL)
       continue;
 
-    StringRef Str = StringRef(Elf->getDynamicTagAsString(Dyn.d_tag));
-
-    if (Str.empty()) {
-      std::string HexStr = utohexstr(static_cast<uint64_t>(Dyn.d_tag), true);
-      outs() << format("  0x%-19s", HexStr.c_str());
-    } else {
-      // We use "-21" in order to match GNU objdump's output.
-      outs() << format("  %-21s", Str.data());
-    }
+    std::string Str = Elf->getDynamicTagAsString(Dyn.d_tag);
+    outs() << format("  %-21s", Str.c_str());
 
     const char *Fmt =
         ELFT::Is64Bits ? "0x%016" PRIx64 "\n" : "0x%08" PRIx64 "\n";
-    if (Dyn.d_tag == ELF::DT_NEEDED) {
+    if (Dyn.d_tag == ELF::DT_NEEDED || Dyn.d_tag == ELF::DT_RPATH ||
+        Dyn.d_tag == ELF::DT_RUNPATH || Dyn.d_tag == ELF::DT_SONAME ||
+        Dyn.d_tag == ELF::DT_AUXILIARY || Dyn.d_tag == ELF::DT_FILTER) {
       Expected<StringRef> StrTabOrErr = getDynamicStrTab(Elf);
       if (StrTabOrErr) {
         const char *Data = StrTabOrErr.get().data();
@@ -298,6 +293,43 @@ void printSymbolVersionDependency(ArrayRef<uint8_t> Contents,
 }
 
 template <class ELFT>
+void printSymbolVersionDefinition(const typename ELFT::Shdr &Shdr,
+                                  ArrayRef<uint8_t> Contents,
+                                  StringRef StrTab) {
+  typedef ELFFile<ELFT> ELFO;
+  typedef typename ELFO::Elf_Verdef Elf_Verdef;
+  typedef typename ELFO::Elf_Verdaux Elf_Verdaux;
+
+  outs() << "Version definitions:\n";
+
+  const uint8_t *Buf = Contents.data();
+  uint32_t VerdefIndex = 1;
+  // sh_info contains the number of entries in the SHT_GNU_verdef section. To
+  // make the index column have consistent width, we should insert blank spaces
+  // according to sh_info.
+  uint16_t VerdefIndexWidth = std::to_string(Shdr.sh_info).size();
+  while (Buf) {
+    const Elf_Verdef *Verdef = reinterpret_cast<const Elf_Verdef *>(Buf);
+    outs() << format_decimal(VerdefIndex++, VerdefIndexWidth) << " "
+           << format("0x%02" PRIx16 " ", (uint16_t)Verdef->vd_flags)
+           << format("0x%08" PRIx32 " ", (uint32_t)Verdef->vd_hash);
+
+    const uint8_t *BufAux = Buf + Verdef->vd_aux;
+    uint16_t VerdauxIndex = 0;
+    while (BufAux) {
+      const Elf_Verdaux *Verdaux =
+          reinterpret_cast<const Elf_Verdaux *>(BufAux);
+      if (VerdauxIndex)
+        outs() << std::string(VerdefIndexWidth + 17, ' ');
+      outs() << StringRef(StrTab.drop_front(Verdaux->vda_name).data()) << '\n';
+      BufAux = Verdaux->vda_next ? BufAux + Verdaux->vda_next : nullptr;
+      ++VerdauxIndex;
+    }
+    Buf = Verdef->vd_next ? Buf + Verdef->vd_next : nullptr;
+  }
+}
+
+template <class ELFT>
 void printSymbolVersionInfo(const ELFFile<ELFT> *Elf, StringRef FileName) {
   typedef typename ELFT::Shdr Elf_Shdr;
 
@@ -306,7 +338,8 @@ void printSymbolVersionInfo(const ELFFile<ELFT> *Elf, StringRef FileName) {
     report_error(FileName, SectionsOrError.takeError());
 
   for (const Elf_Shdr &Shdr : *SectionsOrError) {
-    if (Shdr.sh_type != ELF::SHT_GNU_verneed)
+    if (Shdr.sh_type != ELF::SHT_GNU_verneed &&
+        Shdr.sh_type != ELF::SHT_GNU_verdef)
       continue;
 
     auto ContentsOrError = Elf->getSectionContents(&Shdr);
@@ -321,8 +354,11 @@ void printSymbolVersionInfo(const ELFFile<ELFT> *Elf, StringRef FileName) {
     if (!StrTabOrError)
       report_error(FileName, StrTabOrError.takeError());
 
-    printSymbolVersionDependency<ELFT>(*ContentsOrError, *StrTabOrError);
-    // TODO: Implement symbol version definitions dumper.
+    if (Shdr.sh_type == ELF::SHT_GNU_verneed)
+      printSymbolVersionDependency<ELFT>(*ContentsOrError, *StrTabOrError);
+    else
+      printSymbolVersionDefinition<ELFT>(Shdr, *ContentsOrError,
+                                         *StrTabOrError);
   }
 }
 

@@ -182,13 +182,6 @@ getDecompressedSizeAndAlignment(ArrayRef<uint8_t> Data) {
 
 template <class ELFT>
 void ELFSectionWriter<ELFT>::visit(const DecompressedSection &Sec) {
-  uint8_t *Buf = Out.getBufferStart() + Sec.Offset;
-
-  if (!zlib::isAvailable()) {
-    std::copy(Sec.OriginalData.begin(), Sec.OriginalData.end(), Buf);
-    return;
-  }
-
   const size_t DataOffset = isDataGnuCompressed(Sec.OriginalData)
                                 ? (ZlibGnuMagic.size() + sizeof(Sec.Size))
                                 : sizeof(Elf_Chdr_Impl<ELFT>);
@@ -202,6 +195,7 @@ void ELFSectionWriter<ELFT>::visit(const DecompressedSection &Sec) {
                                  static_cast<size_t>(Sec.Size)))
     reportError(Sec.Name, std::move(E));
 
+  uint8_t *Buf = Out.getBufferStart() + Sec.Offset;
   std::copy(DecompressedContent.begin(), DecompressedContent.end(), Buf);
 }
 
@@ -263,12 +257,6 @@ CompressedSection::CompressedSection(const SectionBase &Sec,
                                      DebugCompressionType CompressionType)
     : SectionBase(Sec), CompressionType(CompressionType),
       DecompressedSize(Sec.OriginalData.size()), DecompressedAlign(Sec.Align) {
-
-  if (!zlib::isAvailable()) {
-    CompressionType = DebugCompressionType::None;
-    return;
-  }
-
   if (Error E = zlib::compress(
           StringRef(reinterpret_cast<const char *>(OriginalData.data()),
                     OriginalData.size()),
@@ -546,14 +534,25 @@ void SymbolTableSection::accept(MutableSectionVisitor &Visitor) {
   Visitor.visit(*this);
 }
 
-template <class SymTabType>
-Error RelocSectionWithSymtabBase<SymTabType>::removeSectionReferences(
+Error RelocationSection::removeSectionReferences(
     function_ref<bool(const SectionBase *)> ToRemove) {
   if (ToRemove(Symbols))
     return createStringError(llvm::errc::invalid_argument,
                              "Symbol table %s cannot be removed because it is "
                              "referenced by the relocation section %s.",
                              Symbols->Name.data(), this->Name.data());
+
+  for (const Relocation &R : Relocations) {
+    if (!R.RelocSymbol->DefinedIn || !ToRemove(R.RelocSymbol->DefinedIn))
+      continue;
+    return createStringError(llvm::errc::invalid_argument,
+                             "Section %s can't be removed: (%s+0x%" PRIx64
+                             ") has relocation against symbol '%s'",
+                             R.RelocSymbol->DefinedIn->Name.data(),
+                             SecToApplyRel->Name.data(), R.Offset,
+                             R.RelocSymbol->Name.c_str());
+  }
+
   return Error::success();
 }
 
@@ -1100,7 +1099,8 @@ SectionBase &ELFBuilder<ELFT>::makeSection(const Elf_Shdr &Shdr) {
   default: {
     Data = unwrapOrError(ElfFile.getSectionContents(&Shdr));
 
-    if (isDataGnuCompressed(Data) || (Shdr.sh_flags & ELF::SHF_COMPRESSED)) {
+    StringRef Name = unwrapOrError(ElfFile.getSectionName(&Shdr));
+    if (Name.startswith(".zdebug") || (Shdr.sh_flags & ELF::SHF_COMPRESSED)) {
       uint64_t DecompressedSize, DecompressedAlign;
       std::tie(DecompressedSize, DecompressedAlign) =
           getDecompressedSizeAndAlignment<ELFT>(Data);
@@ -1361,12 +1361,20 @@ Error Object::removeSections(
       Segment->removeSection(RemoveSec.get());
     RemoveSections.insert(RemoveSec.get());
   }
-  for (auto &KeepSec : make_range(std::begin(Sections), Iter))
+
+  // For each section that remains alive, we want to remove the dead references.
+  // This either might update the content of the section (e.g. remove symbols
+  // from symbol table that belongs to removed section) or trigger an error if
+  // a live section critically depends on a section being removed somehow
+  // (e.g. the removed section is referenced by a relocation).
+  for (auto &KeepSec : make_range(std::begin(Sections), Iter)) {
     if (Error E = KeepSec->removeSectionReferences(
             [&RemoveSections](const SectionBase *Sec) {
               return RemoveSections.find(Sec) != RemoveSections.end();
             }))
       return E;
+  }
+
   // Now finally get rid of them all togethor.
   Sections.erase(Iter, std::end(Sections));
   return Error::success();

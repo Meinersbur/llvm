@@ -1163,8 +1163,8 @@ bool TargetLowering::SimplifyDemandedBits(
     if (SimplifyDemandedBits(Src, InDemandedBits, Known, TLO, Depth + 1))
       return true;
     assert(!Known.hasConflict() && "Bits known to be one AND zero?");
-    Known = Known.zext(BitWidth);
-    Known.Zero.setBitsFrom(InBits);
+    assert(Known.getBitWidth() == InBits && "Src width has changed?");
+    Known = Known.zext(BitWidth, true /* ExtendedBitsAreKnownZero */);
     break;
   }
   case ISD::SIGN_EXTEND: {
@@ -1217,7 +1217,7 @@ bool TargetLowering::SimplifyDemandedBits(
     if (SimplifyDemandedBits(Src, InDemandedBits, Known, TLO, Depth + 1))
       return true;
     assert(!Known.hasConflict() && "Bits known to be one AND zero?");
-    Known = Known.zext(BitWidth);
+    Known = Known.zext(BitWidth, false /* => any extend */);
     break;
   }
   case ISD::TRUNCATE: {
@@ -1312,7 +1312,7 @@ bool TargetLowering::SimplifyDemandedBits(
 
     Known = Known2;
     if (BitWidth > EltBitWidth)
-      Known = Known.zext(BitWidth);
+      Known = Known.zext(BitWidth, false /* => any extend */);
     break;
   }
   case ISD::BITCAST: {
@@ -1712,7 +1712,7 @@ bool TargetLowering::SimplifyDemandedVectorElts(
     SDValue Sub = Op.getOperand(1);
     EVT SubVT = Sub.getValueType();
     unsigned NumSubElts = SubVT.getVectorNumElements();
-    const APInt &Idx = cast<ConstantSDNode>(Op.getOperand(2))->getAPIntValue();
+    const APInt &Idx = Op.getConstantOperandAPInt(2);
     if (Idx.ugt(NumElts - NumSubElts))
       break;
     unsigned SubIdx = Idx.getZExtValue();
@@ -2379,8 +2379,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (N0.getOpcode() == ISD::SRL && (C1.isNullValue() || C1.isOneValue()) &&
         N0.getOperand(0).getOpcode() == ISD::CTLZ &&
         N0.getOperand(1).getOpcode() == ISD::Constant) {
-      const APInt &ShAmt
-        = cast<ConstantSDNode>(N0.getOperand(1))->getAPIntValue();
+      const APInt &ShAmt = N0.getConstantOperandAPInt(1);
       if ((Cond == ISD::SETEQ || Cond == ISD::SETNE) &&
           ShAmt == Log2_32(N0.getValueSizeInBits())) {
         if ((C1 == 0) == (Cond == ISD::SETEQ)) {
@@ -2531,8 +2530,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         // 8 bits, but have to be careful...
         if (Lod->getExtensionType() != ISD::NON_EXTLOAD)
           origWidth = Lod->getMemoryVT().getSizeInBits();
-        const APInt &Mask =
-          cast<ConstantSDNode>(N0.getOperand(1))->getAPIntValue();
+        const APInt &Mask = N0.getConstantOperandAPInt(1);
         for (unsigned width = origWidth / 2; width>=8; width /= 2) {
           APInt newMask = APInt::getLowBitsSet(maskWidth, width);
           for (unsigned offset=0; offset<origWidth/width; offset++) {
@@ -5395,10 +5393,8 @@ SDValue TargetLowering::expandAddSubSat(SDNode *Node, SelectionDAG &DAG) const {
   EVT VT = LHS.getValueType();
   SDLoc dl(Node);
 
-  assert(LHS.getValueType().isInteger() && "Expected operands to be integers");
-  assert(RHS.getValueType().isInteger() && "Expected operands to be integers");
-  assert(LHS.getValueType() == RHS.getValueType() &&
-         "Expected both operands to be the same type");
+  assert(VT == RHS.getValueType() && "Expected operands to be the same type");
+  assert(VT.isInteger() && "Expected operands to be integers");
 
   // usub.sat(a, b) -> umax(a, b) - b
   if (Opcode == ISD::USUBSAT && isOperationLegalOrCustom(ISD::UMAX, VT)) {
@@ -5432,35 +5428,30 @@ SDValue TargetLowering::expandAddSubSat(SDNode *Node, SelectionDAG &DAG) const {
   }
 
   unsigned BitWidth = LHS.getScalarValueSizeInBits();
-  EVT ResultType = LHS.getValueType();
-  EVT BoolVT =
-      getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), ResultType);
-  SDValue Result =
-      DAG.getNode(OverflowOp, dl, DAG.getVTList(ResultType, BoolVT), LHS, RHS);
+  EVT BoolVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
+  SDValue Result = DAG.getNode(OverflowOp, dl, DAG.getVTList(VT, BoolVT),
+                               LHS, RHS);
   SDValue SumDiff = Result.getValue(0);
   SDValue Overflow = Result.getValue(1);
-  SDValue Zero = DAG.getConstant(0, dl, ResultType);
+  SDValue Zero = DAG.getConstant(0, dl, VT);
+  SDValue AllOnes = DAG.getAllOnesConstant(dl, VT);
 
   if (Opcode == ISD::UADDSAT) {
-    // Just need to check overflow for SatMax.
-    APInt MaxVal = APInt::getMaxValue(BitWidth);
-    SDValue SatMax = DAG.getConstant(MaxVal, dl, ResultType);
-    return DAG.getSelect(dl, ResultType, Overflow, SatMax, SumDiff);
+    // Overflow ? 0xffff.... : (LHS + RHS)
+    return DAG.getSelect(dl, VT, Overflow, AllOnes, SumDiff);
   } else if (Opcode == ISD::USUBSAT) {
-    // Just need to check overflow for SatMin.
-    APInt MinVal = APInt::getMinValue(BitWidth);
-    SDValue SatMin = DAG.getConstant(MinVal, dl, ResultType);
-    return DAG.getSelect(dl, ResultType, Overflow, SatMin, SumDiff);
+    // Overflow ? 0 : (LHS - RHS)
+    return DAG.getSelect(dl, VT, Overflow, Zero, SumDiff);
   } else {
     // SatMax -> Overflow && SumDiff < 0
     // SatMin -> Overflow && SumDiff >= 0
     APInt MinVal = APInt::getSignedMinValue(BitWidth);
     APInt MaxVal = APInt::getSignedMaxValue(BitWidth);
-    SDValue SatMin = DAG.getConstant(MinVal, dl, ResultType);
-    SDValue SatMax = DAG.getConstant(MaxVal, dl, ResultType);
+    SDValue SatMin = DAG.getConstant(MinVal, dl, VT);
+    SDValue SatMax = DAG.getConstant(MaxVal, dl, VT);
     SDValue SumNeg = DAG.getSetCC(dl, BoolVT, SumDiff, Zero, ISD::SETLT);
-    Result = DAG.getSelect(dl, ResultType, SumNeg, SatMax, SatMin);
-    return DAG.getSelect(dl, ResultType, Overflow, Result, SumDiff);
+    Result = DAG.getSelect(dl, VT, SumNeg, SatMax, SatMin);
+    return DAG.getSelect(dl, VT, Overflow, Result, SumDiff);
   }
 }
 

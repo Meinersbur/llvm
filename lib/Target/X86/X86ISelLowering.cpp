@@ -2976,22 +2976,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
   else
     ValVT = VA.getValVT();
 
-  // Calculate SP offset of interrupt parameter, re-arrange the slot normally
-  // taken by a return address.
-  int Offset = 0;
-  if (CallConv == CallingConv::X86_INTR) {
-    // X86 interrupts may take one or two arguments.
-    // On the stack there will be no return address as in regular call.
-    // Offset of last argument need to be set to -4/-8 bytes.
-    // Where offset of the first argument out of two, should be set to 0 bytes.
-    Offset = (Subtarget.is64Bit() ? 8 : 4) * ((i + 1) % Ins.size() - 1);
-    if (Subtarget.is64Bit() && Ins.size() == 2) {
-      // The stack pointer needs to be realigned for 64 bit handlers with error
-      // code, so the argument offset changes by 8 bytes.
-      Offset += 8;
-    }
-  }
-
   // FIXME: For now, all byval parameter objects are marked mutable. This can be
   // changed with more analysis.
   // In case of tail call optimization mark all arguments mutable. Since they
@@ -3004,10 +2988,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     // can be improved with deeper analysis.
     int FI = MFI.CreateFixedObject(Bytes, VA.getLocMemOffset(), isImmutable,
                                    /*isAliased=*/true);
-    // Adjust SP offset of interrupt parameter.
-    if (CallConv == CallingConv::X86_INTR) {
-      MFI.setObjectOffset(FI, Offset);
-    }
     return DAG.getFrameIndex(FI, PtrVT);
   }
 
@@ -3060,11 +3040,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     MFI.setObjectZExt(FI, true);
   } else if (VA.getLocInfo() == CCValAssign::SExt) {
     MFI.setObjectSExt(FI, true);
-  }
-
-  // Adjust SP offset of interrupt parameter.
-  if (CallConv == CallingConv::X86_INTR) {
-    MFI.setObjectOffset(FI, Offset);
   }
 
   SDValue FIN = DAG.getFrameIndex(FI, PtrVT);
@@ -3155,14 +3130,6 @@ SDValue X86TargetLowering::LowerFormalArguments(
   assert(
       !(isVarArg && canGuaranteeTCO(CallConv)) &&
       "Var args not supported with calling conv' regcall, fastcc, ghc or hipe");
-
-  if (CallConv == CallingConv::X86_INTR) {
-    bool isLegal = Ins.size() == 1 ||
-                   (Ins.size() == 2 && ((Is64Bit && Ins[1].VT == MVT::i64) ||
-                                        (!Is64Bit && Ins[1].VT == MVT::i32)));
-    if (!isLegal)
-      report_fatal_error("X86 interrupts may take one or two arguments");
-  }
 
   // Assign locations to all of the incoming arguments.
   SmallVector<CCValAssign, 16> ArgLocs;
@@ -6917,6 +6884,28 @@ static SDValue getShuffleScalarElt(SDNode *N, unsigned Index, SelectionDAG &DAG,
                                Depth+1);
   }
 
+  // Recurse into insert_subvector base/sub vector to find scalars.
+  if (Opcode == ISD::INSERT_SUBVECTOR &&
+      isa<ConstantSDNode>(N->getOperand(2))) {
+    SDValue Vec = N->getOperand(0);
+    SDValue Sub = N->getOperand(1);
+    EVT SubVT = Sub.getValueType();
+    unsigned NumSubElts = SubVT.getVectorNumElements();
+    uint64_t SubIdx = N->getConstantOperandVal(2);
+
+    if (SubIdx <= Index && Index < (SubIdx + NumSubElts))
+      return getShuffleScalarElt(Sub.getNode(), Index - SubIdx, DAG, Depth + 1);
+    return getShuffleScalarElt(Vec.getNode(), Index, DAG, Depth + 1);
+  }
+
+  // Recurse into extract_subvector src vector to find scalars.
+  if (Opcode == ISD::EXTRACT_SUBVECTOR &&
+      isa<ConstantSDNode>(N->getOperand(1))) {
+    SDValue Src = N->getOperand(0);
+    uint64_t SrcIdx = N->getConstantOperandVal(1);
+    return getShuffleScalarElt(Src.getNode(), Index + SrcIdx, DAG, Depth + 1);
+  }
+
   // Actual nodes that may contain scalar elements
   if (Opcode == ISD::BITCAST) {
     V = V.getOperand(0);
@@ -7481,20 +7470,42 @@ static SDValue EltsFromConsecutiveLoads(EVT VT, ArrayRef<SDValue> Elts,
       if (RepeatSize > ScalarSize)
         RepeatVT = EVT::getVectorVT(*DAG.getContext(), RepeatVT,
                                     RepeatSize / ScalarSize);
-      if (SDValue RepeatLoad = EltsFromConsecutiveLoads(
-              RepeatVT, RepeatedLoads, DL, DAG, Subtarget, isAfterLegalize)) {
-        EVT BroadcastVT =
-            EVT::getVectorVT(*DAG.getContext(), RepeatVT.getScalarType(),
-                             VT.getSizeInBits() / ScalarSize);
-        unsigned Opcode = RepeatSize > ScalarSize ? X86ISD::SUBV_BROADCAST
-                                                  : X86ISD::VBROADCAST;
-        SDValue Broadcast = DAG.getNode(Opcode, DL, BroadcastVT, RepeatLoad);
-        return DAG.getBitcast(VT, Broadcast);
+      EVT BroadcastVT =
+          EVT::getVectorVT(*DAG.getContext(), RepeatVT.getScalarType(),
+                           VT.getSizeInBits() / ScalarSize);
+      if (TLI.isTypeLegal(BroadcastVT)) {
+        if (SDValue RepeatLoad = EltsFromConsecutiveLoads(
+                RepeatVT, RepeatedLoads, DL, DAG, Subtarget, isAfterLegalize)) {
+          unsigned Opcode = RepeatSize > ScalarSize ? X86ISD::SUBV_BROADCAST
+                                                    : X86ISD::VBROADCAST;
+          SDValue Broadcast = DAG.getNode(Opcode, DL, BroadcastVT, RepeatLoad);
+          return DAG.getBitcast(VT, Broadcast);
+        }
       }
     }
   }
 
   return SDValue();
+}
+
+// Combine a vector ops (shuffles etc.) that is equal to build_vector load1,
+// load2, load3, load4, <0, 1, 2, 3> into a vector load if the load addresses
+// are consecutive, non-overlapping, and in the right order.
+static SDValue combineToConsecutiveLoads(EVT VT, SDNode *N, const SDLoc &DL,
+                                         SelectionDAG &DAG,
+                                         const X86Subtarget &Subtarget,
+                                         bool isAfterLegalize) {
+  SmallVector<SDValue, 64> Elts;
+  for (unsigned i = 0, e = VT.getVectorNumElements(); i != e; ++i) {
+    if (SDValue Elt = getShuffleScalarElt(N, i, DAG, 0)) {
+      Elts.push_back(Elt);
+      continue;
+    }
+    return SDValue();
+  }
+  assert(Elts.size() == VT.getVectorNumElements());
+  return EltsFromConsecutiveLoads(VT, Elts, DL, DAG, Subtarget,
+                                  isAfterLegalize);
 }
 
 static Constant *getConstantVector(MVT VT, const APInt &SplatValue,
@@ -28803,20 +28814,21 @@ X86TargetLowering::EmitLoweredSelect(MachineInstr &MI,
   X86::CondCode CC = X86::CondCode(MI.getOperand(3).getImm());
   X86::CondCode OppCC = X86::GetOppositeBranchCondition(CC);
   MachineInstr *LastCMOV = &MI;
-  MachineBasicBlock::iterator NextMIIt =
-      std::next(MachineBasicBlock::iterator(MI));
+  MachineBasicBlock::iterator NextMIIt = MachineBasicBlock::iterator(MI);
 
   // Check for case 1, where there are multiple CMOVs with the same condition
   // first.  Of the two cases of multiple CMOV lowerings, case 1 reduces the
   // number of jumps the most.
 
   if (isCMOVPseudo(MI)) {
-    // See if we have a string of CMOVS with the same condition.
+    // See if we have a string of CMOVS with the same condition. Skip over
+    // intervening debug insts.
     while (NextMIIt != ThisMBB->end() && isCMOVPseudo(*NextMIIt) &&
            (NextMIIt->getOperand(3).getImm() == CC ||
             NextMIIt->getOperand(3).getImm() == OppCC)) {
       LastCMOV = &*NextMIIt;
       ++NextMIIt;
+      NextMIIt = skipDebugInstructionsForward(NextMIIt, ThisMBB->end());
     }
   }
 
@@ -28848,8 +28860,18 @@ X86TargetLowering::EmitLoweredSelect(MachineInstr &MI,
     SinkMBB->addLiveIn(X86::EFLAGS);
   }
 
+  // Transfer any debug instructions inside the CMOV sequence to the sunk block.
+  auto DbgEnd = MachineBasicBlock::iterator(LastCMOV);
+  auto DbgIt = MachineBasicBlock::iterator(MI);
+  while (DbgIt != DbgEnd) {
+    auto Next = std::next(DbgIt);
+    if (DbgIt->isDebugInstr())
+      SinkMBB->push_back(DbgIt->removeFromParent());
+    DbgIt = Next;
+  }
+
   // Transfer the remainder of ThisMBB and its successor edges to SinkMBB.
-  SinkMBB->splice(SinkMBB->begin(), ThisMBB,
+  SinkMBB->splice(SinkMBB->end(), ThisMBB,
                   std::next(MachineBasicBlock::iterator(LastCMOV)),
                   ThisMBB->end());
   SinkMBB->transferSuccessorsAndUpdatePHIs(ThisMBB);
@@ -30443,7 +30465,7 @@ void X86TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
     APInt DemandedElt = APInt::getOneBitSet(SrcVT.getVectorNumElements(),
                                             Op.getConstantOperandVal(1));
     Known = DAG.computeKnownBits(Src, DemandedElt, Depth + 1);
-    Known = Known.zextOrTrunc(BitWidth);
+    Known = Known.zextOrTrunc(BitWidth, false);
     Known.Zero.setBitsFrom(SrcVT.getScalarSizeInBits());
     break;
   }
@@ -32793,23 +32815,9 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
     }
   }
 
-  // Combine a vector_shuffle that is equal to build_vector load1, load2, load3,
-  // load4, <0, 1, 2, 3> into a 128-bit load if the load addresses are
-  // consecutive, non-overlapping, and in the right order.
-  SmallVector<SDValue, 16> Elts;
-  for (unsigned i = 0, e = VT.getVectorNumElements(); i != e; ++i) {
-    if (SDValue Elt = getShuffleScalarElt(N, i, DAG, 0)) {
-      Elts.push_back(Elt);
-      continue;
-    }
-    Elts.clear();
-    break;
-  }
-
-  if (Elts.size() == VT.getVectorNumElements())
-    if (SDValue LD =
-            EltsFromConsecutiveLoads(VT, Elts, dl, DAG, Subtarget, true))
-      return LD;
+  // Attempt to combine into a vector load/broadcast.
+  if (SDValue LD = combineToConsecutiveLoads(VT, N, dl, DAG, Subtarget, true))
+    return LD;
 
   // For AVX2, we sometimes want to combine
   // (vector_shuffle <mask> (concat_vectors t1, undef)
@@ -34271,6 +34279,62 @@ static SDValue combineExtractWithShuffle(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+/// Extracting a scalar FP value from vector element 0 is free, so extract each
+/// operand first, then perform the math as a scalar op.
+static SDValue scalarizeExtEltFP(SDNode *ExtElt, SelectionDAG &DAG) {
+  assert(ExtElt->getOpcode() == ISD::EXTRACT_VECTOR_ELT && "Expected extract");
+  SDValue Vec = ExtElt->getOperand(0);
+  SDValue Index = ExtElt->getOperand(1);
+  EVT VT = ExtElt->getValueType(0);
+  EVT VecVT = Vec.getValueType();
+
+  // TODO: If this is a unary/expensive/expand op, allow extraction from a
+  // non-zero element because the shuffle+scalar op will be cheaper?
+  if (!Vec.hasOneUse() || !isNullConstant(Index) || VecVT.getScalarType() != VT)
+    return SDValue();
+
+  if (VT != MVT::f32 && VT != MVT::f64)
+    return SDValue();
+
+  // TODO: This switch could include FNEG, the x86-specific FP logic ops
+  // (FAND, FANDN, FOR, FXOR), FRSQRT/FRCP and other FP math ops. But that may
+  // require enhancements to avoid missed load folding and fma+fneg combining.
+  switch (Vec.getOpcode()) {
+  case ISD::FMA: // Begin 3 operands
+  case ISD::FMAD:
+  case ISD::FADD: // Begin 2 operands
+  case ISD::FSUB:
+  case ISD::FMUL:
+  case ISD::FDIV:
+  case ISD::FREM:
+  case ISD::FCOPYSIGN:
+  case ISD::FMINNUM:
+  case ISD::FMAXNUM:
+  case ISD::FMINNUM_IEEE:
+  case ISD::FMAXNUM_IEEE:
+  case ISD::FMAXIMUM:
+  case ISD::FMINIMUM:
+  case ISD::FABS: // Begin 1 operand
+  case ISD::FSQRT:
+  case ISD::FRINT:
+  case ISD::FCEIL:
+  case ISD::FTRUNC:
+  case ISD::FNEARBYINT:
+  case ISD::FROUND:
+  case ISD::FFLOOR: {
+    // extract (fp X, Y, ...), 0 --> fp (extract X, 0), (extract Y, 0), ...
+    SDLoc DL(ExtElt);
+    SmallVector<SDValue, 4> ExtOps;
+    for (SDValue Op : Vec->ops())
+      ExtOps.push_back(DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, VT, Op, Index));
+    return DAG.getNode(Vec.getOpcode(), DL, VT, ExtOps);
+  }
+  default:
+    return SDValue();
+  }
+  llvm_unreachable("All opcodes should return within switch");
+}
+
 /// Detect vector gather/scatter index generation and convert it from being a
 /// bunch of shuffles and extracts into a somewhat faster sequence.
 /// For i686, the best sequence is apparently storing the value and loading
@@ -34340,6 +34404,9 @@ static SDValue combineExtractVectorElt(SDNode *N, SelectionDAG &DAG,
   // Attempt to replace min/max v8i16/v16i8 reductions with PHMINPOSUW.
   if (SDValue MinMax = combineHorizontalMinMaxResult(N, DAG, Subtarget))
     return MinMax;
+
+  if (SDValue V = scalarizeExtEltFP(N, DAG))
+    return V;
 
   return SDValue();
 }
@@ -37397,6 +37464,12 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
     SDValue Sum = ShAmt1.getOperand(0);
     if (auto *SumC = dyn_cast<ConstantSDNode>(Sum)) {
       SDValue ShAmt1Op1 = ShAmt1.getOperand(1);
+      if (ShAmt1Op1.getOpcode() == ISD::AND &&
+          isa<ConstantSDNode>(ShAmt1Op1.getOperand(1)) &&
+          ShAmt1Op1.getConstantOperandVal(1) == (Bits - 1)) {
+        ShMsk1 = ShAmt1Op1;
+        ShAmt1Op1 = ShAmt1Op1.getOperand(0);
+      }
       if (ShAmt1Op1.getOpcode() == ISD::TRUNCATE)
         ShAmt1Op1 = ShAmt1Op1.getOperand(0);
       if ((SumC->getAPIntValue() == Bits ||
@@ -38748,8 +38821,11 @@ static SDValue combineTruncatedArithmetic(SDNode *N, SelectionDAG &DAG,
       return true;
 
     // See if this is a single use constant which can be constant folded.
-    SDValue BC = peekThroughOneUseBitcasts(Op);
-    return ISD::isBuildVectorOfConstantSDNodes(BC.getNode());
+    // NOTE: We don't peek throught bitcasts here because there is currently
+    // no support for constant folding truncate+bitcast+vector_of_constants. So
+    // we'll just send up with a truncate on both operands which will
+    // get turned back into (truncate (binop)) causing an infinite loop.
+    return ISD::isBuildVectorOfConstantSDNodes(Op.getNode());
   };
 
   auto TruncateArithmetic = [&](SDValue N0, SDValue N1) {
@@ -39547,13 +39623,15 @@ static SDValue combineFMinNumFMaxNum(SDNode *N, SelectionDAG &DAG,
   if (Subtarget.useSoftFloat())
     return SDValue();
 
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
   // TODO: If an operand is already known to be a NaN or not a NaN, this
   //       should be an optional swap and FMAX/FMIN.
 
   EVT VT = N->getValueType(0);
-  if (!((Subtarget.hasSSE1() && (VT == MVT::f32 || VT == MVT::v4f32)) ||
-        (Subtarget.hasSSE2() && (VT == MVT::f64 || VT == MVT::v2f64)) ||
-        (Subtarget.hasAVX() && (VT == MVT::v8f32 || VT == MVT::v4f64))))
+  if (!((Subtarget.hasSSE1() && VT == MVT::f32) ||
+        (Subtarget.hasSSE2() && VT == MVT::f64) ||
+        (VT.isVector() && TLI.isTypeLegal(VT))))
     return SDValue();
 
   SDValue Op0 = N->getOperand(0);
@@ -39571,8 +39649,8 @@ static SDValue combineFMinNumFMaxNum(SDNode *N, SelectionDAG &DAG,
   if (!VT.isVector() && DAG.getMachineFunction().getFunction().optForMinSize())
     return SDValue();
 
-  EVT SetCCType = DAG.getTargetLoweringInfo().getSetCCResultType(
-      DAG.getDataLayout(), *DAG.getContext(), VT);
+  EVT SetCCType = TLI.getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(),
+                                         VT);
 
   // There are 4 possibilities involving NaN inputs, and these are the required
   // outputs:
@@ -41801,6 +41879,76 @@ static SDValue combineVectorCompare(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+/// Helper that combines an array of subvector ops as if they were the operands
+/// of a ISD::CONCAT_VECTORS node, but may have come from another source (e.g.
+/// ISD::INSERT_SUBVECTOR). The ops are assumed to be of the same type.
+static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
+                                      ArrayRef<SDValue> Ops, SelectionDAG &DAG,
+                                      TargetLowering::DAGCombinerInfo &DCI,
+                                      const X86Subtarget &Subtarget) {
+  assert(Subtarget.hasAVX() && "AVX assumed for concat_vectors");
+
+  if (llvm::all_of(Ops, [](SDValue Op) { return Op.isUndef(); }))
+    return DAG.getUNDEF(VT);
+
+  if (llvm::all_of(Ops, [](SDValue Op) {
+        return ISD::isBuildVectorAllZeros(Op.getNode());
+      }))
+    return getZeroVector(VT, Subtarget, DAG, DL);
+
+  SDValue Op0 = Ops[0];
+
+  // Fold subvector loads into one.
+  // If needed, look through bitcasts to get to the load.
+  if (auto *FirstLd = dyn_cast<LoadSDNode>(peekThroughBitcasts(Op0))) {
+    bool Fast;
+    unsigned Alignment = FirstLd->getAlignment();
+    unsigned AS = FirstLd->getAddressSpace();
+    const X86TargetLowering *TLI = Subtarget.getTargetLowering();
+    if (TLI->allowsMemoryAccess(*DAG.getContext(), DAG.getDataLayout(), VT, AS,
+                                Alignment, &Fast) &&
+        Fast) {
+      if (SDValue Ld =
+              EltsFromConsecutiveLoads(VT, Ops, DL, DAG, Subtarget, false))
+        return Ld;
+    }
+  }
+
+  // Repeated subvectors.
+  if (llvm::all_of(Ops, [Op0](SDValue Op) { return Op == Op0; })) {
+    // If this broadcast/subv_broadcast is inserted into both halves, use a
+    // larger broadcast/subv_broadcast.
+    if (Op0.getOpcode() == X86ISD::VBROADCAST ||
+        Op0.getOpcode() == X86ISD::SUBV_BROADCAST)
+      return DAG.getNode(Op0.getOpcode(), DL, VT, Op0.getOperand(0));
+
+    // concat_vectors(movddup(x),movddup(x)) -> broadcast(x)
+    if (Op0.getOpcode() == X86ISD::MOVDDUP && VT == MVT::v4f64 &&
+        (Subtarget.hasAVX2() || MayFoldLoad(Op0.getOperand(0))))
+      return DAG.getNode(X86ISD::VBROADCAST, DL, VT,
+                         DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, MVT::f64,
+                                     Op0.getOperand(0),
+                                     DAG.getIntPtrConstant(0, DL)));
+
+    // concat_vectors(scalar_to_vector(x),scalar_to_vector(x)) -> broadcast(x)
+    if (Op0.getOpcode() == ISD::SCALAR_TO_VECTOR &&
+        (Subtarget.hasAVX2() ||
+         (VT.getScalarSizeInBits() >= 32 && MayFoldLoad(Op0.getOperand(0)))) &&
+        Op0.getOperand(0).getValueType() == VT.getScalarType())
+      return DAG.getNode(X86ISD::VBROADCAST, DL, VT, Op0.getOperand(0));
+  }
+
+  // If we're inserting all zeros into the upper half, change this to
+  // an insert into an all zeros vector. We will match this to a move
+  // with implicit upper bit zeroing during isel.
+  if (Ops.size() == 2 && ISD::isBuildVectorAllZeros(Ops[1].getNode()))
+    return DAG.getNode(ISD::INSERT_SUBVECTOR, DL, VT,
+                       getZeroVector(VT, Subtarget, DAG, DL), Ops[0],
+                       DAG.getIntPtrConstant(0, DL));
+
+  return SDValue();
+}
+
 static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
                                       TargetLowering::DAGCombinerInfo &DCI,
                                       const X86Subtarget &Subtarget) {
@@ -41848,20 +41996,6 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
         return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT,
                            getZeroVector(OpVT, Subtarget, DAG, dl),
                            Ins.getOperand(1), N->getOperand(2));
-    }
-
-    // If we're inserting a bitcast into zeros, rewrite the insert and move the
-    // bitcast to the other side. This helps with detecting zero extending
-    // during isel.
-    // TODO: Is this useful for other indices than 0?
-    if (!IsI1Vector && SubVec.getOpcode() == ISD::BITCAST && IdxVal == 0) {
-      MVT CastVT = SubVec.getOperand(0).getSimpleValueType();
-      unsigned NumElems = OpVT.getSizeInBits() / CastVT.getScalarSizeInBits();
-      MVT NewVT = MVT::getVectorVT(CastVT.getVectorElementType(), NumElems);
-      SDValue Insert = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, NewVT,
-                                   DAG.getBitcast(NewVT, Vec),
-                                   SubVec.getOperand(0), N->getOperand(2));
-      return DAG.getBitcast(OpVT, Insert);
     }
   }
 
@@ -41926,68 +42060,23 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
     }
   }
 
-  // Fold two 16-byte or 32-byte subvector loads into one 32-byte or 64-byte
-  // load:
-  // (insert_subvector (insert_subvector undef, (load16 addr), 0),
-  //                   (load16 addr + 16), Elts/2)
-  // --> load32 addr
-  // or:
-  // (insert_subvector (insert_subvector undef, (load32 addr), 0),
-  //                   (load32 addr + 32), Elts/2)
-  // --> load64 addr
-  // or a 16-byte or 32-byte broadcast:
-  // (insert_subvector (insert_subvector undef, (load16 addr), 0),
-  //                   (load16 addr), Elts/2)
-  // --> X86SubVBroadcast(load16 addr)
-  // or:
-  // (insert_subvector (insert_subvector undef, (load32 addr), 0),
-  //                   (load32 addr), Elts/2)
-  // --> X86SubVBroadcast(load32 addr)
+  // Match concat_vector style patterns.
   if ((IdxVal == OpVT.getVectorNumElements() / 2) &&
       Vec.getOpcode() == ISD::INSERT_SUBVECTOR &&
       OpVT.getSizeInBits() == SubVecVT.getSizeInBits() * 2) {
     if (isNullConstant(Vec.getOperand(2))) {
       SDValue SubVec2 = Vec.getOperand(1);
-      // If needed, look through bitcasts to get to the load.
-      if (auto *FirstLd = dyn_cast<LoadSDNode>(peekThroughBitcasts(SubVec2))) {
-        bool Fast;
-        unsigned Alignment = FirstLd->getAlignment();
-        unsigned AS = FirstLd->getAddressSpace();
-        const X86TargetLowering *TLI = Subtarget.getTargetLowering();
-        if (TLI->allowsMemoryAccess(*DAG.getContext(), DAG.getDataLayout(),
-                                    OpVT, AS, Alignment, &Fast) && Fast) {
-          SDValue Ops[] = {SubVec2, SubVec};
-          if (SDValue Ld = EltsFromConsecutiveLoads(OpVT, Ops, dl, DAG,
-                                                    Subtarget, false))
-            return Ld;
-        }
-      }
 
-      // If this broadcast/subv_broadcast is inserted into both halves, use a
-      // larger broadcast/subv_broadcast.
-      if (SubVec == SubVec2 && (SubVec.getOpcode() == X86ISD::VBROADCAST ||
-                                SubVec.getOpcode() == X86ISD::SUBV_BROADCAST))
-        return DAG.getNode(SubVec.getOpcode(), dl, OpVT, SubVec.getOperand(0));
-
-      // concat_vectors(scalar_to_vector(x),scalar_to_vector(x)) -> broadcast(x)
-      if (SubVec == SubVec2 && SubVec.getOpcode() == ISD::SCALAR_TO_VECTOR &&
-          (Subtarget.hasAVX2() || (OpVT.getScalarSizeInBits() >= 32 &&
-                                   MayFoldLoad(SubVec.getOperand(0)))) &&
-          SubVec.getOperand(0).getValueType() == OpVT.getScalarType())
-        return DAG.getNode(X86ISD::VBROADCAST, dl, OpVT, SubVec.getOperand(0));
-
-      // If we're inserting all zeros into the upper half, change this to
-      // an insert into an all zeros vector. We will match this to a move
-      // with implicit upper bit zeroing during isel.
-      if (ISD::isBuildVectorAllZeros(SubVec.getNode()))
-        return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT,
-                           getZeroVector(OpVT, Subtarget, DAG, dl), SubVec2,
-                           Vec.getOperand(2));
+      SDValue Ops[] = {SubVec2, SubVec};
+      if (SDValue Fold =
+              combineConcatVectorOps(dl, OpVT, Ops, DAG, DCI, Subtarget))
+        return Fold;
 
       // If we are inserting into both halves of the vector, the starting
       // vector should be undef. If it isn't, make it so. Only do this if the
       // the early insert has no other uses.
       // TODO: Should this be a generic DAG combine?
+      // TODO: Why doesn't SimplifyDemandedVectorElts catch this?
       if (!Vec.getOperand(0).isUndef() && Vec.hasOneUse()) {
         Vec = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT, DAG.getUNDEF(OpVT),
                           SubVec2, Vec.getOperand(2));

@@ -583,6 +583,12 @@ X86DAGToDAGISel::IsProfitableToFold(SDValue N, SDNode *U, SDNode *Root) const {
             Imm->getAPIntValue().getBitWidth() == 64 &&
             Imm->getAPIntValue().isIntN(32))
           return false;
+
+        // ADD/SUB with can negate the immediate and use the opposite operation
+        // to fit 128 into a sign extended 8 bit immediate.
+        if ((U->getOpcode() == ISD::ADD || U->getOpcode() == ISD::SUB) &&
+            (-Imm->getAPIntValue()).isSignedIntN(8))
+          return false;
       }
 
       // If the other operand is a TLS address, we should fold it instead.
@@ -751,6 +757,30 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
       ++I;
       CurDAG->DeleteNode(N);
       continue;
+    }
+
+    // Replace vector shifts with their X86 specific equivalent so we don't
+    // need 2 sets of patterns.
+    switch (N->getOpcode()) {
+    case ISD::SHL:
+    case ISD::SRA:
+    case ISD::SRL:
+      if (N->getValueType(0).isVector()) {
+        unsigned NewOpc;
+        switch (N->getOpcode()) {
+        default: llvm_unreachable("Unexpected opcode!");
+        case ISD::SHL: NewOpc = X86ISD::VSHLV; break;
+        case ISD::SRA: NewOpc = X86ISD::VSRAV; break;
+        case ISD::SRL: NewOpc = X86ISD::VSRLV; break;
+        }
+        SDValue Res = CurDAG->getNode(NewOpc, SDLoc(N), N->getValueType(0),
+                                      N->getOperand(0), N->getOperand(1));
+        --I;
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), Res);
+        ++I;
+        CurDAG->DeleteNode(N);
+        continue;
+      }
     }
 
     if (OptLevel != CodeGenOpt::None &&
