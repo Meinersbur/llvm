@@ -444,7 +444,9 @@ namespace {
 	public :
 		static char ID;
 		
-		LoopOptimizationFramework() : FunctionPass(ID){}
+		LoopOptimizationFramework() : FunctionPass(ID){
+			initializeLoopOptimizationFrameworkPass(*PassRegistry::getPassRegistry());
+		}
 
 		/// @name FunctionPass interface
 		//@{
@@ -547,6 +549,8 @@ bool LoopOptimizer::optimize() {
 	return false;
 }
 
+
+char LoopOptimizationFramework::ID = 0;
 
 INITIALIZE_PASS_BEGIN(LoopOptimizationFramework, "lof",	"Loop Optimization Framework", false,	false);
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass);

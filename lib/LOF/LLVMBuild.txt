@@ -25,3 +25,4 @@ required_libraries =
  Passes
  Scalar
  Support
+ TransformUtils
