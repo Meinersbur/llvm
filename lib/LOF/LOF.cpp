@@ -1,6 +1,7 @@
 
 #include "llvm/LOF/LOF.h"
 #include "llvm/Pass.h"
+#include "LoopTree.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -48,368 +49,38 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "llvm/ADT/PostOrderIterator.h"
 
 
 using namespace llvm;
 
 namespace {
+	class StagedLoop {
+	public:
+		Loop *L ;
+		StagedBlock *Body;
 
-	enum class LoopHierarchyKind {
-		Root,
-
-		// Blocks
-		Stmt,
-		Loop,
-
-		// Instructions
-		Load,
-		Store,
-		Call,
-
-		// Expressions
-		Const, // Constant/Literal
-		Reg,  // Register/Value read
-		Op, // Operation
-
-		Block_First= Stmt,
-		Block_Last = Loop,
-
-		Inst_First = Load,
-		Inst_Last = Call,
-
-		Expr_First = Const,
-		Expr_Last = Op,
+		StagedLoop() {}
 	};
 
-
-	class GreenInst;
-	class GreenExpr;
-	class GreenBlock;
-
-	// Immutable (sub-)tree, only contains references to its children
-	class GreenNode {
-	public:
-		virtual ~GreenNode() {};
-
-		virtual LoopHierarchyKind getKind() const = 0;
-		static bool classof(const GreenNode *) {	return true;	}
-
-		void dump() const { printText(errs()); }
-		virtual void printLine(raw_ostream &OS) const {}
-		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
-
-		virtual ArrayRef <GreenNode * > getChildren() const = 0;
-	};
-
-
-	/// Node in an immutable tree, contains reference to parent and corresponding green node (which stores the children) 
-	/// TODO: Make it a stack object
-	class RedNode {
-	private:
-		RedNode *Parent;
-		GreenNode *Green;
-
-	protected:
-		RedNode(RedNode*Parent, GreenNode *Green): Parent(Parent),Green(Green) {}
-
-	public:
-		virtual ~RedNode() {};
-
-		virtual LoopHierarchyKind getKind() const {return getGreen()->getKind();}
-		static bool classof(const RedNode *) {	return true; }
-
-		void dump() const { printText(errs()); }
-		virtual void printLine(raw_ostream &OS) const { getGreen()->printLine(OS); }
-		virtual void printText(raw_ostream &OS) const { getGreen()->printText(OS); }
-
-		 RedNode *getParent() const {return Parent;}
-		 GreenNode* getGreen() const {return Green;}
-	};
-
-
-
-
-	class GreenRoot : public GreenNode {
-	private :
-		GreenBlock *Block;
-
-	public:
-		GreenRoot (GreenBlock *Block): Block(Block) {}
-		virtual ~GreenRoot() {};
-
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
-		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Root; }
-		static bool classof(const GreenRoot *) {	return true;	}
-
-		virtual ArrayRef < GreenNode * > getChildren() const override ;
-	}; 
-
-
-	class RedRoot:public RedNode {
-	private:
-	public:
-		RedRoot(RedNode*Parent, GreenRoot *Green) : RedNode(Parent,Green) {}
-		virtual ~RedRoot() {};
-
-		static bool classof(const RedNode *Node) { return GreenRoot::classof(Node->getGreen()); }
-		static bool classof(const RedRoot *) {	return true;	}
-
-		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
-	};
-
-
-#if 0
-	class GreenSequence final : public GreenNode {
-	private:
-		std::vector<GreenBlock *> Blocks;
-	public:
-		
-	};
-
-	class RedSequence final : public RedNode {
-	private:
-	public:
-	};
-#endif
-
-
-// A statement or loop (abstract class)
-	class GreenBlock  : public GreenNode  {
-	private :
-
-	public:
-		//GreenBlock (ArrayRef<const GreenSequence*const> Stmts): Stmts(Stmts) {}
-		//virtual ~GreenBlock() {};
-
-		// virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Block; }
-		static bool classof(const GreenNode *Node) {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Block_First <= Kind && Kind <= LoopHierarchyKind::Block_Last;	}
-		static bool classof(const GreenBlock *) {	return true;	}
-
-
-	//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
-	}; 
-
-	class RedBlock : public RedNode {
-	private:
-	public:
-		RedBlock(RedNode*Parent, GreenBlock *Green) : RedNode(Parent,Green) {}
-
-
-		static bool classof(const RedNode *Node) { return GreenBlock::classof(Node->getGreen()); }
-		static bool classof(const RedBlock *) {	return true;	}
-
-		GreenRoot* getGreen() const {return static_cast<GreenRoot*>( getGreen());}
-	};
-
-
-
-	class GreenLoop final : public GreenBlock {
-	private:
-	public:
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
-		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
-		static bool classof(const GreenLoop *) {	return true;	}
-
-		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
-	};
-
-	class RedLoop final : public RedBlock {
-	private:
-	public:
-		RedLoop(RedNode *Parent, GreenLoop*Green) : RedBlock(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenLoop::classof(Node->getGreen()); }
-		static bool classof(const RedLoop *) {	return true;	}
-
-		GreenLoop* getGreen() const {return static_cast<GreenLoop*>( getGreen());}
-	};
-
-
-
-	class GreenStmt final : public GreenBlock {
-	private:
-		std::vector<GreenInst*> Insts;
-	public:
-		GreenStmt(ArrayRef<GreenInst*> Insts) : Insts(Insts) {}
-
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Stmt; }
-		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
-		static bool classof(const GreenStmt *) {	return true;	}
-
-		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
-	};
-
-
-	class RedStmt final : public RedBlock {
-	private:
-	public:
-		RedStmt(RedNode *Parent, GreenStmt*Green) : RedBlock(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenStmt::classof(Node->getGreen()); }
-		static bool classof(const RedStmt *) {	return true;	}
-
-		GreenStmt* getGreen() const {return static_cast<GreenStmt*>( getGreen());}
-	};
-
-
-
-	class GreenInst  : public GreenNode {
-	private:
-	public:
-		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Inst_First <= Kind && Kind <= LoopHierarchyKind::Inst_Last;	}
-		static bool classof(const GreenInst *) {	return true;	}
-	};
-
-	class RedInst  : public RedNode {
-	private:
-	public:
-		RedInst(RedNode *Parent, GreenInst*Green) : RedNode(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenInst::classof(Node->getGreen()); }
-		static bool classof(const RedInst *) {	return true;	}
-
-		GreenInst* getGreen() const {return static_cast<GreenInst*>( getGreen());}
-	};
-
-
-
-
-
-	class GreenStore  : public GreenInst {
-	private:
-		GreenExpr *Operands [2];
 	
-
+	class StagedBlock {
 	public:
-		GreenStore(GreenExpr *Val, GreenExpr *Ptr) : Operands{Val,Ptr} {}
+		SmallVector<llvm::PointerUnion< GreenStmt*, StagedLoop*> ,16> Stmts;
 
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Store; }
-		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Store; }
-		static bool classof(const GreenStore *) { return true; }
-
-		GreenExpr * getVal() const {return Operands[0]; }
-		GreenExpr * &getVal()  {return Operands[0]; }
-		GreenExpr * getPtr() const {return Operands[1]; }
-		GreenExpr * &getPtr()  {return Operands[1]; }
-
-		virtual ArrayRef <GreenNode * > getChildren() const ;
-
-		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
+		void appendStmt(GreenStmt *Stmt) { Stmts.push_back(Stmt); }
+		void appendLoop(StagedLoop *Loop) { Stmts.push_back(Loop); }
 	};
 
 
-	class RedStore final : public RedInst {
-	private:
-	public:
-		RedStore(RedNode *Parent, GreenStore*Green) : RedInst(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenLoop::classof(Node->getGreen()); }
-		static bool classof(const RedStore *) {	return true;	}
-
-		GreenStore* getGreen() const {return static_cast<GreenStore*>( getGreen());}
-	};
-
-
-
-
-
-
-
-	class GreenExpr: public GreenNode {
-		private:
-		public:
-			static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Expr_First <= Kind && Kind <= LoopHierarchyKind::Expr_Last;	}
-			static bool classof(const GreenInst *) {	return true;	}
-	};
-
-	class RedExpr : public RedNode {
-	private: 
-	public:
-		RedExpr(RedNode *Parent, GreenExpr*Green) : RedNode(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenExpr::classof(Node->getGreen()); }
-		static bool classof(const RedExpr *) {	return true;	}
-
-		GreenExpr* getGreen() const {return static_cast<GreenExpr*>( getGreen());}
-	};
-
-
-
-	// Expression tree leaf
-	class GreenConst final : public GreenExpr {
-		Constant *Const;
-	public:
-		GreenConst(Constant *Const) : Const(Const) {}
-
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Const; }
-		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Const; 	}
-		static bool classof(const GreenConst *) {	return true;	}
-
-		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
-
-		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
-	};
-
-
-	class RedConst final : public RedExpr {
-	private:
-	public:
-		RedConst(RedNode *Parent, GreenConst*Green) : RedExpr(Parent,Green) {}
-
-		static bool classof(const RedNode *Node) {return  GreenConst::classof(Node->getGreen()); }
-		static bool classof(const RedConst *) {	return true;	}
-
-		GreenConst* getGreen() const {return static_cast<GreenConst*>( getGreen());}
-	};
-
-
-
-	// Expression tree leaf
-	class GreenReg final : public GreenExpr {
-		Value *Val;
-	public:
-		GreenReg(Value *V) : Val(V) {}
-
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
-		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
-		static bool classof(const GreenReg *) {	return true;	}
-
-		virtual ArrayRef <GreenNode * > getChildren() const { return {}; };
-
-		static  GreenReg *create(Value *V) { return new GreenReg(V); }
-	};
-
-
-	class RedReg final : public RedExpr {
-	private:
-	public:
-		RedReg(RedNode *Parent, GreenReg*Green) : RedExpr(Parent,Green) {}
-
-		static bool classof(const RedReg *Node) { return GreenReg::classof(Node->getGreen()); }
-		static bool classof(const RedConst *) {	return true;	}
-
-		GreenReg* getGreen() const {return static_cast<GreenReg*>( getGreen());}
-	};
-
-
-
-
-
-
-	 ArrayRef < GreenNode * >  GreenRoot::getChildren() const  {		
-		GreenNode *X = Block;
-		return   {X};		
+	StagedLoop::StagedLoop() {
+		Body = new StagedBlock();
 	}
-
-
-	  ArrayRef <GreenNode * > GreenStore:: getChildren() const { 
-		 return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],(size_t)2); 
-	 }
 
 
 	class LoopOptimizer {
 	private:
-		Function *F;
+		Function *Func;
 
 		LoopInfo *LI;
 		ScalarEvolution *SE;
@@ -417,25 +88,73 @@ namespace {
 		GreenLoop *createHierarchy(Function *F) const;
 		GreenLoop *createHierarchy(Loop *L) const;
 		GreenStmt *createHierarchy(BasicBlock *BB) const;
-		GreenInst *createInst(Instruction *I) const;
-		GreenExpr *createExpr(Value *I) const;
+		GreenInst *createInst(Instruction *I) ;
+		GreenExpr *createExpr(Value *I);
 
 
-		DenseMap <Constant *, GreenConst*> ConstCache;
-		GreenConst *getGreen(Constant *C) ;
+		DenseMap <Value *, GreenExpr*> ExprCache;
+		GreenExpr *getGreenExpr(Value *C) ;
 
-		DenseMap <Instruction *, GreenInst*> InstCache;
-		GreenInst *getGreen(Instruction *I) ;
+		DenseMap <Instruction *, GreenInst*> InstCache; // FIXME: Instructions may not be re-usable, so do not cache.
+		GreenInst *getGreenInst(Instruction *I) ;
 
-		GreenExpr *getGreen(Value *V);
+		GreenStmt *createGreenStmt(ArrayRef<GreenInst*> Insts);
 
+	
+
+#if 0
+		GreenBlock*createBlock (Loop *InLoop, ReversePostOrderTraversal<Function*>::rpo_iterator Iter) {
+			auto EntryBlock = *Iter;
+
+			SmallVector<GreenStmt*, 32> InBlockStmts; 
+
+			while (true) {
+				auto Block = *Iter;
+
+				auto Loop = LI->getLoopFor(Block);
+				if (Loop != InLoop) {
+					// We entered or exited a loop
+					if (Loop)
+
+					if (!Loop) {
+						// We exited all loops
+						ExitLoopsUntil(nullptr);
+					} else if (Loop->getParentLoop() == CurLoop) {
+						// We entered one loop
+						// Note that LoopInfo identifies a loop by its header block (rather than the backedge as most textbooks do), so we can enter at most one loop at a time.
+
+						if (CurLoop)
+							LoopStack.push_back(CurLoop);
+						CurLoop=Loop;
+					} else {
+						// We exited one or more loops
+						ExitLoopsUntil(Loop);
+					}
+
+					continue;
+				}
+
+			}
+
+
+		
+		}
+
+
+		GreenLoop* createLoop(Loop *L, ReversePostOrderTraversal<Function*>::rpo_iterator Iter){
+		}
+
+		GreenRoot *createRoot();
+#endif
 
 	public:
-		LoopOptimizer(Function *F) : F(F) {}
+		LoopOptimizer(Function *Func, LoopInfo*LI) : Func(Func), LI(LI) {}
 
 		bool optimize();
 		void print(raw_ostream &OS) {}
 	};
+
+
 
 	class LoopOptimizationFramework : public FunctionPass {
 	private:
@@ -443,7 +162,7 @@ namespace {
 
 	public :
 		static char ID;
-		
+
 		LoopOptimizationFramework() : FunctionPass(ID){
 			initializeLoopOptimizationFrameworkPass(*PassRegistry::getPassRegistry());
 		}
@@ -452,14 +171,18 @@ namespace {
 		//@{
 		void getAnalysisUsage(AnalysisUsage &AU) const override {
 			AU.addRequired<LoopInfoWrapperPass>();
-			AU.addRequiredTransitive<ScalarEvolutionWrapperPass>();
+			AU.addRequired<ScalarEvolutionWrapperPass>();
 			AU.addRequired<DominatorTreeWrapperPass>();
 			AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
-			AU.addRequiredTransitive<AAResultsWrapperPass>();
+			AU.addRequired<AAResultsWrapperPass>();
+
+			// Required since transitive
+			//AU.addPreserved<ScalarEvolutionWrapperPass>();
 		}
 		void releaseMemory() override { lo.reset(); }
 		bool runOnFunction(Function &F) override {
-			lo = make_unique<LoopOptimizer>(&F);
+			auto LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+			lo = make_unique<LoopOptimizer>(&F, LI);
 			return lo->optimize();
 		}
 		void print(raw_ostream &OS, const Module *) const override {
@@ -467,6 +190,7 @@ namespace {
 		}
 		//@}
 	};
+
 
 
 }
@@ -489,7 +213,7 @@ GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenInst *LoopOptimizer::createInst(Instruction *I) const {
+GreenInst *LoopOptimizer::createInst(Instruction *I)  {
 	if (auto Store = dyn_cast<Instruction>(I)) {
 		auto *Op1 = createExpr(I->getOperand(0));
 		auto *Op2 = createExpr(I->getOperand(0));
@@ -498,54 +222,198 @@ GreenInst *LoopOptimizer::createInst(Instruction *I) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenExpr *LoopOptimizer::createExpr(Value *I) const {
-	if (auto C = dyn_cast<Constant>(I)) {
-		// TODO: Lookup cache
-		//auto Green = GreenExpr::create(C);
-		//return Green;
+
+GreenExpr *LoopOptimizer::getGreenExpr(Value *V) {
+	auto &Result = ExprCache[V];
+	if (!Result) {
+		Result = createExpr(V);
 	}
+	return Result;
+}
+
+
+GreenExpr *LoopOptimizer::createExpr(Value *I)  {
+	if (auto P = dyn_cast<Argument>(I)) {
+		auto Green = GreenReg::create(P);
+		return Green;
+	}
+
+	if (auto C = dyn_cast<Constant>(I)) {
+		auto Green = GreenConst::create(C);
+		return Green;
+	}
+	
+	if (auto PHI = dyn_cast<PHINode >(I)) {
+		// FIXME: This is not really a register use; replace by case instruction or other closed-form (AddRecExpr) expression 
+		auto Green = GreenReg::create(PHI);
+		return Green;
+	}
+
+	if (auto GEP = dyn_cast<GetElementPtrInst>(I)) {
+		SmallVector<GreenExpr*,4> Exprs;
+		for (auto Op : GEP->operand_values()) {
+			auto GreenOp = getGreenExpr(Op);
+			Exprs.push_back(GreenOp);
+		}
+		auto Green = GreenGEP::create(Exprs);
+		return Green;
+	}
+
+	if (auto E = dyn_cast<ICmpInst>(I)) {
+		assert(E->getNumOperands()==2);
+		auto LHS = getGreenExpr(E->getOperand(0));
+		auto RHS = getGreenExpr(E->getOperand(1));
+		return GreenICmp::create(LHS, RHS);
+	}
+
 	llvm_unreachable("unimplemented");
 }
 
 
-GreenConst *LoopOptimizer::getGreen(Constant *C) {
-	auto &Result =	ConstCache[C];
-	if (!Result)
-		 Result= GreenConst::create(C);
-return Result;
-}
 
-GreenInst *LoopOptimizer::getGreen(Instruction *I) {
+GreenInst *LoopOptimizer::getGreenInst(Instruction *I) {
 	auto &Result = InstCache[I];
 	if (!Result) {
-		switch (I->getOpcode()) {
-		case Instruction::Store: {
-			auto S = cast<StoreInst>(I);
-			auto Val = getGreen( S->getValueOperand());
-			auto Ptr = getGreen(S->getPointerOperand());
+		if (auto S = dyn_cast<StoreInst>(I)) {
+			auto Val = getGreenExpr(S->getValueOperand());
+			auto Ptr = getGreenExpr(S->getPointerOperand());
 			Result = GreenStore::create(Val, Ptr);
-		} break;
-		default:
-			llvm_unreachable("unimplemented");
+		} else {
+			// Register definition
+			assert(!I->mayHaveSideEffects());
+			auto Expr = getGreenExpr(I);
+			Result = GreenSet::create(I,Expr);
 		}
 	}
 	return Result;
 }
 
-GreenExpr *LoopOptimizer::getGreen(Value *V){
-	if (isa<Constant>(V))
-		return getGreen(cast<Constant>(V));
-	if (isa<Instruction>(V))
-		return GreenReg::create(V); // Value can be differnt in different statements.
-	llvm_unreachable("unimplemented");
+
+GreenStmt *LoopOptimizer:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
+	return GreenStmt::create(Insts);
 }
 
+
+#if 0
+GreenRoot *LoopOptimizer::createRoot() {
+	ReversePostOrderTraversal<Function*> RPOT(Func);
+	auto GBlock = createBlock (nullptr, RPOT.begin());
+	return	GreenRoot::create(GBlock);
+}
+#endif
+
+
 bool LoopOptimizer::optimize() {
-	for (auto& BB : *F) {
-		for (auto &I : BB) {
-			getGreen(&I);
+	for (auto& Block : *Func) {
+		SmallVector<GreenStmt*, 32> Stmts;
+		for (auto &I : Block) {
+			if (I.isTerminator())
+				continue;
+			if (!I.mayHaveSideEffects())
+				continue;
+			auto Inst = getGreenInst(&I);
+			auto Stmt = createGreenStmt({Inst});
+			Stmts.push_back(Stmt);
 		}
 	}
+
+
+
+
+	DenseMap <Loop*,StagedLoop*> LoopMap;
+	LoopMap[nullptr] = new StagedLoop();
+	StagedBlock *RootBlock = LoopMap[nullptr]->Body;
+	for (auto L : LI->getLoopsInPreorder()) {
+		LoopMap[L] = new StagedLoop();
+	}
+
+
+	SmallVector<GreenStmt*, 32> StagedStmts; 
+	SmallVector<Loop*,4> LoopStack;
+	Loop*CurLoop = nullptr;
+
+
+	ReversePostOrderTraversal<Function*> RPOT(Func);
+	for (auto Block : RPOT) {
+		auto Loop = LI->getLoopFor(Block);
+		auto SLoop = LoopMap.lookup(Loop);
+		auto SBody = SLoop->Body;
+
+		if (Block == Loop->getHeader()) {
+			auto ParentLoop = Loop->getParentLoop();
+			auto ParentSLoop =  LoopMap.lookup(ParentLoop);
+			auto ParentSBody =  ParentSLoop->Body;
+			ParentSBody->appendLoop(SLoop);
+		}
+
+		for (auto &I : *Block) {
+			if (I.isTerminator())
+				continue;
+			if (!I.mayHaveSideEffects())
+				continue;
+			auto Inst = getGreenInst(&I);
+			auto Stmt = createGreenStmt({Inst});
+			SBody->appendStmt(Stmt);
+		}
+	}
+
+
+
+#if 0
+	auto ExitLoopsUntil = [&](Loop *Until) {
+		int LoopsExited = 0;
+		while (true) {
+			if (CurLoop==Until)
+				break;
+			assert(CurLoop && "Until loop must be on stack");
+			auto LastLoop = CurLoop;
+			if (LoopStack.empty())
+				CurLoop=nullptr;
+			else 
+				CurLoop = LoopStack.pop_back_val();
+			FinishLoop(LastLoop);
+			LoopsExited+=1;
+		}
+		assert(LoopsExited>=1);
+	};
+
+#endif
+
+
+	ReversePostOrderTraversal<Function*> RPOT(Func);
+	for (auto Block : RPOT) {
+		auto Loop = LI->getLoopFor(Block);
+		if (Loop != CurLoop) {
+			if (!Loop) {
+				// We exited all loops
+				ExitLoopsUntil(nullptr);
+			} else if (Loop->getParentLoop() == CurLoop) {
+				// We entered one loop
+				// Note that LoopInfo identifies a loop by its header block (rather than the backedge as most textbooks do), so we can enter at most one loop at a time.
+			
+				if (CurLoop)
+					LoopStack.push_back(CurLoop);
+				CurLoop=Loop;
+			} else {
+			// We exited one or more loops
+			ExitLoopsUntil(Loop);
+			}
+		}
+		assert(CurLoop==Loop);
+
+		for (auto &I :* Block) {
+			if (I.isTerminator())
+				continue;
+			if (!I.mayHaveSideEffects())
+				continue;
+			auto Inst = getGreenInst(&I);
+			auto Stmt = createGreenStmt({Inst});
+			StagedStmts.push_back(Stmt);
+		}
+
+	}
+
+
 	return false;
 }
 

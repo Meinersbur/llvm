@@ -13,8 +13,8 @@ for:
   br i1 %j.cmp, label %body, label %exit
 
     body:
-      %arrayidx = getelementptr inbounds i64* %A, i64 %j
-      store i64 %j, double* %arrayidx
+      %arrayidx = getelementptr inbounds i64, i64* %A, i64 %j
+      store i64 %j, i64* %arrayidx
       br label %inc
 
 inc:
