@@ -6,6 +6,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/IRBuilder.h"
 
 
 namespace llvm {
@@ -193,6 +194,8 @@ namespace llvm {
 	public:
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Inst_First <= Kind && Kind <= LoopHierarchyKind::Inst_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
+
+		virtual void codegen(IRBuilder<> &Builder )const =0;
 	};
 
 
@@ -217,6 +220,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 
 		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
+
+		 void codegen(IRBuilder<> &Builder )const override;
 	};
 
 
@@ -244,6 +249,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
+
+		void codegen(IRBuilder<> &Builder )const override;
 	};
 
 
@@ -258,7 +265,10 @@ namespace llvm {
 	public:
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Expr_First <= Kind && Kind <= LoopHierarchyKind::Expr_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
+
+		virtual Value* codegen(IRBuilder<> &Builder )const =0;
 	};
+
 
 	// Expression tree leaf
 	class GreenConst final : public GreenExpr {
@@ -273,6 +283,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
+
+		 Value* codegen(IRBuilder<> &Builder )const override;
 	};
 
 
@@ -291,6 +303,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static  GreenReg *create(Value *V) { return new GreenReg(V); }
+
+		Value* codegen(IRBuilder<> &Builder )const override;
 	};
 
 
@@ -316,6 +330,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static  GreenGEP *create(ArrayRef<GreenExpr*>Operands) { return new GreenGEP(Operands); }
+
+		Value* codegen(IRBuilder<> &Builder )const override;
 	};
 
 
@@ -328,8 +344,11 @@ namespace llvm {
 	private:
 		// TODO: Use a mixin for 
 		GreenExpr *Operands [2];
+
+		ICmpInst::Predicate Predicate;
+
 	public:
-		GreenICmp(GreenExpr *LHS, GreenExpr *RHS) : Operands{LHS,RHS} {}
+		GreenICmp(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS ) : Operands{LHS,RHS} , Predicate(Predicate) {}
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::ICmp; }
 		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::ICmp; 	}
@@ -340,7 +359,9 @@ namespace llvm {
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
-		static  GreenICmp *create(GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(LHS,RHS); }
+		static  GreenICmp *create(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(Predicate,LHS,RHS); }
+
+		Value* codegen(IRBuilder<> &Builder )const override;
 	};
 
 

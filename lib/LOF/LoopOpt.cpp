@@ -119,6 +119,7 @@ namespace {
 
 		GreenRoot * buildOriginalLoopTree();
 		const GreenRoot *parallelize(const GreenRoot *Root);
+		 
 
 		bool optimize()override ;
 		void print(raw_ostream &OS) override {}
@@ -187,7 +188,7 @@ GreenExpr *LoopOptimizerImpl::createExpr(Value *I)  {
 		assert(E->getNumOperands()==2);
 		auto LHS = getGreenExpr(E->getOperand(0));
 		auto RHS = getGreenExpr(E->getOperand(1));
-		return GreenICmp::create(LHS, RHS);
+		return GreenICmp::create( E->getPredicate(), LHS, RHS);
 	}
 
 	llvm_unreachable("unimplemented");
