@@ -519,6 +519,19 @@ bool TargetLowering::SimplifyDemandedBits(
 
   KnownBits Known2, KnownOut;
   switch (Op.getOpcode()) {
+  case ISD::SCALAR_TO_VECTOR: {
+    if (!DemandedElts[0])
+      return TLO.CombineTo(Op, TLO.DAG.getUNDEF(VT));
+
+    KnownBits SrcKnown;
+    SDValue Src = Op.getOperand(0);
+    unsigned SrcBitWidth = Src.getScalarValueSizeInBits();
+    APInt SrcDemandedBits = DemandedBits.zextOrSelf(SrcBitWidth);
+    if (SimplifyDemandedBits(Src, SrcDemandedBits, SrcKnown, TLO, Depth + 1))
+      return true;
+    Known = SrcKnown.zextOrTrunc(BitWidth, false);
+    break;
+  }
   case ISD::BUILD_VECTOR:
     // Collect the known bits that are shared by every constant vector element.
     Known.Zero.setAllBits(); Known.One.setAllBits();
@@ -3004,13 +3017,10 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   if (N0 == N1) {
     // The sext(setcc()) => setcc() optimization relies on the appropriate
     // constant being emitted.
+    assert(!N0.getValueType().isInteger() &&
+           "Integer types should be handled by FoldSetCC");
 
     bool EqTrue = ISD::isTrueWhenEqual(Cond);
-
-    // We can always fold X == X for integer setcc's.
-    if (N0.getValueType().isInteger())
-      return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
-
     unsigned UOF = ISD::getUnorderedFlavor(Cond);
     if (UOF == 2) // FP operators that are undefined on NaNs.
       return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);

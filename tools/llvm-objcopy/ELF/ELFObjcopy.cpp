@@ -229,7 +229,7 @@ static bool isCompressable(const SectionBase &Section) {
 }
 
 static void replaceDebugSections(
-    const CopyConfig &Config, Object &Obj, SectionPred &RemovePred,
+    Object &Obj, SectionPred &RemovePred,
     function_ref<bool(const SectionBase &)> shouldReplace,
     function_ref<SectionBase *(const SectionBase *)> addSection) {
   // Build a list of the debug sections we are going to replace.
@@ -403,7 +403,7 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
 
   if (Config.StripSections) {
     RemovePred = [RemovePred](const SectionBase &Sec) {
-      return RemovePred(Sec) || (Sec.Flags & SHF_ALLOC) == 0;
+      return RemovePred(Sec) || Sec.ParentSegment == nullptr;
     };
   }
 
@@ -419,7 +419,7 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
         return true;
       if (&Sec == Obj.SectionNames)
         return false;
-      return (Sec.Flags & SHF_ALLOC) == 0;
+      return (Sec.Flags & SHF_ALLOC) == 0 && Sec.ParentSegment == nullptr;
     };
 
   if (Config.StripAll)
@@ -429,6 +429,8 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
       if (&Sec == Obj.SectionNames)
         return false;
       if (StringRef(Sec.Name).startswith(".gnu.warning"))
+        return false;
+      if (Sec.ParentSegment != nullptr)
         return false;
       return (Sec.Flags & SHF_ALLOC) == 0;
     };
@@ -481,14 +483,14 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
   }
 
   if (Config.CompressionType != DebugCompressionType::None)
-    replaceDebugSections(Config, Obj, RemovePred, isCompressable,
+    replaceDebugSections(Obj, RemovePred, isCompressable,
                          [&Config, &Obj](const SectionBase *S) {
                            return &Obj.addSection<CompressedSection>(
                                *S, Config.CompressionType);
                          });
   else if (Config.DecompressDebugSections)
     replaceDebugSections(
-        Config, Obj, RemovePred,
+        Obj, RemovePred,
         [](const SectionBase &S) { return isa<CompressedSection>(&S); },
         [&Obj](const SectionBase *S) {
           auto CS = cast<CompressedSection>(S);

@@ -982,10 +982,7 @@ Value *InstCombiner::simplifyAMDGCNMemoryIntrinsicDemanded(IntrinsicInst *II,
     // below.
     DemandedElts = (1 << DemandedElts.getActiveBits()) - 1;
   } else {
-    ConstantInt *DMask = dyn_cast<ConstantInt>(II->getArgOperand(DMaskIdx));
-    if (!DMask)
-      return nullptr; // non-constant dmask is not supported by codegen
-
+    ConstantInt *DMask = cast<ConstantInt>(II->getArgOperand(DMaskIdx));
     unsigned DMaskVal = DMask->getZExtValue() & 0xf;
 
     // Mask off values that are undefined because the dmask doesn't cover them
@@ -1638,15 +1635,8 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     case Intrinsic::amdgcn_struct_buffer_load_format:
       return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts);
     default: {
-      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID())) {
-        LLVM_DEBUG(
-          Value *TFC = II->getArgOperand(II->getNumOperands() - 2);
-          assert(!isa<ConstantInt>(TFC) ||
-                 dyn_cast<ConstantInt>(TFC)->getZExtValue() == 0);
-        );
-
+      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID()))
         return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts, 0);
-      }
 
       break;
     }
