@@ -2,6 +2,9 @@
 #include "llvm/LOF/LoopOptPass.h"
 #include "llvm/Pass.h"
 #include "LoopOpt.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 
 
 using namespace llvm;

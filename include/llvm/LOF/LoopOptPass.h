@@ -1,5 +1,5 @@
-#ifndef LLVM_LOF_LOF_H
-#define LLVM_LOF_LOF_H
+#ifndef LLVM_LOF_LOOPOPTPASS_H
+#define LLVM_LOF_LOOPOPTPASS_H
 
 #include "llvm/PassRegistry.h"
 
@@ -10,4 +10,4 @@ namespace llvm {
 
 }
 
-#endif /* LLVM_LOF_LOF_H */
+#endif /* LLVM_LOF_LOOPOPTPASS_H */
