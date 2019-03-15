@@ -2,10 +2,20 @@
 
 using namespace llvm;
 
-ArrayRef < GreenNode * >  GreenRoot::getChildren() const  {		
-	GreenNode *X = Block;
-	return   {X};		
+
+ArrayRef < GreenNode * >GreenSequence:: getChildren() const  {
+	return ArrayRef<GreenNode*>((GreenNode**)&Blocks[0],Blocks.size());
 }
+
+
+ArrayRef < GreenNode * >  GreenRoot::getChildren() const  {		
+	return   {Sequence};		
+}
+
+
+ ArrayRef <GreenNode * >GreenLoop:: getChildren() const   {
+	 return {Sequence};
+ }
 
 
 ArrayRef <GreenNode * > GreenStore:: getChildren() const { 

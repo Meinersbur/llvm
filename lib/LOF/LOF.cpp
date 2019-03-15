@@ -55,12 +55,14 @@
 using namespace llvm;
 
 namespace {
+	class StagedBlock;
+
 	class StagedLoop {
 	public:
 		Loop *L ;
 		StagedBlock *Body;
 
-		StagedLoop() {}
+		StagedLoop() ;
 	};
 
 	
@@ -88,7 +90,7 @@ namespace {
 		GreenLoop *createHierarchy(Function *F) const;
 		GreenLoop *createHierarchy(Loop *L) const;
 		GreenStmt *createHierarchy(BasicBlock *BB) const;
-		GreenInst *createInst(Instruction *I) ;
+		
 		GreenExpr *createExpr(Value *I);
 
 
@@ -101,6 +103,34 @@ namespace {
 		GreenStmt *createGreenStmt(ArrayRef<GreenInst*> Insts);
 
 	
+
+		GreenLoop* createGreenLoop(StagedLoop *Staged ) {
+			auto Seq = createGreenSequence(Staged->Body);
+			return	GreenLoop::create(Seq);
+		}
+
+		GreenSequence* createGreenSequence(StagedBlock *Sequence) {
+			SmallVector<GreenBlock *,32> Blocks;
+
+			for(auto Block : Sequence->Stmts) {
+				if (auto Stmt = Block.dyn_cast<GreenStmt*>()) {
+					Blocks.push_back(Stmt);
+				} else 				if (auto Loop = Block.dyn_cast<StagedLoop*>()) {
+					auto GLoop = createGreenLoop(Loop);
+					Blocks.push_back(GLoop);
+				} else 
+					llvm_unreachable("Something is wrong");
+			}
+
+			auto Green = GreenSequence::create(Blocks);
+			return Green;
+		} 
+
+		GreenRoot *createGreenRoot(StagedBlock *TopLoop) {
+			auto GSeq = createGreenSequence(TopLoop);
+			auto Green = GreenRoot::create(GSeq);
+			return Green;
+		}
 
 #if 0
 		GreenBlock*createBlock (Loop *InLoop, ReversePostOrderTraversal<Function*>::rpo_iterator Iter) {
@@ -213,16 +243,6 @@ GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenInst *LoopOptimizer::createInst(Instruction *I)  {
-	if (auto Store = dyn_cast<Instruction>(I)) {
-		auto *Op1 = createExpr(I->getOperand(0));
-		auto *Op2 = createExpr(I->getOperand(0));
-		//auto *Stmt = GreenInst::create(I->getOpcode(), { Op1, Op2 }, I);
-	}
-	llvm_unreachable("unimplemented");
-}
-
-
 GreenExpr *LoopOptimizer::getGreenExpr(Value *V) {
 	auto &Result = ExprCache[V];
 	if (!Result) {
@@ -328,18 +348,16 @@ bool LoopOptimizer::optimize() {
 	}
 
 
-	SmallVector<GreenStmt*, 32> StagedStmts; 
-	SmallVector<Loop*,4> LoopStack;
-	Loop*CurLoop = nullptr;
 
 
+	// Build a temporaru loop tree
 	ReversePostOrderTraversal<Function*> RPOT(Func);
 	for (auto Block : RPOT) {
 		auto Loop = LI->getLoopFor(Block);
 		auto SLoop = LoopMap.lookup(Loop);
 		auto SBody = SLoop->Body;
 
-		if (Block == Loop->getHeader()) {
+		if (Loop && Block == Loop->getHeader()) {
 			auto ParentLoop = Loop->getParentLoop();
 			auto ParentSLoop =  LoopMap.lookup(ParentLoop);
 			auto ParentSBody =  ParentSLoop->Body;
@@ -357,61 +375,9 @@ bool LoopOptimizer::optimize() {
 		}
 	}
 
+	
+	auto Green = createGreenRoot(RootBlock);
 
-
-#if 0
-	auto ExitLoopsUntil = [&](Loop *Until) {
-		int LoopsExited = 0;
-		while (true) {
-			if (CurLoop==Until)
-				break;
-			assert(CurLoop && "Until loop must be on stack");
-			auto LastLoop = CurLoop;
-			if (LoopStack.empty())
-				CurLoop=nullptr;
-			else 
-				CurLoop = LoopStack.pop_back_val();
-			FinishLoop(LastLoop);
-			LoopsExited+=1;
-		}
-		assert(LoopsExited>=1);
-	};
-
-#endif
-
-
-	ReversePostOrderTraversal<Function*> RPOT(Func);
-	for (auto Block : RPOT) {
-		auto Loop = LI->getLoopFor(Block);
-		if (Loop != CurLoop) {
-			if (!Loop) {
-				// We exited all loops
-				ExitLoopsUntil(nullptr);
-			} else if (Loop->getParentLoop() == CurLoop) {
-				// We entered one loop
-				// Note that LoopInfo identifies a loop by its header block (rather than the backedge as most textbooks do), so we can enter at most one loop at a time.
-			
-				if (CurLoop)
-					LoopStack.push_back(CurLoop);
-				CurLoop=Loop;
-			} else {
-			// We exited one or more loops
-			ExitLoopsUntil(Loop);
-			}
-		}
-		assert(CurLoop==Loop);
-
-		for (auto &I :* Block) {
-			if (I.isTerminator())
-				continue;
-			if (!I.mayHaveSideEffects())
-				continue;
-			auto Inst = getGreenInst(&I);
-			auto Stmt = createGreenStmt({Inst});
-			StagedStmts.push_back(Stmt);
-		}
-
-	}
 
 
 	return false;

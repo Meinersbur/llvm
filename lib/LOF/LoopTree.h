@@ -54,6 +54,7 @@
 namespace llvm {
 	enum class LoopHierarchyKind {
 		Root,
+		Sequence,
 
 		// Blocks
 		Stmt,
@@ -87,7 +88,15 @@ namespace llvm {
 	class GreenExpr;
 	class GreenBlock;
 
-	// Immutable (sub-)tree, only contains references to its children
+
+
+
+
+	
+
+
+
+		// Immutable (sub-)tree, only contains references to its children
 	class GreenNode {
 	public:
 		virtual ~GreenNode() {};
@@ -130,12 +139,49 @@ namespace llvm {
 
 
 
-	class GreenRoot : public GreenNode {
-	private :
-		GreenBlock *Block;
+
+
+	class GreenSequence final : public GreenNode {
+	private:
+		// TODO: Do the same allocation trick.; Sence GreenSequence is always part of either a GreenRoot or GreenLoop, can also allocate in their memory
+		std::vector<GreenBlock *> Blocks;
 
 	public:
-		GreenRoot (GreenBlock *Block): Block(Block) {}
+		GreenSequence (ArrayRef<GreenBlock*> Blocks): Blocks(Blocks) {}
+		virtual ~GreenSequence() {};
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Sequence; }
+		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Sequence; }
+		static bool classof(const GreenSequence *) {	return true;	}
+
+		virtual ArrayRef < GreenNode * > getChildren() const override ;
+
+		static 	GreenSequence *create(ArrayRef<GreenBlock*> Blocks) {  return new GreenSequence(Blocks); }
+	};
+
+
+
+	class RedSequence final : public RedNode {
+	private:
+	public:
+		RedSequence(RedNode*Parent, GreenSequence *Green) : RedNode(Parent,Green) {}
+		virtual ~RedSequence() {};
+
+		static bool classof(const RedNode *Node) { return GreenSequence::classof(Node->getGreen()); }
+		static bool classof(const RedSequence *) {	return true;	}
+
+		GreenSequence* getGreen() const {return static_cast<GreenSequence*>( RedNode::getGreen());}
+	};
+
+
+
+
+	class GreenRoot : public GreenNode {
+	private :
+		GreenSequence *Sequence;
+
+	public:
+		GreenRoot (GreenSequence *Sequence): Sequence(Sequence) {}
 		virtual ~GreenRoot() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
@@ -144,11 +190,12 @@ namespace llvm {
 
 		virtual ArrayRef < GreenNode * > getChildren() const override ;
 
-		static 	GreenRoot *create(GreenBlock *Block) {  return new GreenRoot(Block); }
+		static 	GreenRoot *create(GreenSequence *Sequence) {  return new GreenRoot(Sequence); }
 	}; 
 
 
-	class RedRoot:public RedNode {
+
+	class RedRoot: public RedNode {
 	private:
 	public:
 		RedRoot(RedNode*Parent, GreenRoot *Green) : RedNode(Parent,Green) {}
@@ -161,19 +208,9 @@ namespace llvm {
 	};
 
 
-#if 0
-	class GreenSequence final : public GreenNode {
-	private:
-		std::vector<GreenBlock *> Blocks;
-	public:
 
-	};
 
-	class RedSequence final : public RedNode {
-	private:
-	public:
-	};
-#endif
+
 
 
 	// A statement or loop (abstract class)
@@ -202,19 +239,29 @@ namespace llvm {
 		static bool classof(const RedBlock *) {	return true;	}
 
 		GreenBlock* getGreen() const {return static_cast<GreenBlock*>( RedNode::getGreen());}
+
+	
 	};
 
 
 
 	class GreenLoop final : public GreenBlock {
 	private:
+		GreenSequence *Sequence;
+
 	public:
+		GreenLoop (GreenSequence *Sequence): Sequence(Sequence) {}
+		virtual ~GreenLoop() {};
+
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
 		static bool classof(const GreenLoop *) {	return true;	}
 
-		virtual ArrayRef <GreenNode * > getChildren() const override { return {}; };
+		virtual ArrayRef <GreenNode * > getChildren() const override ;
+
+		static 	GreenLoop *create(GreenSequence *Sequence) {  return new GreenLoop(Sequence); }
 	};
+
 
 	class RedLoop final : public RedBlock {
 	private:
@@ -226,6 +273,7 @@ namespace llvm {
 
 		GreenLoop* getGreen() const {return static_cast<GreenLoop*>(RedBlock:: getGreen());}
 	};
+
 
 
 
