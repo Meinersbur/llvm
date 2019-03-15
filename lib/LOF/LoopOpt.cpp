@@ -1,7 +1,8 @@
 
-#include "llvm/LOF/LOF.h"
+#include "LoopOpt.h"
+#include "GreenTree.h"
+#include "RedTree.h"
 #include "llvm/Pass.h"
-#include "LoopTree.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -80,148 +81,8 @@ namespace {
 	}
 
 
-	class LoopOptimizer {
-	private:
-		Function *Func;
-
-		LoopInfo *LI;
-		ScalarEvolution *SE;
-
-		GreenLoop *createHierarchy(Function *F) const;
-		GreenLoop *createHierarchy(Loop *L) const;
-		GreenStmt *createHierarchy(BasicBlock *BB) const;
-		
-		GreenExpr *createExpr(Value *I);
-
-
-		DenseMap <Value *, GreenExpr*> ExprCache;
-		GreenExpr *getGreenExpr(Value *C) ;
-
-		DenseMap <Instruction *, GreenInst*> InstCache; // FIXME: Instructions may not be re-usable, so do not cache.
-		GreenInst *getGreenInst(Instruction *I) ;
-
-		GreenStmt *createGreenStmt(ArrayRef<GreenInst*> Insts);
 
 	
-
-		GreenLoop* createGreenLoop(StagedLoop *Staged ) {
-			auto Seq = createGreenSequence(Staged->Body);
-			return	GreenLoop::create(Seq);
-		}
-
-		GreenSequence* createGreenSequence(StagedBlock *Sequence) {
-			SmallVector<GreenBlock *,32> Blocks;
-
-			for(auto Block : Sequence->Stmts) {
-				if (auto Stmt = Block.dyn_cast<GreenStmt*>()) {
-					Blocks.push_back(Stmt);
-				} else 				if (auto Loop = Block.dyn_cast<StagedLoop*>()) {
-					auto GLoop = createGreenLoop(Loop);
-					Blocks.push_back(GLoop);
-				} else 
-					llvm_unreachable("Something is wrong");
-			}
-
-			auto Green = GreenSequence::create(Blocks);
-			return Green;
-		} 
-
-		GreenRoot *createGreenRoot(StagedBlock *TopLoop) {
-			auto GSeq = createGreenSequence(TopLoop);
-			auto Green = GreenRoot::create(GSeq);
-			return Green;
-		}
-
-#if 0
-		GreenBlock*createBlock (Loop *InLoop, ReversePostOrderTraversal<Function*>::rpo_iterator Iter) {
-			auto EntryBlock = *Iter;
-
-			SmallVector<GreenStmt*, 32> InBlockStmts; 
-
-			while (true) {
-				auto Block = *Iter;
-
-				auto Loop = LI->getLoopFor(Block);
-				if (Loop != InLoop) {
-					// We entered or exited a loop
-					if (Loop)
-
-					if (!Loop) {
-						// We exited all loops
-						ExitLoopsUntil(nullptr);
-					} else if (Loop->getParentLoop() == CurLoop) {
-						// We entered one loop
-						// Note that LoopInfo identifies a loop by its header block (rather than the backedge as most textbooks do), so we can enter at most one loop at a time.
-
-						if (CurLoop)
-							LoopStack.push_back(CurLoop);
-						CurLoop=Loop;
-					} else {
-						// We exited one or more loops
-						ExitLoopsUntil(Loop);
-					}
-
-					continue;
-				}
-
-			}
-
-
-		
-		}
-
-
-		GreenLoop* createLoop(Loop *L, ReversePostOrderTraversal<Function*>::rpo_iterator Iter){
-		}
-
-		GreenRoot *createRoot();
-#endif
-
-	public:
-		LoopOptimizer(Function *Func, LoopInfo*LI) : Func(Func), LI(LI) {}
-
-		bool optimize();
-		void print(raw_ostream &OS) {}
-	};
-
-
-
-	class LoopOptimizationFramework : public FunctionPass {
-	private:
-		std::unique_ptr<LoopOptimizer> lo;
-
-	public :
-		static char ID;
-
-		LoopOptimizationFramework() : FunctionPass(ID){
-			initializeLoopOptimizationFrameworkPass(*PassRegistry::getPassRegistry());
-		}
-
-		/// @name FunctionPass interface
-		//@{
-		void getAnalysisUsage(AnalysisUsage &AU) const override {
-			AU.addRequired<LoopInfoWrapperPass>();
-			AU.addRequired<ScalarEvolutionWrapperPass>();
-			AU.addRequired<DominatorTreeWrapperPass>();
-			AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
-			AU.addRequired<AAResultsWrapperPass>();
-
-			// Required since transitive
-			//AU.addPreserved<ScalarEvolutionWrapperPass>();
-		}
-		void releaseMemory() override { lo.reset(); }
-		bool runOnFunction(Function &F) override {
-			auto LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-			lo = make_unique<LoopOptimizer>(&F, LI);
-			return lo->optimize();
-		}
-		void print(raw_ostream &OS, const Module *) const override {
-			lo->print(OS);
-		}
-		//@}
-	};
-
-
 
 }
 
@@ -314,6 +175,34 @@ GreenStmt *LoopOptimizer:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
 }
 
 
+GreenLoop* LoopOptimizer:: createGreenLoop(StagedLoop *Staged ) {
+	auto Seq = createGreenSequence(Staged->Body);
+	return	GreenLoop::create(Seq);
+}
+
+GreenSequence* LoopOptimizer:: createGreenSequence(StagedBlock *Sequence) {
+	SmallVector<GreenBlock *,32> Blocks;
+
+	for(auto Block : Sequence->Stmts) {
+		if (auto Stmt = Block.dyn_cast<GreenStmt*>()) {
+			Blocks.push_back(Stmt);
+		} else 				if (auto Loop = Block.dyn_cast<StagedLoop*>()) {
+			auto GLoop = createGreenLoop(Loop);
+			Blocks.push_back(GLoop);
+} else 
+llvm_unreachable("Something is wrong");
+			}
+
+	auto Green = GreenSequence::create(Blocks);
+	return Green;
+		} 
+
+GreenRoot *LoopOptimizer:: createGreenRoot(StagedBlock *TopLoop) {
+	auto GSeq = createGreenSequence(TopLoop);
+	auto Green = GreenRoot::create(GSeq);
+	return Green;
+}
+
 #if 0
 GreenRoot *LoopOptimizer::createRoot() {
 	ReversePostOrderTraversal<Function*> RPOT(Func);
@@ -384,12 +273,3 @@ bool LoopOptimizer::optimize() {
 }
 
 
-char LoopOptimizationFramework::ID = 0;
-
-INITIALIZE_PASS_BEGIN(LoopOptimizationFramework, "lof",	"Loop Optimization Framework", false,	false);
-INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(OptimizationRemarkEmitterWrapperPass);
-INITIALIZE_PASS_END(LoopOptimizationFramework, "lof", "Loop Optimization Framework", false, false); 

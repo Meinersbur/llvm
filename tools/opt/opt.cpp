@@ -56,7 +56,7 @@
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/LOF/LOF.h"
+#include "llvm/LOF/LoopOptPass.h"
 #include <algorithm>
 #include <memory>
 using namespace llvm;
