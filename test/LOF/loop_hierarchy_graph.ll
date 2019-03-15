@@ -14,12 +14,12 @@ for:
 
     body:
       %arrayidx = getelementptr inbounds i64, i64* %A, i64 %j
-      store i64 %j, i64* %arrayidx
+      store i64 %j, i64* %arrayidx, !llvm.access.group !5
       br label %inc
 
 inc:
   %j.inc = add nuw nsw i64 %j, 1
-  br label %for
+  br label %for, !llvm.loop !14
 
 exit:
   br label %return
@@ -27,3 +27,9 @@ exit:
 return:
   ret void
 }
+
+; Access groups
+!5 = distinct !{}
+
+; LoopIDs
+!14 = distinct !{!14, !{!"llvm.loop.parallel_accesses", !5}}

@@ -5,6 +5,7 @@
 #include <vector>
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/Analysis/LoopInfo.h"
 
 
 namespace llvm {
@@ -64,7 +65,7 @@ namespace llvm {
 		virtual void printLine(raw_ostream &OS) const {}
 		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
 
-		virtual ArrayRef <GreenNode * > getChildren() const = 0;
+		virtual ArrayRef <const  GreenNode * > getChildren() const = 0;
 	};
 
 
@@ -72,19 +73,21 @@ namespace llvm {
 	class GreenSequence final : public GreenNode {
 	private:
 		// TODO: Do the same allocation trick.; Sence GreenSequence is always part of either a GreenRoot or GreenLoop, can also allocate in their memory
-		std::vector<GreenBlock *> Blocks;
+		std::vector<const GreenBlock *> Blocks;
 
 	public:
-		GreenSequence (ArrayRef<GreenBlock*> Blocks): Blocks(Blocks) {}
+		GreenSequence (ArrayRef<const GreenBlock*> Blocks): Blocks(Blocks) {}
 		virtual ~GreenSequence() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Sequence; }
 		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Sequence; }
 		static bool classof(const GreenSequence *) {	return true;	}
 
-		virtual ArrayRef < GreenNode * > getChildren() const override ;
+		virtual ArrayRef <const  GreenNode * > getChildren() const override ;
 
-		static 	GreenSequence *create(ArrayRef<GreenBlock*> Blocks) {  return new GreenSequence(Blocks); }
+	iterator_range<	 decltype(Blocks)::const_iterator>  blocks() const { return llvm::make_range (Blocks.begin(), Blocks.end()) ; }
+
+		static 	GreenSequence *create(ArrayRef<const GreenBlock*> Blocks) {  return new GreenSequence(Blocks); }
 	};
 
 
@@ -94,19 +97,23 @@ namespace llvm {
 
 	class GreenRoot : public GreenNode {
 	private :
-		GreenSequence *Sequence;
+		const GreenSequence *Sequence;
 
 	public:
-		GreenRoot (GreenSequence *Sequence): Sequence(Sequence) {}
+		GreenRoot (const GreenSequence *Sequence): Sequence(Sequence) {}
+		GreenRoot *clone() const { auto That =create(Sequence); return That; }
 		virtual ~GreenRoot() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
 		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Root; }
 		static bool classof(const GreenRoot *) {	return true;	}
 
-		virtual ArrayRef < GreenNode * > getChildren() const override ;
+		virtual ArrayRef <const  GreenNode * > getChildren() const override ;
 
-		static 	GreenRoot *create(GreenSequence *Sequence) {  return new GreenRoot(Sequence); }
+		const GreenSequence *getSequence()const { return Sequence; }
+		void setSequence(const GreenSequence *Sequence) { this->Sequence=Sequence; }
+
+		static 	GreenRoot *create(const  GreenSequence *Sequence) {  return new GreenRoot(  Sequence); }
 	}; 
 
 
@@ -138,18 +145,26 @@ namespace llvm {
 	class GreenLoop final : public GreenBlock {
 	private:
 		GreenSequence *Sequence;
+		Loop *LoopInfoLoop;
+		bool ExecuteInParallel = false;
 
 	public:
-		GreenLoop (GreenSequence *Sequence): Sequence(Sequence) {}
+		GreenLoop (GreenSequence *Sequence,Loop* LoopInfoLoop): Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
+		 GreenLoop *clone() const { auto That = create(Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
 		virtual ~GreenLoop() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
 		static bool classof(const GreenLoop *) {	return true;	}
 
-		virtual ArrayRef <GreenNode * > getChildren() const override ;
+		virtual ArrayRef <const GreenNode * > getChildren() const override ;
+		Loop *getLoopInfoLoop() const {return LoopInfoLoop;}
 
-		static 	GreenLoop *create(GreenSequence *Sequence) {  return new GreenLoop(Sequence); }
+		bool isExecutedInParallel() const {return ExecuteInParallel;}
+		void setExecuteInParallel(bool ExecuteInParallel = true) { this->ExecuteInParallel= ExecuteInParallel;  }
+
+		static 	GreenLoop *create(GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Sequence, LoopInfoLoop); }
+	
 	};
 
 
@@ -166,7 +181,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
 		static bool classof(const GreenStmt *) {	return true;	}
 
-		virtual ArrayRef <GreenNode * > getChildren() const override { return {}; };
+		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static GreenStmt*create(ArrayRef<GreenInst*> Insts) { return new GreenStmt(Insts); };
 	};
@@ -199,7 +214,7 @@ namespace llvm {
 		GreenExpr * getPtr() const {return Operands[1]; }
 		//GreenExpr * &getPtr()  {return Operands[1]; }
 
-		virtual ArrayRef <GreenNode * > getChildren() const override ;
+		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 
 		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
 	};
@@ -226,7 +241,7 @@ namespace llvm {
 		GreenExpr * getVal() const { return Val; }
 		//GreenExpr * &getVal()  {return Val; }
 
-		virtual ArrayRef <GreenNode * > getChildren() const override;
+		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
 	};
@@ -255,7 +270,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Const; 	}
 		static bool classof(const GreenConst *) {	return true;	}
 
-		virtual ArrayRef <GreenNode * > getChildren() const override { return {}; };
+		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
 	};
@@ -273,7 +288,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
 		static bool classof(const GreenReg *) {	return true;	}
 
-		virtual ArrayRef <GreenNode * > getChildren() const override { return {}; };
+		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static  GreenReg *create(Value *V) { return new GreenReg(V); }
 	};
@@ -298,7 +313,7 @@ namespace llvm {
 		GreenExpr *getBase() const { assert(Operands.size() >=1); return Operands[0]; }
 		ArrayRef<GreenExpr*> getIndices() const { return ArrayRef<GreenExpr*>(Operands).drop_front(1) ; }
 
-		virtual ArrayRef <GreenNode * > getChildren() const override;
+		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static  GreenGEP *create(ArrayRef<GreenExpr*>Operands) { return new GreenGEP(Operands); }
 	};
@@ -323,7 +338,7 @@ namespace llvm {
 		GreenExpr * getLHS() const { return Operands[0]; }
 		GreenExpr * getRHS() const { return Operands[1]; }
 
-		virtual ArrayRef <GreenNode * > getChildren() const override;
+		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static  GreenICmp *create(GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(LHS,RHS); }
 	};

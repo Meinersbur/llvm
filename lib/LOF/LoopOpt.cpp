@@ -22,7 +22,7 @@ namespace {
 		Loop *L ;
 		StagedBlock *Body;
 
-		StagedLoop() ;
+		explicit StagedLoop(Loop *LoopInfoLoop)  ;
 	};
 
 	
@@ -35,8 +35,8 @@ namespace {
 	};
 
 
-	StagedLoop::StagedLoop() {
-		Body = new StagedBlock();
+	StagedLoop::StagedLoop(Loop *LoopInfoLoop): L(LoopInfoLoop), Body( new StagedBlock()) {
+		
 	}
 
 
@@ -47,6 +47,10 @@ namespace {
 
 		LoopInfo *LI;
 		ScalarEvolution *SE;
+
+
+		GreenRoot *OriginalRoot=nullptr;
+
 
 		GreenLoop *createHierarchy(Function *F) const;
 		GreenLoop *createHierarchy(Loop *L) const;
@@ -66,14 +70,55 @@ namespace {
 
 
 		GreenLoop* createGreenLoop(StagedLoop *Staged ) ;
-
 		GreenSequence* createGreenSequence(StagedBlock *Sequence) ;
-
 		GreenRoot *createGreenRoot(StagedBlock *TopLoop) ;
+
+
+	const	GreenSequence *parallelizeSequence(const GreenSequence *Seq) {
+			bool Changed = false;
+			SmallVector<const GreenBlock*,32> NewBlocks;
+			for (auto Block : Seq->blocks()) {
+				const GreenBlock *NewBlock;
+				if (auto Stmt = dyn_cast<GreenStmt>(Block)) {
+					NewBlock = Stmt;
+				} else if (auto Loop = dyn_cast<GreenLoop>(Block)) {
+					NewBlock = parallelizeLoop(Loop);
+				} else 
+					llvm_unreachable("unexpected");
+
+				if (Block != NewBlock)
+					Changed=true;
+
+				NewBlocks.push_back(NewBlock);
+			}	
+
+			if (!Changed)
+				return Seq;
+
+			return GreenSequence::create(NewBlocks);
+		}
+
+	const	GreenLoop *parallelizeLoop(const GreenLoop *Loop) {
+			auto L = Loop->getLoopInfoLoop();
+			if (!L)
+				return Loop;
+			if (!L->isAnnotatedParallel())
+				return Loop;
+			if (Loop->isExecutedInParallel())
+				return Loop;
+
+			auto Cloned = Loop->clone();
+			Cloned->setExecuteInParallel();
+			return Cloned;
+		}
+
 
 
 	public:
 		LoopOptimizerImpl(Function *Func, LoopInfo*LI) : Func(Func), LI(LI) {}
+
+		GreenRoot * buildOriginalLoopTree();
+		const GreenRoot *parallelize(const GreenRoot *Root);
 
 		bool optimize()override ;
 		void print(raw_ostream &OS) override {}
@@ -175,7 +220,7 @@ GreenStmt *LoopOptimizerImpl:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
 
 GreenLoop* LoopOptimizerImpl:: createGreenLoop(StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
-	return	GreenLoop::create(Seq);
+	return	GreenLoop::create(Seq, Staged->L);
 }
 
 GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedBlock *Sequence) {
@@ -201,40 +246,24 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
 	return Green;
 }
 
-#if 0
-GreenRoot *LoopOptimizer::createRoot() {
-	ReversePostOrderTraversal<Function*> RPOT(Func);
-	auto GBlock = createBlock (nullptr, RPOT.begin());
-	return	GreenRoot::create(GBlock);
+const GreenRoot *LoopOptimizerImpl::parallelize(const GreenRoot *Root){
+	 auto NewSeq= parallelizeSequence(Root->getSequence() );
+	if (NewSeq==Root->getSequence())
+		return Root;
+
+	auto NewRoot = Root->clone();
+	NewRoot->setSequence(NewSeq);
+	return NewRoot;
 }
-#endif
 
 
-bool LoopOptimizerImpl::optimize() {
-	for (auto& Block : *Func) {
-		SmallVector<GreenStmt*, 32> Stmts;
-		for (auto &I : Block) {
-			if (I.isTerminator())
-				continue;
-			if (!I.mayHaveSideEffects())
-				continue;
-			auto Inst = getGreenInst(&I);
-			auto Stmt = createGreenStmt({Inst});
-			Stmts.push_back(Stmt);
-		}
-	}
-
-
-
-
+GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 	DenseMap <Loop*,StagedLoop*> LoopMap;
-	LoopMap[nullptr] = new StagedLoop();
+	LoopMap[nullptr] = new StagedLoop(nullptr);
 	StagedBlock *RootBlock = LoopMap[nullptr]->Body;
 	for (auto L : LI->getLoopsInPreorder()) {
-		LoopMap[L] = new StagedLoop();
+		LoopMap[L] = new StagedLoop(L);
 	}
-
-
 
 
 	// Build a temporaru loop tree
@@ -263,14 +292,22 @@ bool LoopOptimizerImpl::optimize() {
 	}
 
 	
-	auto Green = createGreenRoot(RootBlock);
+	OriginalRoot = createGreenRoot(RootBlock);
+	return OriginalRoot;
+}
 
+
+
+bool LoopOptimizerImpl::optimize() {
+	auto OrigTree= buildOriginalLoopTree();
+
+	auto OptimizedTree = parallelize(OrigTree);
+	if (OptimizedTree == OrigTree)
+		return false;
 
 
 	return false;
 }
-
-
 
 LoopOptimizer *llvm::createLoopOptimizer(Function*Func,LoopInfo*LI) {
 	return new LoopOptimizerImpl(Func,LI);
