@@ -4,6 +4,10 @@
 #include "GreenTree.h"
 #include "RedTree.h"
 #include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/Function.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+
 
 
 
@@ -37,19 +41,58 @@ namespace {
 
 
 
+	class LoopOptimizerImpl : public LoopOptimizer {
+	private:
+		Function *Func;
+
+		LoopInfo *LI;
+		ScalarEvolution *SE;
+
+		GreenLoop *createHierarchy(Function *F) const;
+		GreenLoop *createHierarchy(Loop *L) const;
+		GreenStmt *createHierarchy(BasicBlock *BB) const;
+
+		GreenExpr *createExpr(Value *I);
+
+
+		DenseMap <Value *, GreenExpr*> ExprCache;
+		GreenExpr *getGreenExpr(Value *C) ;
+
+		DenseMap <Instruction *, GreenInst*> InstCache; // FIXME: Instructions may not be re-usable, so do not cache.
+		GreenInst *getGreenInst(Instruction *I) ;
+
+		GreenStmt *createGreenStmt(ArrayRef<GreenInst*> Insts);
+
+
+
+		GreenLoop* createGreenLoop(StagedLoop *Staged ) ;
+
+		GreenSequence* createGreenSequence(StagedBlock *Sequence) ;
+
+		GreenRoot *createGreenRoot(StagedBlock *TopLoop) ;
+
+
+	public:
+		LoopOptimizerImpl(Function *Func, LoopInfo*LI) : Func(Func), LI(LI) {}
+
+		bool optimize()override ;
+		void print(raw_ostream &OS) override {}
+	};
+
+
 	
 
 }
 
-GreenLoop *LoopOptimizer::createHierarchy(Function *F) const {
+GreenLoop *LoopOptimizerImpl::createHierarchy(Function *F) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenLoop *LoopOptimizer::createHierarchy(Loop *L) const {
+GreenLoop *LoopOptimizerImpl::createHierarchy(Loop *L) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
+GreenStmt *LoopOptimizerImpl::createHierarchy(BasicBlock *BB) const {
 	for (auto &I : *BB) {
 		if (I.mayThrow())
 			return nullptr;
@@ -59,7 +102,7 @@ GreenStmt *LoopOptimizer::createHierarchy(BasicBlock *BB) const {
 	llvm_unreachable("unimplemented");
 }
 
-GreenExpr *LoopOptimizer::getGreenExpr(Value *V) {
+GreenExpr *LoopOptimizerImpl::getGreenExpr(Value *V) {
 	auto &Result = ExprCache[V];
 	if (!Result) {
 		Result = createExpr(V);
@@ -68,7 +111,7 @@ GreenExpr *LoopOptimizer::getGreenExpr(Value *V) {
 }
 
 
-GreenExpr *LoopOptimizer::createExpr(Value *I)  {
+GreenExpr *LoopOptimizerImpl::createExpr(Value *I)  {
 	if (auto P = dyn_cast<Argument>(I)) {
 		auto Green = GreenReg::create(P);
 		return Green;
@@ -107,7 +150,7 @@ GreenExpr *LoopOptimizer::createExpr(Value *I)  {
 
 
 
-GreenInst *LoopOptimizer::getGreenInst(Instruction *I) {
+GreenInst *LoopOptimizerImpl::getGreenInst(Instruction *I) {
 	auto &Result = InstCache[I];
 	if (!Result) {
 		if (auto S = dyn_cast<StoreInst>(I)) {
@@ -125,17 +168,17 @@ GreenInst *LoopOptimizer::getGreenInst(Instruction *I) {
 }
 
 
-GreenStmt *LoopOptimizer:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
+GreenStmt *LoopOptimizerImpl:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
 	return GreenStmt::create(Insts);
 }
 
 
-GreenLoop* LoopOptimizer:: createGreenLoop(StagedLoop *Staged ) {
+GreenLoop* LoopOptimizerImpl:: createGreenLoop(StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
 	return	GreenLoop::create(Seq);
 }
 
-GreenSequence* LoopOptimizer:: createGreenSequence(StagedBlock *Sequence) {
+GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedBlock *Sequence) {
 	SmallVector<GreenBlock *,32> Blocks;
 
 	for(auto Block : Sequence->Stmts) {
@@ -152,7 +195,7 @@ llvm_unreachable("Something is wrong");
 	return Green;
 		} 
 
-GreenRoot *LoopOptimizer:: createGreenRoot(StagedBlock *TopLoop) {
+GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
 	auto GSeq = createGreenSequence(TopLoop);
 	auto Green = GreenRoot::create(GSeq);
 	return Green;
@@ -167,7 +210,7 @@ GreenRoot *LoopOptimizer::createRoot() {
 #endif
 
 
-bool LoopOptimizer::optimize() {
+bool LoopOptimizerImpl::optimize() {
 	for (auto& Block : *Func) {
 		SmallVector<GreenStmt*, 32> Stmts;
 		for (auto &I : Block) {
@@ -227,4 +270,9 @@ bool LoopOptimizer::optimize() {
 	return false;
 }
 
+
+
+LoopOptimizer *llvm::createLoopOptimizer(Function*Func,LoopInfo*LI) {
+	return new LoopOptimizerImpl(Func,LI);
+}
 

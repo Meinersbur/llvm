@@ -5,7 +5,8 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 
 using namespace llvm;
 
@@ -36,7 +37,7 @@ namespace {
 		void releaseMemory() override { lo.reset(); }
 		bool runOnFunction(Function &F) override {
 			auto LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-			lo = make_unique<LoopOptimizer>(&F, LI);
+			lo .reset(  createLoopOptimizer(&F, LI));
 			return lo->optimize();
 		}
 		void print(raw_ostream &OS, const Module *) const override {
