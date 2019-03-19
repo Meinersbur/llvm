@@ -48,6 +48,7 @@ namespace llvm {
 
 
 
+	using ActiveRegsTy = DenseMap<Instruction*,Value*>;
 
 
 	
@@ -86,9 +87,11 @@ namespace llvm {
 
 		virtual ArrayRef <const  GreenNode * > getChildren() const override ;
 
-	iterator_range<	 decltype(Blocks)::const_iterator>  blocks() const { return llvm::make_range (Blocks.begin(), Blocks.end()) ; }
+		iterator_range<	 decltype(Blocks)::const_iterator>  blocks() const { return llvm::make_range (Blocks.begin(), Blocks.end()) ; }
 
 		static 	GreenSequence *create(ArrayRef<const GreenBlock*> Blocks) {  return new GreenSequence(Blocks); }
+
+		 void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const;
 	};
 
 
@@ -139,19 +142,23 @@ namespace llvm {
 
 
 		//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
+	
+		virtual void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const=0;
 	}; 
 
 
 
 	class GreenLoop final : public GreenBlock {
 	private:
+		GreenExpr *Iterations;
 		GreenSequence *Sequence;
+
 		Loop *LoopInfoLoop;
 		bool ExecuteInParallel = false;
 
 	public:
-		GreenLoop (GreenSequence *Sequence,Loop* LoopInfoLoop): Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
-		 GreenLoop *clone() const { auto That = create(Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
+		GreenLoop (GreenExpr *Iterations, GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations),  Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
+		 GreenLoop *clone() const { auto That = create(Iterations,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
 		virtual ~GreenLoop() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
@@ -164,8 +171,9 @@ namespace llvm {
 		bool isExecutedInParallel() const {return ExecuteInParallel;}
 		void setExecuteInParallel(bool ExecuteInParallel = true) { this->ExecuteInParallel= ExecuteInParallel;  }
 
-		static 	GreenLoop *create(GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Sequence, LoopInfoLoop); }
+		static 	GreenLoop *create(GreenExpr *Iterations,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Iterations, Sequence, LoopInfoLoop); }
 	
+		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -185,6 +193,8 @@ namespace llvm {
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static GreenStmt*create(ArrayRef<GreenInst*> Insts) { return new GreenStmt(Insts); };
+
+		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -195,7 +205,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Inst_First <= Kind && Kind <= LoopHierarchyKind::Inst_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
 
-		virtual void codegen(IRBuilder<> &Builder )const =0;
+		virtual void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const =0;
 	};
 
 
@@ -221,7 +231,7 @@ namespace llvm {
 
 		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
 
-		 void codegen(IRBuilder<> &Builder )const override;
+		 void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -250,7 +260,7 @@ namespace llvm {
 
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
 
-		void codegen(IRBuilder<> &Builder )const override;
+		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -266,7 +276,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Expr_First <= Kind && Kind <= LoopHierarchyKind::Expr_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
 
-		virtual Value* codegen(IRBuilder<> &Builder )const =0;
+		virtual Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const =0;
 	};
 
 
@@ -284,7 +294,7 @@ namespace llvm {
 
 		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
 
-		 Value* codegen(IRBuilder<> &Builder )const override;
+		 Value* codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const override;
 	};
 
 
@@ -292,9 +302,9 @@ namespace llvm {
 
 	// Expression tree leaf
 	class GreenReg final : public GreenExpr {
-		Value *Val;
+		Instruction *Var;
 	public:
-		GreenReg(Value *V) : Val(V) {}
+		GreenReg(Instruction *V) : Var(V) {}
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
@@ -302,9 +312,9 @@ namespace llvm {
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
-		static  GreenReg *create(Value *V) { return new GreenReg(V); }
+		static  GreenReg *create(Instruction *V) { return new GreenReg(V); }
 
-		Value* codegen(IRBuilder<> &Builder )const override;
+		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -331,7 +341,7 @@ namespace llvm {
 
 		static  GreenGEP *create(ArrayRef<GreenExpr*>Operands) { return new GreenGEP(Operands); }
 
-		Value* codegen(IRBuilder<> &Builder )const override;
+		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
 
 
@@ -361,11 +371,8 @@ namespace llvm {
 
 		static  GreenICmp *create(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(Predicate,LHS,RHS); }
 
-		Value* codegen(IRBuilder<> &Builder )const override;
+		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
-
-
-
 }
 
 #endif /* LLVM_LOF_GREENTREE_H */

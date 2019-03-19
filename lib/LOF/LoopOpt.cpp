@@ -7,7 +7,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Analysis/ScalarEvolution.h"
-
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 
 
@@ -119,6 +119,7 @@ namespace {
 
 		GreenRoot * buildOriginalLoopTree();
 		const GreenRoot *parallelize(const GreenRoot *Root);
+		void codegen(const GreenRoot *Root);
 		 
 
 		bool optimize()override ;
@@ -258,6 +259,23 @@ const GreenRoot *LoopOptimizerImpl::parallelize(const GreenRoot *Root){
 }
 
 
+
+
+
+
+void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
+	auto Entry = &Func->getEntryBlock();
+	auto OldEntry= SplitBlock(Entry, &Entry->front());
+
+	
+	IRBuilder<> Builder(  );
+
+	Root->getSequence()->codegen();
+
+}
+
+
+
 GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 	DenseMap <Loop*,StagedLoop*> LoopMap;
 	LoopMap[nullptr] = new StagedLoop(nullptr);
@@ -306,8 +324,8 @@ bool LoopOptimizerImpl::optimize() {
 	if (OptimizedTree == OrigTree)
 		return false;
 
-
-	return false;
+	codegen(OptimizedTree);
+	return true;
 }
 
 LoopOptimizer *llvm::createLoopOptimizer(Function*Func,LoopInfo*LI) {
