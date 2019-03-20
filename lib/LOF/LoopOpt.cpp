@@ -225,7 +225,7 @@ GreenStmt *LoopOptimizerImpl:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
 GreenLoop* LoopOptimizerImpl:: createGreenLoop(StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
 auto Iters=	getGreenExpr(Staged->Iterations);
-	return	GreenLoop::create(Iters, Seq, Staged->L);
+	return	GreenLoop::create(Iters, Staged->L->getCanonicalInductionVariable(), Seq, Staged->L);
 }
 
 GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedBlock *Sequence) {

@@ -129,8 +129,11 @@ Function * GreenLoop::codegenSubfunc(Module *M)const {
 
 	Builder.SetInsertPoint(InnerForBodyBB);
 
-	ActiveRegsTy ActiveRegs; //TODO: Add IV
-	Sequence->codegen(Builder, ActiveRegs);
+	// TODO: Reuse/Insert parent active regs 
+	ActiveRegsTy SubFnActiveRegs; 
+	SubFnActiveRegs.insert({IndVar, IV} );
+
+	Sequence->codegen(Builder, SubFnActiveRegs);
 
 	auto NextIV = Builder.CreateAdd(IV, Builder.getInt64(0), "parloop.iv.next" );
 	IV->addIncoming( NextIV, InnerForBodyBB );
@@ -169,9 +172,7 @@ void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 	auto VoidTy=  Type::getVoidTy(Context);
 
 	if (ExecuteInParallel) {
-
-		auto SubFunc = codegenSubfunc(M);
-
+		auto SubFunc = codegenSubfunc(M );
 
 		IRBuilder<> AllocaBuilder(&F->getEntryBlock());
 		auto IterationsPtr =AllocaBuilder.CreateAlloca(LongTy, nullptr, "iterations.ptr");

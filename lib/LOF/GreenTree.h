@@ -151,16 +151,18 @@ namespace llvm {
 	class GreenLoop final : public GreenBlock {
 	private:
 		GreenExpr *Iterations;
+		Instruction *IndVar;
 		GreenSequence *Sequence;
 
 		Loop *LoopInfoLoop;
+
 		bool ExecuteInParallel = false;
 
 		StructType *getIdentTy(Module *M) const;
 		Function * codegenSubfunc(Module *M)const 			;
 	public:
-		GreenLoop (GreenExpr *Iterations, GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations),  Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
-		 GreenLoop *clone() const { auto That = create(Iterations,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
+		GreenLoop (GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
+		 GreenLoop *clone() const { auto That = create(Iterations,IndVar,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
 		virtual ~GreenLoop() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
@@ -173,7 +175,7 @@ namespace llvm {
 		bool isExecutedInParallel() const {return ExecuteInParallel;}
 		void setExecuteInParallel(bool ExecuteInParallel = true) { this->ExecuteInParallel= ExecuteInParallel;  }
 
-		static 	GreenLoop *create(GreenExpr *Iterations,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Iterations, Sequence, LoopInfoLoop); }
+		static 	GreenLoop *create(GreenExpr *Iterations,Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Iterations,IndVar, Sequence, LoopInfoLoop); }
 	
 		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};
