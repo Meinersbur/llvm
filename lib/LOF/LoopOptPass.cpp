@@ -34,12 +34,16 @@ namespace {
 			// Required since transitive
 			//AU.addPreserved<ScalarEvolutionWrapperPass>();
 		}
+
 		void releaseMemory() override { lo.reset(); }
+
 		bool runOnFunction(Function &F) override {
 			auto LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-			lo .reset(  createLoopOptimizer(&F, LI));
+			auto SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+			lo .reset(  createLoopOptimizer(&F, LI,SE));
 			return lo->optimize();
 		}
+
 		void print(raw_ostream &OS, const Module *) const override {
 			lo->print(OS);
 		}

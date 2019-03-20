@@ -7,6 +7,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 
@@ -21,8 +22,9 @@ namespace {
 	public:
 		Loop *L ;
 		StagedBlock *Body;
+		Value *Iterations;
 
-		explicit StagedLoop(Loop *LoopInfoLoop)  ;
+		explicit StagedLoop(Loop *LoopInfoLoop, Value *Iterations)  ;
 	};
 
 	
@@ -35,7 +37,7 @@ namespace {
 	};
 
 
-	StagedLoop::StagedLoop(Loop *LoopInfoLoop): L(LoopInfoLoop), Body( new StagedBlock()) {
+	StagedLoop::StagedLoop(Loop *LoopInfoLoop, Value *Iterations): L(LoopInfoLoop), Body(new StagedBlock()) , Iterations(Iterations){
 		
 	}
 
@@ -115,7 +117,7 @@ namespace {
 
 
 	public:
-		LoopOptimizerImpl(Function *Func, LoopInfo*LI) : Func(Func), LI(LI) {}
+		LoopOptimizerImpl(Function *Func, LoopInfo*LI, ScalarEvolution *SE) : Func(Func), LI(LI) ,SE(SE){}
 
 		GreenRoot * buildOriginalLoopTree();
 		const GreenRoot *parallelize(const GreenRoot *Root);
@@ -222,7 +224,8 @@ GreenStmt *LoopOptimizerImpl:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
 
 GreenLoop* LoopOptimizerImpl:: createGreenLoop(StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
-	return	GreenLoop::create(Seq, Staged->L);
+auto Iters=	getGreenExpr(Staged->Iterations);
+	return	GreenLoop::create(Iters, Seq, Staged->L);
 }
 
 GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedBlock *Sequence) {
@@ -248,40 +251,28 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
 	return Green;
 }
 
-const GreenRoot *LoopOptimizerImpl::parallelize(const GreenRoot *Root){
-	 auto NewSeq= parallelizeSequence(Root->getSequence() );
-	if (NewSeq==Root->getSequence())
-		return Root;
-
-	auto NewRoot = Root->clone();
-	NewRoot->setSequence(NewSeq);
-	return NewRoot;
-}
 
 
-
-
-
-
-void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
-	auto Entry = &Func->getEntryBlock();
-	auto OldEntry= SplitBlock(Entry, &Entry->front());
-
-	
-	IRBuilder<> Builder(  );
-
-	Root->getSequence()->codegen();
-
-}
 
 
 
 GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
+	auto &Context = Func->getContext();
+
 	DenseMap <Loop*,StagedLoop*> LoopMap;
-	LoopMap[nullptr] = new StagedLoop(nullptr);
+	LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
 	StagedBlock *RootBlock = LoopMap[nullptr]->Body;
 	for (auto L : LI->getLoopsInPreorder()) {
-		LoopMap[L] = new StagedLoop(L);
+		// TODO: Use own analysis on loop tree instead of SCEV.
+		auto Taken = SE->getBackedgeTakenCount(L);
+		Taken = SE->getSCEVAtScope(Taken, L->getParentLoop());
+
+		//auto IterCount = SE->getMinusSCEV(Taken,  SE->getSCEV( ConstantInt::get(Context, APInt(2, -1, true) ) ) );
+		auto IterCountV = cast<SCEVUnknown>( cast<SCEVSMaxExpr>(Taken)->getOperand(1) )->getValue();
+
+		// FIXME: This assume the form without loop-rotation
+		//    for (int = 0; i < 0; i+=1)
+		LoopMap[L] = new StagedLoop(L,IterCountV );
 	}
 
 
@@ -317,6 +308,46 @@ GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 
 
 
+const GreenRoot *LoopOptimizerImpl::parallelize(const GreenRoot *Root){
+	auto NewSeq= parallelizeSequence(Root->getSequence() );
+	if (NewSeq==Root->getSequence())
+		return Root;
+
+	auto NewRoot = Root->clone();
+	NewRoot->setSequence(NewSeq);
+	return NewRoot;
+}
+
+
+
+
+
+void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
+	auto M = Func->getParent();
+	auto &Context = M->getContext();
+
+	// Make a clone of the original function.
+	FunctionType *FT = Func->getFunctionType()  ;
+	Function *NewFunc = Function::Create(FT, Func->getLinkage(), Func->getName(), M);
+
+	BasicBlock *EntryBB = BasicBlock::Create(Context, "entry", NewFunc);
+
+	IRBuilder<> Builder(EntryBB);
+	ActiveRegsTy ActiveRegs; // TODO: Add arguments
+	for ( auto P : zip( Func->args(), NewFunc->args() )  ) {
+		ActiveRegs.insert({ &std::get<0>(P) ,&std:: get<1>(P) } );
+	}
+
+	Root->getSequence()->codegen(Builder, ActiveRegs);
+
+	Builder.CreateRetVoid();
+
+	Func->replaceAllUsesWith(NewFunc);
+	Func->removeFromParent();
+}
+
+
+
 bool LoopOptimizerImpl::optimize() {
 	auto OrigTree= buildOriginalLoopTree();
 
@@ -328,7 +359,9 @@ bool LoopOptimizerImpl::optimize() {
 	return true;
 }
 
-LoopOptimizer *llvm::createLoopOptimizer(Function*Func,LoopInfo*LI) {
-	return new LoopOptimizerImpl(Func,LI);
+
+
+LoopOptimizer *llvm::createLoopOptimizer(Function*Func,LoopInfo*LI,ScalarEvolution *SE) {
+	return new LoopOptimizerImpl(Func,LI,SE);
 }
 

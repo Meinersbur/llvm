@@ -48,7 +48,7 @@ namespace llvm {
 
 
 
-	using ActiveRegsTy = DenseMap<Instruction*,Value*>;
+	using ActiveRegsTy = DenseMap<Value*,Value*>;
 
 
 	
@@ -156,6 +156,8 @@ namespace llvm {
 		Loop *LoopInfoLoop;
 		bool ExecuteInParallel = false;
 
+		StructType *getIdentTy(Module *M) const;
+		Function * codegenSubfunc(Module *M)const 			;
 	public:
 		GreenLoop (GreenExpr *Iterations, GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations),  Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
 		 GreenLoop *clone() const { auto That = create(Iterations,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
@@ -302,9 +304,9 @@ namespace llvm {
 
 	// Expression tree leaf
 	class GreenReg final : public GreenExpr {
-		Instruction *Var;
+		Value *Var; // Instruction, Global or Argument
 	public:
-		GreenReg(Instruction *V) : Var(V) {}
+		GreenReg(Value *Var) : Var(Var) {}
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
@@ -312,7 +314,7 @@ namespace llvm {
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
-		static  GreenReg *create(Instruction *V) { return new GreenReg(V); }
+		static  GreenReg *create(Value *Var) { return new GreenReg(Var); }
 
 		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 	};

@@ -4,6 +4,7 @@
 namespace llvm {
 	class Function;
 	class LoopInfo;
+	class ScalarEvolution;
 	class raw_ostream;
 
 	class LoopOptimizer {
@@ -13,7 +14,7 @@ namespace llvm {
 		virtual void print(raw_ostream &OS) =0;
 	};
 
-	LoopOptimizer *createLoopOptimizer(Function*Func,LoopInfo*LI);
+	LoopOptimizer *createLoopOptimizer(Function*Func,LoopInfo*LI,ScalarEvolution *SE);
 }
 
 
