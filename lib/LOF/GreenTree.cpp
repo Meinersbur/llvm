@@ -78,7 +78,7 @@ Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegA
 
 
 	FunctionType *FT = FunctionType::get(VoidTy, ArgTypes, false);
-	Function *SubFn = Function::Create(FT, Function::InternalLinkage, ".parloop.par.subfun.", M);
+	Function *SubFn = Function::Create(FT, Function::InternalLinkage, ".parloop.subfun.", M);
 	(SubFn->arg_begin() + 0)->setName(".global_tid.");
 	(SubFn->arg_begin() + 1)->setName(".bound_tid.");
 	(SubFn->arg_begin() + 2)->setName("parloop.iterations.addr");
@@ -140,7 +140,7 @@ Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegA
 
 	Builder.SetInsertPoint(InnerForCondBB);
 	auto IV = Builder.CreatePHI( LongTy, 2, "parloop.iv" );
-	IV->addIncoming( Builder.getInt64(0), PrecondThenBB );
+	IV->addIncoming(LB, PrecondThenBB );
 	auto Cont = Builder.CreateICmpULT(IV, UB, "parloop.cont");
 	Builder.CreateCondBr(Cont, InnerForBodyBB,ExitBB );
 

@@ -1,5 +1,3 @@
-; RUN: opt -lof -analyze -debug-pass=Executions -debug-only=lof < %s
-
 ; ModuleID = '<stdin>'
 source_filename = "main.c"
 target datalayout = "e-m:w-i64:64-f80:128-n8:16:32:64-S128"
