@@ -125,12 +125,10 @@ namespace {
 		 
 
 		bool optimize()override ;
-		void print(raw_ostream &OS) override {}
+		void print(raw_ostream &OS) override {
+			OS << "Nothing to print yet\n";
+		}
 	};
-
-
-	
-
 }
 
 GreenLoop *LoopOptimizerImpl::createHierarchy(Function *F) const {
@@ -268,7 +266,12 @@ GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 		Taken = SE->getSCEVAtScope(Taken, L->getParentLoop());
 
 		//auto IterCount = SE->getMinusSCEV(Taken,  SE->getSCEV( ConstantInt::get(Context, APInt(2, -1, true) ) ) );
-		auto IterCountV = cast<SCEVUnknown>( cast<SCEVSMaxExpr>(Taken)->getOperand(1) )->getValue();
+		Value * IterCountV;
+		if (isa<SCEVSMaxExpr>(Taken)) {
+		 IterCountV = cast<SCEVUnknown>( cast<SCEVSMaxExpr>(Taken)->getOperand(1) )->getValue();
+		} else {
+			IterCountV = cast<SCEVConstant>(Taken)->getValue();
+		}
 
 		// FIXME: This assume the form without loop-rotation
 		//    for (int = 0; i < 0; i+=1)
@@ -343,15 +346,17 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 
 	Root->getSequence()->codegen(Builder, ActiveRegs);
 
-	Builder.CreateRetVoid();
-
+	if (FT->getReturnType()->isVoidTy())
+		Builder.CreateRetVoid();
+	else 
+		Builder.CreateRet( Builder.getInt32(0) );
 	
 
 
 	// Remove old function
 	// FIXME: Cannot remove function while being processed, so we just make it 'unused' here at rely on some cleanup pass to actually remove it. 
 	// FIXME: FunctionPassManager has not been written for removing/adding functions during passes. It will ignore added functions and continue to process the currently processed function even if it was removed. We may need to switch to be a CGSCC pass, which supports adding/removing functions, bu will compute a call graph that we do not need. Howver, when we want to process OpenMP frontend-outlined subfunctions, we will need to become an CGSCC pass. 
-	Func->replaceAllUsesWith(NewFunc);
+	Func->replaceAllUsesWith(NewFunc); // This might be evil in a FunctionPass
 	Func->setLinkage(GlobalValue::PrivateLinkage);
 	Func->setName(Twine( ".") + FuncName + Twine(".") );
 
