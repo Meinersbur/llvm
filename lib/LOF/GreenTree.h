@@ -225,6 +225,43 @@ namespace llvm {
 
 
 
+
+	class GreenSet  : public GreenInst {
+	private:
+		// For now, the llvm::Instruction is the 'name' of the register that is set.
+		Instruction *Var;
+
+		GreenExpr *Val;
+
+
+	public:
+		GreenSet(Instruction *Var, GreenExpr *Val) : Var{Var}, Val{Val} {}
+
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Set; }
+		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Set; }
+		static bool classof(const GreenSet *) { return true; }
+
+		GreenExpr * getVal() const { return Val; }
+		//GreenExpr * &getVal()  {return Val; }
+
+		virtual ArrayRef <const GreenNode * > getChildren() const override;
+
+		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
+
+		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+
+
+		void findRegDefs(SetVector<Instruction*>  &DefRegs) const override {
+			DefRegs.insert(Var);
+			GreenInst::findRegDefs(DefRegs);
+		}
+	};
+
+
+
+
+
+
 	class GreenStore  : public GreenInst {
 	private:
 		GreenExpr *Operands [2];
@@ -251,37 +288,26 @@ namespace llvm {
 
 
 
-
-
-	class GreenSet  : public GreenInst {
+	class GreenCall  : public GreenInst {
 	private:
-		// For now, the llvm::Instruction is the 'name' of the register that is set.
-		Instruction *Var;
-
-		GreenExpr *Val;
+		SmallVector<const GreenExpr *, 4> Operands;
 
 
 	public:
-		GreenSet(Instruction *Var, GreenExpr *Val) : Var{Var}, Val{Val} {}
+		GreenCall(const GreenExpr *Func,ArrayRef<const GreenExpr*> Arguments)  {
+			Operands.push_back(Func);
+			Operands.insert(Operands.end(), Arguments.begin(), Arguments.end());
+		}
 
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Set; }
-		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Set; }
-		static bool classof(const GreenStore *) { return true; }
-
-		GreenExpr * getVal() const { return Val; }
-		//GreenExpr * &getVal()  {return Val; }
+		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Call; }
+		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Call; }
+		static bool classof(const GreenCall *) { return true; }
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
-		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
+		static GreenCall*create(const GreenExpr *Func,ArrayRef<const GreenExpr*> Operands) { return new GreenCall(Func, Operands); };
 
 		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
-
-
-		 void findRegDefs(SetVector<Instruction*>  &DefRegs) const override {
-			 DefRegs.insert(Var);
-			 GreenInst::findRegDefs(DefRegs);
-		 }
 	};
 
 

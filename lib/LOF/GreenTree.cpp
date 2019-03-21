@@ -273,7 +273,15 @@ void GreenStmt:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 }
 
 
+ArrayRef <const GreenNode * > GreenSet:: getChildren() const  { return ArrayRef<GreenNode*>(Val); }
 
+
+void GreenSet::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
+	auto NewVal =Val->codegen(Builder,ActiveRegs); 
+	assert(NewVal);
+	assert(!ActiveRegs.count(Var));
+	ActiveRegs[ Var] = NewVal;
+}
 
 
 
@@ -284,14 +292,18 @@ void GreenStore::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 	Builder.CreateStore(Val, Ptr);
 }
 
-ArrayRef <const GreenNode * > GreenSet:: getChildren() const  { return ArrayRef<GreenNode*>(Val); }
+
+ArrayRef <const GreenNode * > GreenCall:: getChildren() const { return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
 
 
-void GreenSet::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
-	auto NewVal =Val->codegen(Builder,ActiveRegs); 
-	assert(NewVal);
-	assert(!ActiveRegs.count(Var));
-	ActiveRegs[ Var] = NewVal;
+void GreenCall:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const  {
+	auto Callee = Operands[0]->codegen(Builder,ActiveRegs);
+	SmallVector<Value *,8> Args;
+	for (auto GArg : drop_begin( Operands,1)) {
+		auto Arg = GArg->codegen(Builder, ActiveRegs);
+		Args.push_back(Arg);
+	}
+	Builder.CreateCall(Callee, Args);
 }
 
 

@@ -204,6 +204,14 @@ GreenInst *LoopOptimizerImpl::getGreenInst(Instruction *I) {
 			auto Val = getGreenExpr(S->getValueOperand());
 			auto Ptr = getGreenExpr(S->getPointerOperand());
 			Result = GreenStore::create(Val, Ptr);
+		}	else if (auto C = dyn_cast<CallInst>(I) ) {
+			auto Callee =   getGreenExpr( C->getCalledOperand());
+			SmallVector<const  GreenExpr *,8> Ops;
+			for (auto &Op : C->args()) {
+				auto Val = getGreenExpr(Op.get());
+				Ops.push_back(Val); 
+			}
+			Result = GreenCall::create(Callee, Ops);
 		} else {
 			// Register definition
 			assert(!I->mayHaveSideEffects());
