@@ -38,6 +38,10 @@ namespace {
 		void releaseMemory() override { lo.reset(); }
 
 		bool runOnFunction(Function &F) override {
+			// Do not re-optimize our own output.
+			if (F.hasFnAttribute("lof-output"))
+				return false;
+
 			auto LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 			auto SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 			lo .reset(  createLoopOptimizer(&F, LI,SE));
@@ -45,6 +49,11 @@ namespace {
 		}
 
 		void print(raw_ostream &OS, const Module *) const override {
+			if (!lo) {
+				OS<< "Loop Hierachy Graph not built\n";
+				return;
+			}
+
 			lo->print(OS);
 		}
 		//@}

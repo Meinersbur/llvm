@@ -328,7 +328,10 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 
 	// Make a clone of the original function.
 	FunctionType *FT = Func->getFunctionType()  ;
-	Function *NewFunc = Function::Create(FT, Func->getLinkage(), Func->getName(), M);
+	auto FuncName = Func->getName();
+	Function *NewFunc = Function::Create(FT, Func->getLinkage(), Twine(), M);
+	NewFunc->addFnAttr("lof-output");
+	// TODO: Carry-over function attributes
 
 	BasicBlock *EntryBB = BasicBlock::Create(Context, "entry", NewFunc);
 
@@ -342,8 +345,18 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 
 	Builder.CreateRetVoid();
 
+	
+
+
+	// Remove old function
+	// FIXME: Cannot remove function while being processed, so we just make it 'unused' here at rely on some cleanup pass to actually remove it. 
+	// FIXME: FunctionPassManager has not been written for removing/adding functions during passes. It will ignore added functions and continue to process the currently processed function even if it was removed. We may need to switch to be a CGSCC pass, which supports adding/removing functions, bu will compute a call graph that we do not need. Howver, when we want to process OpenMP frontend-outlined subfunctions, we will need to become an CGSCC pass. 
 	Func->replaceAllUsesWith(NewFunc);
-	Func->removeFromParent();
+	Func->setLinkage(GlobalValue::PrivateLinkage);
+	Func->setName(Twine( ".") + FuncName + Twine(".") );
+
+	// Assign the name after removing the previous to avoid name disambiguation.
+	NewFunc->setName(FuncName);
 }
 
 

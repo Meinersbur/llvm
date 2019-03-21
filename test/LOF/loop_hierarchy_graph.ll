@@ -1,4 +1,4 @@
-; RUN: opt -lof -analyze < %s | FileCheck %s
+; RUN: opt -lof -analyze -debug-pass=Executions -debug-only=lof < %s | FileCheck %s
 ;
 ; for (int j = 0; j < n; j += 1)
 ;   A[j] = j;

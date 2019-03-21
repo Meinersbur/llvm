@@ -7,7 +7,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/IRBuilder.h"
-
+#include "llvm/ADT/SetVector.h"
 
 namespace llvm {
 	enum class LoopHierarchyKind {
@@ -68,6 +68,17 @@ namespace llvm {
 		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
 
 		virtual ArrayRef <const  GreenNode * > getChildren() const = 0;
+
+		// TODO: Use general tree search algorithm
+		virtual void findRegUses(SetVector <Value*>  &UseRegs) const {
+			for (auto Child : getChildren()) 
+				Child->findRegUses(UseRegs);
+		}
+		virtual void findRegDefs(SetVector<Instruction*>  &DefRegs) const {
+
+			for (auto Child : getChildren()) 
+				Child->findRegDefs(DefRegs);
+		}
 	};
 
 
@@ -159,7 +170,7 @@ namespace llvm {
 		bool ExecuteInParallel = false;
 
 		StructType *getIdentTy(Module *M) const;
-		Function * codegenSubfunc(Module *M)const 			;
+		Function * codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegs)const 			;
 	public:
 		GreenLoop (GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
 		 GreenLoop *clone() const { auto That = create(Iterations,IndVar,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
@@ -194,7 +205,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
 		static bool classof(const GreenStmt *) {	return true;	}
 
-		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 
 		static GreenStmt*create(ArrayRef<GreenInst*> Insts) { return new GreenStmt(Insts); };
 
@@ -265,6 +276,12 @@ namespace llvm {
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
 
 		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+
+
+		 void findRegDefs(SetVector<Instruction*>  &DefRegs) const override {
+			 DefRegs.insert(Var);
+			 GreenInst::findRegDefs(DefRegs);
+		 }
 	};
 
 
@@ -319,6 +336,11 @@ namespace llvm {
 		static  GreenReg *create(Value *Var) { return new GreenReg(Var); }
 
 		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+
+		 void findRegUses(SetVector<Value*>  &UseRegs) const override {
+			UseRegs.insert(Var);
+		}
+
 	};
 
 
@@ -380,4 +402,3 @@ namespace llvm {
 }
 
 #endif /* LLVM_LOF_GREENTREE_H */
-

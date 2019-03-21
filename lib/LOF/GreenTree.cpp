@@ -19,6 +19,10 @@ ArrayRef <const  GreenNode * >  GreenRoot::getChildren() const  {
  }
 
 
+  ArrayRef <const GreenNode * > GreenStmt:: getChildren() const  {
+	  return ArrayRef<GreenNode*>((GreenNode**)&Insts[0],Insts.size());
+  };
+
 ArrayRef <const GreenNode * > GreenStore:: getChildren() const { 
 	return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],(size_t)2); 
 }
@@ -44,7 +48,7 @@ void GreenSequence:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )con
 
 
 
-Function * GreenLoop::codegenSubfunc(Module *M)const {
+Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegArgs)const {
 	auto &Context = M->getContext();
 	auto& DL = M->getDataLayout();
 
@@ -56,14 +60,29 @@ Function * GreenLoop::codegenSubfunc(Module *M)const {
 	auto VoidTy=  Type::getVoidTy(Context);
 
 
+	SetVector<Instruction*> DefRegs;
+	Sequence->findRegDefs(DefRegs);
+
+	SetVector<Value *>UseRegs;
+	Sequence->findRegUses(UseRegs);
+
+	UseRegs.set_subtract(DefRegs);
+	UseRegs.remove( IndVar );
+
+
 	SmallVector<Type*, 8> ArgTypes  = {/* global_tid */ Int32PtrTy, /* bound_tid */ Int32PtrTy, /* Iterations */ LongPtrTy}; 
-	// TODO: Add used variables to argument list
+	for (auto X : UseRegs) {
+		UseRegArgs.push_back(X);
+		ArgTypes.push_back(X->getType()->getPointerTo() );
+	}
+
 
 	FunctionType *FT = FunctionType::get(VoidTy, ArgTypes, false);
 	Function *SubFn = Function::Create(FT, Function::InternalLinkage, "parloop.par.subfun", M);
 	(SubFn->arg_begin() + 0)->setName(".global_tid.");
 	(SubFn->arg_begin() + 1)->setName(".bound_tid.");
 	(SubFn->arg_begin() + 2)->setName("parloop.iterations.addr");
+	SubFn->addFnAttr("lof-output");
 
 	BasicBlock *EntryBB = BasicBlock::Create(Context, "parloop.entry", SubFn);
 	BasicBlock *PrecondThenBB = BasicBlock::Create(Context, "parloop.precond.then", SubFn);
@@ -100,7 +119,7 @@ Function * GreenLoop::codegenSubfunc(Module *M)const {
 			Int32PtrTy,LongPtrTy, LongPtrTy, LongPtrTy,  LongTy, LongTy};
 		FunctionType *Ty = FunctionType::get(VoidTy, Params, false);
 		KmpcForStaticInit = Function::Create(Ty, Function::ExternalLinkage, "__kmpc_for_static_init_8u", M);
-	};
+	}
 
 	Builder.CreateStore( Builder.getInt32(0), IsLastPtr );
 	Builder.CreateStore( Builder.getInt64(0),LBPtr  );
@@ -132,11 +151,16 @@ Function * GreenLoop::codegenSubfunc(Module *M)const {
 	// TODO: Reuse/Insert parent active regs 
 	ActiveRegsTy SubFnActiveRegs; 
 	SubFnActiveRegs.insert({IndVar, IV} );
+	for (auto Y : zip( UseRegArgs,drop_begin( SubFn->args(),3 )  ) ) {
+		auto Loaded = Builder.CreateLoad(&std::get<1>(Y)  );
+		SubFnActiveRegs.insert({ std::get<0>(Y) , Loaded});
+	}
 
 	Sequence->codegen(Builder, SubFnActiveRegs);
 
-	auto NextIV = Builder.CreateAdd(IV, Builder.getInt64(0), "parloop.iv.next" );
+	auto NextIV = Builder.CreateAdd(IV, Builder.getInt64(1), "parloop.iv.next" );
 	IV->addIncoming( NextIV, InnerForBodyBB );
+	Builder.CreateBr(InnerForCondBB);
 
 
 	Builder.SetInsertPoint(ExitBB);
@@ -147,7 +171,7 @@ Function * GreenLoop::codegenSubfunc(Module *M)const {
 		FunctionType *Ty = FunctionType::get(VoidTy, Params, false);
 		KmpcForStaticFini = Function::Create(Ty, Function::ExternalLinkage, "__kmpc_for_static_fini", M);
 	};
-	Value *KmpcForStaticFiniArgs[] = {Ident, GlobalTidV, GlobalTidV};
+	Value *KmpcForStaticFiniArgs[] = {Ident, GlobalTidV};
 	Builder.CreateCall(KmpcForStaticFini, KmpcForStaticFiniArgs);
 	Builder.CreateBr(PrecondEndBB);
 
@@ -172,7 +196,8 @@ void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 	auto VoidTy=  Type::getVoidTy(Context);
 
 	if (ExecuteInParallel) {
-		auto SubFunc = codegenSubfunc(M );
+		SmallVector<Value*,8> Params;
+		auto SubFunc = codegenSubfunc(M,Params  );
 
 		IRBuilder<> AllocaBuilder(&F->getEntryBlock());
 		auto IterationsPtr =AllocaBuilder.CreateAlloca(LongTy, nullptr, "iterations.ptr");
@@ -199,7 +224,16 @@ void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 	
 
 		Value *Task = Builder.CreatePointerBitCastOrAddrSpaceCast(SubFunc, Kmpc_MicroTy->getPointerTo());
-		Value *Args[] = {Ident,			/* Number of subfn varargs */ Builder.getInt32(1), Task, ItersV  };
+
+	
+
+		SmallVector<Value*,8> Args =  {Ident,			/* Number of subfn varargs */ Builder.getInt32(1 +Params.size() ), Task, ItersV  };
+		for (auto Z : Params) {
+			auto NewVal = ActiveRegs.lookup(Z);
+			auto ValAlloca = AllocaBuilder.CreateAlloca(Z->getType());
+			Builder.CreateStore(NewVal, ValAlloca);
+			Args.push_back(ValAlloca);
+		}
 		Builder.CreateCall(KmpcForkCall, Args);
 	} else {
 		Value *ValueLB, *ValueUB, *ValueInc;
