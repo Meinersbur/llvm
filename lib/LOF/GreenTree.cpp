@@ -9,13 +9,18 @@ ArrayRef <const  GreenNode * >GreenSequence:: getChildren() const  {
 }
 
 
-ArrayRef <const  GreenNode * >  GreenRoot::getChildren() const  {		
-	return   {Sequence};		
+ArrayRef <const  GreenNode * >  GreenRoot::getChildren() const  {
+	//auto Ptr =  &this->Sequence;
+//	auto Ptr2 = static_cast<const  GreenNode * const *>(Ptr);
+	//ArrayRef <const  GreenNode * >	 ShouldBe (Ptr2, 1 );
+
+	auto Result =  ArrayRef <const  GreenNode * >((const  GreenNode **)&this->Sequence, 1);
+return Result;
 }
 
 
  ArrayRef <const GreenNode * >GreenLoop:: getChildren() const   {
-	 return {Sequence};
+	 return ArrayRef <const  GreenNode * >((const  GreenNode **)&Sequence,1);		
  }
 
 

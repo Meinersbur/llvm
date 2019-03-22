@@ -96,6 +96,8 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Sequence; }
 		static bool classof(const GreenSequence *) {	return true;	}
 
+		 void printLine(raw_ostream &OS) const  override {OS << "Sequence";}
+
 		virtual ArrayRef <const  GreenNode * > getChildren() const override ;
 
 		iterator_range<	 decltype(Blocks)::const_iterator>  blocks() const { return llvm::make_range (Blocks.begin(), Blocks.end()) ; }
@@ -122,6 +124,8 @@ namespace llvm {
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Root; }
 		static bool classof(const GreenNode *Node) { return  Node->getKind() == LoopHierarchyKind::Root; }
 		static bool classof(const GreenRoot *) {	return true;	}
+
+		 void printLine(raw_ostream &OS) const override {OS << "Root";}
 
 		virtual ArrayRef <const  GreenNode * > getChildren() const override ;
 
@@ -180,6 +184,8 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
 		static bool classof(const GreenLoop *) {	return true;	}
 
+		 void printLine(raw_ostream &OS) const override {OS << "Loop";}
+
 		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 		Loop *getLoopInfoLoop() const {return LoopInfoLoop;}
 
@@ -204,6 +210,8 @@ namespace llvm {
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Stmt; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
 		static bool classof(const GreenStmt *) {	return true;	}
+
+		void printLine(raw_ostream &OS) const override {OS << "Stmt";}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 
@@ -244,6 +252,11 @@ namespace llvm {
 		GreenExpr * getVal() const { return Val; }
 		//GreenExpr * &getVal()  {return Val; }
 
+		void printLine(raw_ostream &OS) const override {
+			Var->printAsOperand(OS, false);
+			OS << " = ...";
+		}
+
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
@@ -279,6 +292,8 @@ namespace llvm {
 		GreenExpr * getPtr() const {return Operands[1]; }
 		//GreenExpr * &getPtr()  {return Operands[1]; }
 
+		void printLine(raw_ostream &OS) const override {OS << "Store";}
+
 		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 
 		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
@@ -302,6 +317,8 @@ namespace llvm {
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Call; }
 		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Call; }
 		static bool classof(const GreenCall *) { return true; }
+
+		void printLine(raw_ostream &OS) const override {OS << "Call";}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
@@ -337,6 +354,10 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Const; 	}
 		static bool classof(const GreenConst *) {	return true;	}
 
+		void printLine(raw_ostream &OS) const override {
+			Const->printAsOperand(OS, false);
+		}
+
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
 		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
@@ -356,6 +377,10 @@ namespace llvm {
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
 		static bool classof(const GreenReg *) {	return true;	}
+
+		void printLine(raw_ostream &OS) const override {
+			Var->printAsOperand(OS);
+		}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
 
@@ -389,6 +414,8 @@ namespace llvm {
 		GreenExpr *getBase() const { assert(Operands.size() >=1); return Operands[0]; }
 		ArrayRef<GreenExpr*> getIndices() const { return ArrayRef<GreenExpr*>(Operands).drop_front(1) ; }
 
+		void printLine(raw_ostream &OS) const override {OS << "GetElementPtr";}
+
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
 		static  GreenGEP *create(ArrayRef<GreenExpr*>Operands) { return new GreenGEP(Operands); }
@@ -418,6 +445,8 @@ namespace llvm {
 
 		GreenExpr * getLHS() const { return Operands[0]; }
 		GreenExpr * getRHS() const { return Operands[1]; }
+
+		void printLine(raw_ostream &OS) const override {OS << "ICmp";}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 

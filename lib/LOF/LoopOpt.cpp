@@ -9,7 +9,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
-
+#include "llvm/Support/GraphWriter.h"
 
 
 
@@ -125,6 +125,9 @@ namespace {
 		 
 
 		bool optimize()override ;
+
+		void view(const GreenRoot *Root);
+
 		void print(raw_ostream &OS) override {
 			OS << "Nothing to print yet\n";
 		}
@@ -263,8 +266,6 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
 
 
 GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
-	auto &Context = Func->getContext();
-
 	DenseMap <Loop*,StagedLoop*> LoopMap;
 	LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
 	StagedBlock *RootBlock = LoopMap[nullptr]->Body;
@@ -381,9 +382,60 @@ bool LoopOptimizerImpl::optimize() {
 	if (OptimizedTree == OrigTree)
 		return false;
 
+	view(OptimizedTree);
+
 	codegen(OptimizedTree);
 	return true;
 }
+
+
+
+
+template <> 
+struct GraphTraits<const GreenNode *> {
+	using GraphRef = const GreenNode *;
+	using NodeRef = const GreenNode *;
+
+	static NodeRef getEntryNode(GraphRef L) { return L; }
+
+	using ChildIteratorType =  ArrayRef<NodeRef>::iterator ;
+	static ChildIteratorType child_begin(NodeRef N) { return N->getChildren().begin(); }
+	static ChildIteratorType child_end(NodeRef N) { return N->getChildren().end(); }
+
+	using nodes_iterator = df_iterator<NodeRef>;
+	static nodes_iterator nodes_begin(GraphRef RI) {
+		return nodes_iterator::begin(getEntryNode(RI));
+	}
+	static nodes_iterator nodes_end(GraphRef RI) {
+		return nodes_iterator::end(getEntryNode(RI));
+	}
+};
+
+
+template <> 
+struct DOTGraphTraits<const GreenNode *> : public DefaultDOTGraphTraits {
+	using GraphRef = const GreenNode *;
+	using NodeRef = const GreenNode *;
+
+	DOTGraphTraits(bool isSimple = false) : DefaultDOTGraphTraits(isSimple) {}
+
+	std::string getNodeLabel(NodeRef Node, GraphRef Graph) {
+		SmallString<256> Result;
+		raw_svector_ostream OS(Result);
+		if (isSimple()) 
+			Node->printLine(OS);
+		else
+			Node->printText(OS);
+		return OS.str();
+	}
+};
+
+
+
+void LoopOptimizerImpl:: view(const GreenRoot *Root) {
+  ViewGraph<const GreenNode *>(Root, "lof", false, "Loop Hierarchy Graph");
+}
+
 
 
 
