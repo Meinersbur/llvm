@@ -68,6 +68,10 @@ namespace llvm {
 		virtual void printText(raw_ostream &OS) const { printLine(OS); OS << '\n'; }
 
 		virtual ArrayRef <const  GreenNode * > getChildren() const = 0;
+    iterator_range <ArrayRef <const  GreenNode * > ::const_iterator> children() const {
+      auto Children = getChildren();
+      return make_range(Children.begin(), Children.end());
+    }
 
 		// TODO: Use general tree search algorithm
 		virtual void findRegUses(SetVector <Value*>  &UseRegs) const {
@@ -248,6 +252,7 @@ namespace llvm {
 		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Set; }
 		static bool classof(const GreenSet *) { return true; }
 
+    Instruction *getVar() const { return Var; }
 		GreenExpr * getVal() const { return Val; }
 		//GreenExpr * &getVal()  {return Val; }
 
@@ -382,6 +387,8 @@ namespace llvm {
 		}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+    Value *getVar() const {return Var;}
+
 
 		static  GreenReg *create(Value *Var) { return new GreenReg(Var); }
 

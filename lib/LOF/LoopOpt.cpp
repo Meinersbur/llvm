@@ -10,7 +10,7 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Support/GraphWriter.h"
-
+#include "llvm/Transforms/Utils/LoopUtils.h"
 
 
 using namespace llvm;
@@ -104,7 +104,9 @@ namespace {
 			auto L = Loop->getLoopInfoLoop();
 			if (!L)
 				return Loop;
-			if (!L->isAnnotatedParallel())
+
+      auto HasPragmaParallelize = getBooleanLoopAttribute(L,  "llvm.loop.parallelize_thread.enable"    );
+			if (!HasPragmaParallelize && !L->isAnnotatedParallel())
 				return Loop;
 			if (Loop->isExecutedInParallel())
 				return Loop;
@@ -377,6 +379,9 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 
 bool LoopOptimizerImpl::optimize() {
 	auto OrigTree = buildOriginalLoopTree();
+
+  auto OrigRedTree = RedRoot::Create(OrigTree);
+  OrigRedTree->findAllDefinitions();
 
 	auto OptimizedTree = parallelize(OrigTree);
 	if (OptimizedTree == OrigTree)
