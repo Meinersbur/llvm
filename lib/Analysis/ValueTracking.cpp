@@ -4077,18 +4077,27 @@ static OverflowResult mapOverflowResult(ConstantRange::OverflowResult OR) {
   llvm_unreachable("Unknown OverflowResult");
 }
 
+/// Combine constant ranges from computeConstantRange() and computeKnownBits().
+static ConstantRange computeConstantRangeIncludingKnownBits(
+    const Value *V, bool ForSigned, const DataLayout &DL, unsigned Depth,
+    AssumptionCache *AC, const Instruction *CxtI, const DominatorTree *DT,
+    OptimizationRemarkEmitter *ORE = nullptr, bool UseInstrInfo = true) {
+  KnownBits Known = computeKnownBits(
+      V, DL, Depth, AC, CxtI, DT, ORE, UseInstrInfo);
+  ConstantRange CR = computeConstantRange(V, UseInstrInfo);
+  return ConstantRange::fromKnownBits(Known, ForSigned).intersectWith(CR);
+}
+
 OverflowResult llvm::computeOverflowForUnsignedAdd(
     const Value *LHS, const Value *RHS, const DataLayout &DL,
     AssumptionCache *AC, const Instruction *CxtI, const DominatorTree *DT,
     bool UseInstrInfo) {
-  KnownBits LHSKnown = computeKnownBits(LHS, DL, /*Depth=*/0, AC, CxtI, DT,
-                                        nullptr, UseInstrInfo);
-  KnownBits RHSKnown = computeKnownBits(RHS, DL, /*Depth=*/0, AC, CxtI, DT,
-                                        nullptr, UseInstrInfo);
-  ConstantRange LHSRange =
-      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ false);
-  ConstantRange RHSRange =
-      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ false);
+  ConstantRange LHSRange = computeConstantRangeIncludingKnownBits(
+      LHS, /*ForSigned=*/false, DL, /*Depth=*/0, AC, CxtI, DT,
+      nullptr, UseInstrInfo);
+  ConstantRange RHSRange = computeConstantRangeIncludingKnownBits(
+      RHS, /*ForSigned=*/false, DL, /*Depth=*/0, AC, CxtI, DT,
+      nullptr, UseInstrInfo);
   return mapOverflowResult(LHSRange.unsignedAddMayOverflow(RHSRange));
 }
 
@@ -4137,19 +4146,21 @@ static OverflowResult computeOverflowForSignedAdd(const Value *LHS,
     return OverflowResult::MayOverflow;
 
   // If the sign of Add is the same as at least one of the operands, this add
-  // CANNOT overflow. This is particularly useful when the sum is
-  // @llvm.assume'ed non-negative rather than proved so from analyzing its
-  // operands.
+  // CANNOT overflow. If this can be determined from the known bits of the
+  // operands the above signedAddMayOverflow() check will have already done so.
+  // The only other way to improve on the known bits is from an assumption, so
+  // call computeKnownBitsFromAssume() directly.
   bool LHSOrRHSKnownNonNegative =
       (LHSKnown.isNonNegative() || RHSKnown.isNonNegative());
   bool LHSOrRHSKnownNegative =
       (LHSKnown.isNegative() || RHSKnown.isNegative());
   if (LHSOrRHSKnownNonNegative || LHSOrRHSKnownNegative) {
-    KnownBits AddKnown = computeKnownBits(Add, DL, /*Depth=*/0, AC, CxtI, DT);
+    KnownBits AddKnown(LHSKnown.getBitWidth());
+    computeKnownBitsFromAssume(
+        Add, AddKnown, /*Depth=*/0, Query(DL, AC, CxtI, DT, true));
     if ((AddKnown.isNonNegative() && LHSOrRHSKnownNonNegative) ||
-        (AddKnown.isNegative() && LHSOrRHSKnownNegative)) {
+        (AddKnown.isNegative() && LHSOrRHSKnownNegative))
       return OverflowResult::NeverOverflows;
-    }
   }
 
   return OverflowResult::MayOverflow;
@@ -4161,12 +4172,10 @@ OverflowResult llvm::computeOverflowForUnsignedSub(const Value *LHS,
                                                    AssumptionCache *AC,
                                                    const Instruction *CxtI,
                                                    const DominatorTree *DT) {
-  KnownBits LHSKnown = computeKnownBits(LHS, DL, /*Depth=*/0, AC, CxtI, DT);
-  KnownBits RHSKnown = computeKnownBits(RHS, DL, /*Depth=*/0, AC, CxtI, DT);
-  ConstantRange LHSRange =
-      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ false);
-  ConstantRange RHSRange =
-      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ false);
+  ConstantRange LHSRange = computeConstantRangeIncludingKnownBits(
+      LHS, /*ForSigned=*/false, DL, /*Depth=*/0, AC, CxtI, DT);
+  ConstantRange RHSRange = computeConstantRangeIncludingKnownBits(
+      RHS, /*ForSigned=*/false, DL, /*Depth=*/0, AC, CxtI, DT);
   return mapOverflowResult(LHSRange.unsignedSubMayOverflow(RHSRange));
 }
 
@@ -4183,17 +4192,12 @@ OverflowResult llvm::computeOverflowForSignedSub(const Value *LHS,
     return OverflowResult::NeverOverflows;
 
   KnownBits LHSKnown = computeKnownBits(LHS, DL, 0, AC, CxtI, DT);
-
   KnownBits RHSKnown = computeKnownBits(RHS, DL, 0, AC, CxtI, DT);
-
-  // Subtraction of two 2's complement numbers having identical signs will
-  // never overflow.
-  if ((LHSKnown.isNegative() && RHSKnown.isNegative()) ||
-      (LHSKnown.isNonNegative() && RHSKnown.isNonNegative()))
-    return OverflowResult::NeverOverflows;
-
-  // TODO: implement logic similar to checkRippleForAdd
-  return OverflowResult::MayOverflow;
+  ConstantRange LHSRange =
+      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ true);
+  ConstantRange RHSRange =
+      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ true);
+  return mapOverflowResult(LHSRange.signedSubMayOverflow(RHSRange));
 }
 
 bool llvm::isOverflowIntrinsicNoWrap(const IntrinsicInst *II,
@@ -4932,6 +4936,10 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
       if (Pred == ICmpInst::ICMP_SGT && match(CmpRHS, ZeroOrAllOnes))
         return {SPF_ABS, SPNB_NA, false};
 
+      // (X >=s 0) ? X : -X or (X >=s 1) ? X : -X --> ABS(X)
+      if (Pred == ICmpInst::ICMP_SGE && match(CmpRHS, ZeroOrOne))
+        return {SPF_ABS, SPNB_NA, false};
+
       // (X <s 0) ? X : -X or (X <s 1) ? X : -X --> NABS(X)
       // (-X <s 0) ? -X : X or (-X <s 1) ? -X : X --> NABS(X)
       if (Pred == ICmpInst::ICMP_SLT && match(CmpRHS, ZeroOrOne))
@@ -5662,14 +5670,15 @@ static void setLimitsForSelectPattern(const SelectInst &SI, APInt &Lower,
 
   unsigned BitWidth = SI.getType()->getScalarSizeInBits();
 
-  // matchSelectPattern() returns the negation part of an abs pattern in RHS.
-  // If the negate has an NSW flag, abs(INT_MIN) is undefined. Without that
-  // constraint, we can't make a contiguous range for the result of abs.
-  if (R.Flavor == SelectPatternFlavor::SPF_ABS &&
-      cast<Instruction>(RHS)->hasNoSignedWrap()) {
-    // The result of abs(X) is >= 0 (with nsw).
+  if (R.Flavor == SelectPatternFlavor::SPF_ABS) {
+    // If the negation part of the abs (in RHS) has the NSW flag,
+    // then the result of abs(X) is [0..SIGNED_MAX],
+    // otherwise it is [0..SIGNED_MIN], as -SIGNED_MIN == SIGNED_MIN.
     Lower = APInt::getNullValue(BitWidth);
-    Upper = APInt::getSignedMaxValue(BitWidth) + 1;
+    if (cast<Instruction>(RHS)->hasNoSignedWrap())
+      Upper = APInt::getSignedMaxValue(BitWidth) + 1;
+    else
+      Upper = APInt::getSignedMinValue(BitWidth) + 1;
     return;
   }
 
@@ -5680,32 +5689,15 @@ static void setLimitsForSelectPattern(const SelectInst &SI, APInt &Lower,
     return;
   }
 
-  const APInt *C;
-  if (!match(LHS, m_APInt(C)) && !match(RHS, m_APInt(C)))
-    return;
-
-  switch (R.Flavor) {
-    case SPF_UMIN:
-      Upper = *C + 1;
-      break;
-    case SPF_UMAX:
-      Lower = *C;
-      break;
-    case SPF_SMIN:
-      Lower = APInt::getSignedMinValue(BitWidth);
-      Upper = *C + 1;
-      break;
-    case SPF_SMAX:
-      Lower = *C;
-      Upper = APInt::getSignedMaxValue(BitWidth) + 1;
-      break;
-    default:
-      break;
-  }
+  // TODO Handle min/max flavors.
 }
 
 ConstantRange llvm::computeConstantRange(const Value *V, bool UseInstrInfo) {
   assert(V->getType()->isIntOrIntVectorTy() && "Expected integer instruction");
+
+  const APInt *C;
+  if (match(V, m_APInt(C)))
+    return ConstantRange(*C);
 
   InstrInfoQuery IIQ(UseInstrInfo);
   unsigned BitWidth = V->getType()->getScalarSizeInBits();
@@ -5719,7 +5711,7 @@ ConstantRange llvm::computeConstantRange(const Value *V, bool UseInstrInfo) {
     setLimitsForSelectPattern(*SI, Lower, Upper);
 
   ConstantRange CR = Lower != Upper ? ConstantRange(Lower, Upper)
-                                    : ConstantRange(BitWidth, true);
+                                    : ConstantRange::getFull(BitWidth);
 
   if (auto *I = dyn_cast<Instruction>(V))
     if (auto *Range = IIQ.getMetadata(I, LLVMContext::MD_range))

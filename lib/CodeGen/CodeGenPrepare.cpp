@@ -374,6 +374,13 @@ class TypePromotionTransaction;
     bool simplifyOffsetableRelocate(Instruction &I);
 
     bool tryToSinkFreeOperands(Instruction *I);
+    bool replaceMathCmpWithIntrinsic(BinaryOperator *BO, CmpInst *Cmp,
+                                     Intrinsic::ID IID, DominatorTree &DT);
+    bool optimizeCmp(CmpInst *Cmp, DominatorTree &DT, bool &ModifiedDT);
+    bool combineToUSubWithOverflow(CmpInst *Cmp, DominatorTree &DT,
+                                   bool &ModifiedDT);
+    bool combineToUAddWithOverflow(CmpInst *Cmp, DominatorTree &DT,
+                                   bool &ModifiedDT);
   };
 
 } // end anonymous namespace
@@ -1157,8 +1164,10 @@ static bool OptimizeNoopCopyExpression(CastInst *CI, const TargetLowering &TLI,
   return SinkCast(CI);
 }
 
-static bool replaceMathCmpWithIntrinsic(BinaryOperator *BO, CmpInst *Cmp,
-                                        Intrinsic::ID IID, DominatorTree &DT) {
+bool CodeGenPrepare::replaceMathCmpWithIntrinsic(BinaryOperator *BO,
+                                                 CmpInst *Cmp,
+                                                 Intrinsic::ID IID,
+                                                 DominatorTree &DT) {
   // We allow matching the canonical IR (add X, C) back to (usubo X, -C).
   Value *Arg0 = BO->getOperand(0);
   Value *Arg1 = BO->getOperand(1);
@@ -1181,11 +1190,16 @@ static bool replaceMathCmpWithIntrinsic(BinaryOperator *BO, CmpInst *Cmp,
     if (!MathDominates && !DT.dominates(Cmp, BO))
       return false;
 
-    // Check that the insertion doesn't create a value that is live across more
-    // than two blocks, so to minimise the increase in register pressure.
-    if (BO->getParent() != Cmp->getParent()) {
-      BasicBlock *Dominator = MathDominates ? BO->getParent() : Cmp->getParent();
-      BasicBlock *Dominated = MathDominates ? Cmp->getParent() : BO->getParent();
+    BasicBlock *MathBB = BO->getParent(), *CmpBB = Cmp->getParent();
+    if (MathBB != CmpBB) {
+      // Avoid hoisting an extra op into a dominating block and creating a
+      // potentially longer critical path.
+      if (!MathDominates)
+        return false;
+      // Check that the insertion doesn't create a value that is live across
+      // more than two blocks, so to minimise the increase in register pressure.
+      BasicBlock *Dominator = MathDominates ? MathBB : CmpBB;
+      BasicBlock *Dominated = MathDominates ? CmpBB : MathBB;
       auto Successors = successors(Dominator);
       if (llvm::find(Successors, Dominated) == Successors.end())
         return false;
@@ -1237,17 +1251,16 @@ static bool matchUAddWithOverflowConstantEdgeCases(CmpInst *Cmp,
 
 /// Try to combine the compare into a call to the llvm.uadd.with.overflow
 /// intrinsic. Return true if any changes were made.
-static bool combineToUAddWithOverflow(CmpInst *Cmp, const TargetLowering &TLI,
-                                      const DataLayout &DL, DominatorTree &DT,
-                                      bool &ModifiedDT) {
+bool CodeGenPrepare::combineToUAddWithOverflow(CmpInst *Cmp, DominatorTree &DT,
+                                               bool &ModifiedDT) {
   Value *A, *B;
   BinaryOperator *Add;
   if (!match(Cmp, m_UAddWithOverflow(m_Value(A), m_Value(B), m_BinOp(Add))))
     if (!matchUAddWithOverflowConstantEdgeCases(Cmp, Add))
       return false;
 
-  if (!TLI.shouldFormOverflowOp(ISD::UADDO,
-                                TLI.getValueType(DL, Add->getType())))
+  if (!TLI->shouldFormOverflowOp(ISD::UADDO,
+                                 TLI->getValueType(*DL, Add->getType())))
     return false;
 
   // We don't want to move around uses of condition values this late, so we
@@ -1264,9 +1277,8 @@ static bool combineToUAddWithOverflow(CmpInst *Cmp, const TargetLowering &TLI,
   return true;
 }
 
-static bool combineToUSubWithOverflow(CmpInst *Cmp, const TargetLowering &TLI,
-                                      const DataLayout &DL, DominatorTree &DT,
-                                      bool &ModifiedDT) {
+bool CodeGenPrepare::combineToUSubWithOverflow(CmpInst *Cmp, DominatorTree &DT,
+                                               bool &ModifiedDT) {
   // We are not expecting non-canonical/degenerate code. Just bail out.
   Value *A = Cmp->getOperand(0), *B = Cmp->getOperand(1);
   if (isa<Constant>(A) && isa<Constant>(B))
@@ -1314,8 +1326,8 @@ static bool combineToUSubWithOverflow(CmpInst *Cmp, const TargetLowering &TLI,
   if (!Sub)
     return false;
 
-  if (!TLI.shouldFormOverflowOp(ISD::USUBO,
-                                TLI.getValueType(DL, Sub->getType())))
+  if (!TLI->shouldFormOverflowOp(ISD::USUBO,
+                                 TLI->getValueType(*DL, Sub->getType())))
     return false;
 
   if (!replaceMathCmpWithIntrinsic(Sub, Cmp, Intrinsic::usub_with_overflow, DT))
@@ -1392,16 +1404,15 @@ static bool sinkCmpExpression(CmpInst *Cmp, const TargetLowering &TLI) {
   return MadeChange;
 }
 
-static bool optimizeCmp(CmpInst *Cmp, const TargetLowering &TLI,
-                        const DataLayout &DL, DominatorTree &DT,
-                        bool &ModifiedDT) {
-  if (sinkCmpExpression(Cmp, TLI))
+bool CodeGenPrepare::optimizeCmp(CmpInst *Cmp, DominatorTree &DT,
+                                 bool &ModifiedDT) {
+  if (sinkCmpExpression(Cmp, *TLI))
     return true;
 
-  if (combineToUAddWithOverflow(Cmp, TLI, DL, DT, ModifiedDT))
+  if (combineToUAddWithOverflow(Cmp, DT, ModifiedDT))
     return true;
 
-  if (combineToUSubWithOverflow(Cmp, TLI, DL, DT, ModifiedDT))
+  if (combineToUSubWithOverflow(Cmp, DT, ModifiedDT))
     return true;
 
   return false;
@@ -6876,6 +6887,7 @@ bool CodeGenPrepare::optimizeInst(Instruction *I, DominatorTree &DT,
   if (InsertedInsts.count(I))
     return false;
 
+  // TODO: Move into the switch on opcode below here.
   if (PHINode *P = dyn_cast<PHINode>(I)) {
     // It is possible for very late stage optimizations (such as SimplifyCFG)
     // to introduce PHI nodes too late to be cleaned up.  If we detect such a
@@ -6920,7 +6932,7 @@ bool CodeGenPrepare::optimizeInst(Instruction *I, DominatorTree &DT,
   }
 
   if (auto *Cmp = dyn_cast<CmpInst>(I))
-    if (TLI && optimizeCmp(Cmp, *TLI, *DL, DT, ModifiedDT))
+    if (TLI && optimizeCmp(Cmp, DT, ModifiedDT))
       return true;
 
   if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
@@ -6994,20 +7006,18 @@ bool CodeGenPrepare::optimizeInst(Instruction *I, DominatorTree &DT,
   if (tryToSinkFreeOperands(I))
     return true;
 
-  if (CallInst *CI = dyn_cast<CallInst>(I))
-    return optimizeCallInst(CI, ModifiedDT);
-
-  if (SelectInst *SI = dyn_cast<SelectInst>(I))
-    return optimizeSelectInst(SI, ModifiedDT);
-
-  if (ShuffleVectorInst *SVI = dyn_cast<ShuffleVectorInst>(I))
-    return optimizeShuffleVectorInst(SVI);
-
-  if (auto *Switch = dyn_cast<SwitchInst>(I))
-    return optimizeSwitchInst(Switch);
-
-  if (isa<ExtractElementInst>(I))
-    return optimizeExtractElementInst(I);
+  switch (I->getOpcode()) {
+  case Instruction::Call:
+    return optimizeCallInst(cast<CallInst>(I), ModifiedDT);
+  case Instruction::Select:
+    return optimizeSelectInst(cast<SelectInst>(I), ModifiedDT);
+  case Instruction::ShuffleVector:
+    return optimizeShuffleVectorInst(cast<ShuffleVectorInst>(I));
+  case Instruction::Switch:
+    return optimizeSwitchInst(cast<SwitchInst>(I));
+  case Instruction::ExtractElement:
+    return optimizeExtractElementInst(cast<ExtractElementInst>(I));
+  }
 
   return false;
 }

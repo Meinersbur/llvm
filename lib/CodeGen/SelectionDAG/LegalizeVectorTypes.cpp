@@ -68,6 +68,7 @@ void DAGTypeLegalizer::ScalarizeVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::ZERO_EXTEND_VECTOR_INREG:
     R = ScalarizeVecRes_VecInregOp(N);
     break;
+  case ISD::ABS:
   case ISD::ANY_EXTEND:
   case ISD::BITREVERSE:
   case ISD::BSWAP:
@@ -823,6 +824,7 @@ void DAGTypeLegalizer::SplitVectorResult(SDNode *N, unsigned ResNo) {
     SplitVecRes_ExtVecInRegOp(N, Lo, Hi);
     break;
 
+  case ISD::ABS:
   case ISD::BITREVERSE:
   case ISD::BSWAP:
   case ISD::CTLZ:
@@ -2664,6 +2666,7 @@ void DAGTypeLegalizer::WidenVectorResult(SDNode *N, unsigned ResNo) {
   // any other unary ops.
   LLVM_FALLTHROUGH;
 
+  case ISD::ABS:
   case ISD::BITREVERSE:
   case ISD::BSWAP:
   case ISD::CTLZ:
