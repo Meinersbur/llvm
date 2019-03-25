@@ -376,7 +376,7 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 
 
 bool LoopOptimizerImpl::optimize() {
-	auto OrigTree= buildOriginalLoopTree();
+	auto OrigTree = buildOriginalLoopTree();
 
 	auto OptimizedTree = parallelize(OrigTree);
 	if (OptimizedTree == OrigTree)

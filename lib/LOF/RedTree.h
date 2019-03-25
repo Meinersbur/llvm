@@ -2,37 +2,48 @@
 #define LLVM_LOF_REDTREE_H
 
 #include "GreenTree.h"
-
+#include <vector>
 
 namespace llvm {
 
-
-
-
-
-
 	/// Node in an immutable tree, contains reference to parent and corresponding green node (which stores the children) 
-	/// TODO: Make it a stack object
 	class RedNode {
 	private:
 		RedNode *Parent;
 		GreenNode *Green;
+		
+		bool ChildrenAvailable = false;
+		mutable std::vector<RedNode *> Children;
 
 	protected:
-		RedNode(RedNode*Parent, GreenNode *Green): Parent(Parent),Green(Green) {}
+		RedNode(RedNode*Parent, GreenNode *Green): Parent(Parent),Green(Green) {
+			auto NChildren = Green->getChildren().size();
+			Children.resize(NChildren);
+			for (int i = 0; i<NChildren;i+=1)
+				Children[i] = nullptr;
+		}
 
 	public:
 		virtual ~RedNode() {};
 
-		virtual LoopHierarchyKind getKind() const {return getGreen()->getKind();}
+		virtual LoopHierarchyKind getKind() const { return getGreen()->getKind();}
 		static bool classof(const RedNode *) {	return true; }
 
 		void dump() const { printText(errs()); }
 		virtual void printLine(raw_ostream &OS) const { getGreen()->printLine(OS); }
 		virtual void printText(raw_ostream &OS) const { getGreen()->printText(OS); }
 
-		RedNode *getParent() const {return Parent;}
-		GreenNode* getGreen() const {return Green;}
+		RedNode  *getParent() const {return Parent;}
+		GreenNode*getGreen()  const {return Green;}
+
+		int getNumChildren() const {  return Green->getChildren().size(); }
+		RedNode *getChild(int i) const { 
+				auto &Child = Children[i];
+				if (!Child) {
+					Child = nullptr;
+				}
+				return Child;
+		}
 	};
 
 
@@ -51,7 +62,7 @@ namespace llvm {
 		static bool classof(const RedNode *Node) { return GreenSequence::classof(Node->getGreen()); }
 		static bool classof(const RedSequence *) {	return true;	}
 
-		GreenSequence* getGreen() const {return static_cast<GreenSequence*>( RedNode::getGreen());}
+		GreenSequence* getGreen() const { return static_cast<GreenSequence*>( RedNode::getGreen());}
 	};
 
 
@@ -62,7 +73,7 @@ namespace llvm {
 	class RedRoot: public RedNode {
 	private:
 	public:
-		RedRoot(RedNode*Parent, GreenRoot *Green) : RedNode(Parent,Green) {}
+		RedRoot( GreenRoot *Green) : RedNode(nullptr, Green) {}
 		virtual ~RedRoot() {};
 
 		static bool classof(const RedNode *Node) { return GreenRoot::classof(Node->getGreen()); }

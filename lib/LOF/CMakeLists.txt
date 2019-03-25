@@ -1,6 +1,7 @@
 add_llvm_library(LLVMLOF
   GreenTree.cpp
   RedTree.cpp
+  Tree.cpp
   LoopOpt.cpp
   LoopOptPass.cpp
 

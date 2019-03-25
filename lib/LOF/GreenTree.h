@@ -75,7 +75,6 @@ namespace llvm {
 				Child->findRegUses(UseRegs);
 		}
 		virtual void findRegDefs(SetVector<Instruction*>  &DefRegs) const {
-
 			for (auto Child : getChildren()) 
 				Child->findRegDefs(DefRegs);
 		}
