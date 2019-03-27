@@ -165,7 +165,7 @@ GreenExpr *LoopOptimizerImpl::getGreenExpr(Value *V) {
 
 GreenExpr *LoopOptimizerImpl::createExpr(Value *I)  {
 	if (auto P = dyn_cast<Argument>(I)) {
-		auto Green = GreenReg::create(P);
+		auto Green = GreenArg::create(P);
 		return Green;
 	}
 
@@ -174,7 +174,7 @@ GreenExpr *LoopOptimizerImpl::createExpr(Value *I)  {
 		return Green;
 	}
 	
-	if (auto PHI = dyn_cast<PHINode >(I)) {
+	if (auto PHI = dyn_cast<PHINode>(I)) {
 		// FIXME: This is not really a register use; replace by case instruction or other closed-form (AddRecExpr) expression 
 		auto Green = GreenReg::create(PHI);
 		return Green;

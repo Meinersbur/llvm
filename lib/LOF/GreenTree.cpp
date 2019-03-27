@@ -313,6 +313,11 @@ Value* GreenConst::codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const
 }
 
 
+Value* GreenArg:: codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const {
+  return Arg;
+}
+
+
 Value* GreenReg:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 	auto Result = ActiveRegs.lookup(Var);
 	assert(Result);

@@ -26,6 +26,7 @@ namespace llvm {
 
 		// Expressions
 		Const, // Constant/Literal
+    Arg, // Function argument or global
 		Reg,  // Register/Value read
 		GEP,
 		ICmp,
@@ -370,13 +371,35 @@ namespace llvm {
 	};
 
 
+  // Something that is set before the tree, but fixed during the tree's execution, i.e. an Argument or global.
+  // TODO: Common superclass for GreenConst and GreenArg?
+  class GreenArg final : public GreenExpr {
+    Value *Arg;
+  public:
+    GreenArg(Value *Arg) : Arg(Arg) {}
+
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Arg; }
+    static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Arg; 	}
+    static bool classof(const GreenArg *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override {
+      Arg->printAsOperand(OS, false);
+    }
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+
+    static  GreenArg *create(Value *Arg) { return new GreenArg(Arg); }
+
+    Value* codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const override;
+  };
+
 
 
 	// Expression tree leaf
 	class GreenReg final : public GreenExpr {
-		Value *Var; // Instruction, Global or Argument
+		Instruction *Var; 
 	public:
-		GreenReg(Value *Var) : Var(Var) {}
+		GreenReg(Instruction *Var) : Var(Var) {}
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Reg; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Reg; 	}
@@ -390,7 +413,7 @@ namespace llvm {
     Value *getVar() const {return Var;}
 
 
-		static  GreenReg *create(Value *Var) { return new GreenReg(Var); }
+		static  GreenReg *create(Instruction *Var) { return new GreenReg(Var); }
 
 		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
 

@@ -297,6 +297,17 @@ namespace llvm {
 
 
 
+  class RedArg final : public RedExpr {
+  private:
+  public:
+    RedArg(RedNode *Parent, GreenArg*Green) : RedExpr(Parent,Green) {}
+
+    static bool classof(const RedNode *Node) {return  GreenConst::classof(Node->getGreen()); }
+    static bool classof(const RedArg *) {	return true;	}
+
+    const GreenArg* getGreen() const {return static_cast<const GreenArg*>(RedExpr:: getGreen());}
+  };
+
 
 
 
@@ -304,7 +315,8 @@ namespace llvm {
 	class RedReg final : public RedExpr {
     friend class RedRoot;
 	private:
-    RedSet *Def = nullptr;
+    // Where the definition of the register is in this RedTree.
+     RedSet *Def;
 
   protected:
     RedReg(RedNode *Parent,const  GreenReg*Green) : RedExpr(Parent,Green) {}
