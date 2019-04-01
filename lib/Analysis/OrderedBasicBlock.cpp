@@ -88,9 +88,10 @@ bool OrderedBasicBlock::dominates(const Instruction *A, const Instruction *B) {
 
 void OrderedBasicBlock::eraseInstruction(const Instruction *I) {
   if (LastInstFound != BB->end() && I == &*LastInstFound) {
-    if (LastInstFound == BB->begin())
+    if (LastInstFound == BB->begin()) {
       LastInstFound = BB->end();
-    else
+      NextInstPos = 0;
+    } else
       LastInstFound--;
   }
 
@@ -103,7 +104,7 @@ void OrderedBasicBlock::replaceInstruction(const Instruction *Old,
   if (OI == NumberedInsts.end())
     return;
 
-  NumberedInsts[New] = OI->second;
+  NumberedInsts.insert({New, OI->second});
   if (LastInstFound != BB->end() && Old == &*LastInstFound)
     LastInstFound = New->getIterator();
   NumberedInsts.erase(Old);
