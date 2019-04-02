@@ -16,30 +16,29 @@
 using namespace llvm;
 
 namespace {
-	class StagedBlock;
+	class StagedSequence;
 
 	class StagedLoop {
 	public:
 		Loop *L ;
-		StagedBlock *Body;
+    StagedSequence *Body;
 		Value *Iterations;
 
 		explicit StagedLoop(Loop *LoopInfoLoop, Value *Iterations)  ;
 	};
 
 	
-	class StagedBlock {
+	class StagedSequence {
 	public:
 		SmallVector<llvm::PointerUnion< GreenStmt*, StagedLoop*> ,16> Stmts;
+    SmallVector<const GreenExpr*,16> Predicates;
 
-		void appendStmt(GreenStmt *Stmt) { Stmts.push_back(Stmt); }
-		void appendLoop(StagedLoop *Loop) { Stmts.push_back(Loop); }
+		void appendStmt(GreenStmt *Stmt, const GreenExpr *Predicate) { Stmts.push_back(Stmt);Predicates.push_back(Predicate); }
+		void appendLoop(StagedLoop *Loop, const GreenExpr *Predicate) { Stmts.push_back(Loop);Predicates.push_back(Predicate); }
 	};
 
 
-	StagedLoop::StagedLoop(Loop *LoopInfoLoop, Value *Iterations): L(LoopInfoLoop), Body(new StagedBlock()) , Iterations(Iterations){
-		
-	}
+	StagedLoop::StagedLoop(Loop *LoopInfoLoop, Value *Iterations): L(LoopInfoLoop), Body(new StagedSequence()) , Iterations(Iterations){	}
 
 
 
@@ -62,18 +61,111 @@ namespace {
 
 
 		DenseMap <Value *, GreenExpr*> ExprCache;
-		GreenExpr *getGreenExpr(Value *C) ;
+		GreenExpr *getGreenExpr(Value *C);
+
+    const  GreenExpr* GreenTrue = GreenTrueLiteral::create();
+    const  GreenExpr* GreenFalse = GreenFalseLiteral::create();
+  const  GreenExpr* getGreenBool(bool Val) {
+      return Val ? GreenTrue : GreenFalse;
+    }
+
+    const  GreenExpr *getGreenLogicOr(const GreenExpr *LHS,const GreenExpr *RHS) {
+      SmallVector<const GreenExpr *, 4> Operands;
+
+      if (auto LOr = dyn_cast<GreenLogicOr>(LHS)) {
+        auto LHChildren = LHS->getExprChildren();
+        for (auto Arg : LHChildren) {
+        if (!isa<GreenFalseLiteral>(Arg))
+          Operands.push_back(Arg);
+        }
+      } else if (isa<GreenFalseLiteral>(LHS)) {
+        // No effect
+      } else if (isa<GreenTrueLiteral>(LHS)) {
+        return getGreenBool(true);
+      } else {
+        Operands.push_back(LHS);
+      }
+
+
+      if (auto ROr = dyn_cast<GreenLogicOr>(RHS)) {
+        auto RHChildren = RHS->getExprChildren();
+        for (auto Arg : RHChildren) {
+          if (!isa<GreenFalseLiteral>(Arg))
+            Operands.push_back(Arg);
+        }
+      } else if (isa<GreenFalseLiteral>(RHS)) {
+        // No effect
+      } else if (isa<GreenTrueLiteral>(RHS)) {
+        return getGreenBool(true);
+      } else {
+        Operands.push_back(RHS);
+      }
+
+      switch (Operands.size()) {
+      case 0:
+        return getGreenBool(false);
+      case 1:
+        return Operands[0];
+      default:
+        return GreenLogicOr::create(Operands);
+      }
+    }
+
+    const  GreenExpr *getGreenLogicAnd(const GreenExpr *LHS,const GreenExpr *RHS) {
+      SmallVector<const GreenExpr *, 4> Operands;
+
+      if (auto LAnd = dyn_cast<GreenLogicAnd>(LHS)) {
+        auto LHChildren = LHS->getExprChildren();
+        for (auto Arg : LHChildren) {
+          if (!isa<GreenTrueLiteral>(Arg))
+            Operands.push_back(Arg);
+        }
+      } else if (isa<GreenTrueLiteral>(LHS)) {
+        // No effect
+      } else if (isa<GreenFalseLiteral>(LHS)) {
+        return getGreenBool(false);
+      } else {
+        Operands.push_back(LHS);
+      }
+
+
+      if (auto RAnd = dyn_cast<GreenLogicAnd>(RHS)) {
+        auto RHChildren = RHS->getExprChildren();
+        for (auto Arg : RHChildren) {
+          if (!isa<GreenTrueLiteral>(Arg))
+            Operands.push_back(Arg);
+        }
+      } else if (isa<GreenTrueLiteral>(RHS)) {
+        // No effect
+      } else if (isa<GreenFalseLiteral>(RHS)) {
+        return getGreenBool(true);
+      } else {
+        Operands.push_back(RHS);
+      }
+
+
+
+      switch (Operands.size()) {
+      case 0:
+        return  getGreenBool(true);
+      case 1:
+        return Operands[0];
+      default:
+        return GreenLogicAnd::create(Operands);
+      }
+    }
+
 
 		DenseMap <Instruction *, GreenInst*> InstCache; // FIXME: Instructions may not be re-usable, so do not cache.
 		GreenInst *getGreenInst(Instruction *I) ;
 
-		GreenStmt *createGreenStmt(ArrayRef<GreenInst*> Insts);
+		GreenStmt *createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts);
 
 
 
-		GreenLoop* createGreenLoop(StagedLoop *Staged ) ;
-		GreenSequence* createGreenSequence(StagedBlock *Sequence) ;
-		GreenRoot *createGreenRoot(StagedBlock *TopLoop) ;
+		GreenLoop* createGreenLoop(const GreenExpr* Predicate,StagedLoop *Staged ) ;
+		GreenSequence* createGreenSequence(StagedSequence *Sequence) ;
+		GreenRoot *createGreenRoot(StagedSequence *TopLoop) ;
 
 
 	const	GreenSequence *parallelizeSequence(const GreenSequence *Seq) {
@@ -228,25 +320,27 @@ GreenInst *LoopOptimizerImpl::getGreenInst(Instruction *I) {
 }
 
 
-GreenStmt *LoopOptimizerImpl:: createGreenStmt(ArrayRef<GreenInst*> Insts) {
-	return GreenStmt::create(Insts);
+GreenStmt *LoopOptimizerImpl:: createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts) {
+	return GreenStmt::create(MustExecutePredicate,MayExecutePredicate,Insts);
 }
 
 
-GreenLoop* LoopOptimizerImpl:: createGreenLoop(StagedLoop *Staged ) {
+GreenLoop* LoopOptimizerImpl:: createGreenLoop(const GreenExpr* Predicate, StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
 auto Iters=	getGreenExpr(Staged->Iterations);
-	return	GreenLoop::create(Iters, Staged->L->getCanonicalInductionVariable(), Seq, Staged->L);
+	return	GreenLoop::create(Predicate,Predicate,Iters, Staged->L->getCanonicalInductionVariable(), Seq, Staged->L);
 }
 
-GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedBlock *Sequence) {
+GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedSequence *Sequence) {
 	SmallVector<GreenBlock *,32> Blocks;
 
-	for(auto Block : Sequence->Stmts) {
+	for(auto Pair : zip( Sequence->Stmts,Sequence->Predicates)) {
+    auto Block = std::get<0>(Pair);
+    auto Predicate = std::get<1>(Pair);
 		if (auto Stmt = Block.dyn_cast<GreenStmt*>()) {
 			Blocks.push_back(Stmt);
-		} else 				if (auto Loop = Block.dyn_cast<StagedLoop*>()) {
-			auto GLoop = createGreenLoop(Loop);
+		} else if (auto Loop = Block.dyn_cast<StagedLoop*>()) {
+			auto GLoop = createGreenLoop(Predicate,Loop);
 			Blocks.push_back(GLoop);
 } else 
 llvm_unreachable("Something is wrong");
@@ -256,7 +350,7 @@ llvm_unreachable("Something is wrong");
 	return Green;
 		} 
 
-GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
+GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedSequence *TopLoop) {
 	auto GSeq = createGreenSequence(TopLoop);
 	auto Green = GreenRoot::create(GSeq);
 	return Green;
@@ -270,7 +364,7 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedBlock *TopLoop) {
 GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 	DenseMap <Loop*,StagedLoop*> LoopMap;
 	LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
-	StagedBlock *RootBlock = LoopMap[nullptr]->Body;
+  StagedSequence *RootBlock = LoopMap[nullptr]->Body;
 	for (auto L : LI->getLoopsInPreorder()) {
 		// TODO: Use own analysis on loop tree instead of SCEV.
 		auto Taken = SE->getBackedgeTakenCount(L);
@@ -286,23 +380,72 @@ GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 
 		// FIXME: This assume the form without loop-rotation
 		//    for (int = 0; i < 0; i+=1)
+    assert(IterCountV);
 		LoopMap[L] = new StagedLoop(L,IterCountV );
 	}
 
 
-	// Build a temporaru loop tree
+  DenseMap<BasicBlock*,const GreenExpr*> BBPredicate;
+  BBPredicate[&Func->getEntryBlock()] = getGreenBool(true); // Assume no branch to entry
+
+
+	// Build a temporary loop tree
 	ReversePostOrderTraversal<Function*> RPOT(Func);
 	for (auto Block : RPOT) {
 		auto Loop = LI->getLoopFor(Block);
 		auto SLoop = LoopMap.lookup(Loop);
 		auto SBody = SLoop->Body;
 
-		if (Loop && Block == Loop->getHeader()) {
-			auto ParentLoop = Loop->getParentLoop();
-			auto ParentSLoop =  LoopMap.lookup(ParentLoop);
-			auto ParentSBody =  ParentSLoop->Body;
-			ParentSBody->appendLoop(SLoop);
-		}
+    bool isLoopHeader = Loop && Block == Loop->getHeader();
+
+
+    auto &Predicate = BBPredicate[Block];
+    if (!Predicate) {
+      Predicate = getGreenBool(false);
+    for (auto Pred : predecessors(Block)) {
+      if (isLoopHeader && Loop->contains(Pred)) // We assume that loops are the only reason for back-edges => no irreducible loops.
+        continue;
+
+	  auto PredLoop = LI->getLoopFor(Pred);
+	  const GreenExpr *PredPredicate;
+	  if (!isLoopHeader && ( Loop != PredLoop)) {
+		  // If this is exiting from a loop, take the loop's own predicate to ignore the exit-loop condition, i.e. assume that the loop will leave eventually.
+		  // FIXME: Multiple loop exits => atoms.
+			PredPredicate =  BBPredicate.lookup(LoopMap.lookup(PredLoop)->L->getHeader() );
+	  } else {
+			PredPredicate = BBPredicate.lookup(Pred);
+	  }
+      assert(PredPredicate);
+   
+	  if (Loop && Loop->isLoopExiting(Pred) ) {
+		  // Ignore continue-loop conditions to avoid them to be propagated to the statement predicates; these are implicit by the surrounding loop
+		  Predicate = getGreenLogicOr(Predicate,PredPredicate);
+		  continue;
+	  } else if (auto Br = dyn_cast<BranchInst>(Pred->getTerminator())) {
+       const GreenExpr* Cond;
+        if (Br->isUnconditional()) {
+          Cond = getGreenBool(true);
+        } else  {
+           Cond = getGreenExpr(Br->getCondition());
+        }
+
+
+
+        auto AndCond = getGreenLogicAnd(PredPredicate,Cond );
+        Predicate = getGreenLogicOr(Predicate,AndCond);
+        continue;
+      }
+      llvm_unreachable("unimplemented terminator");
+    }
+    }
+
+    if (isLoopHeader) {
+      auto ParentLoop = Loop->getParentLoop();
+      auto ParentSLoop =  LoopMap.lookup(ParentLoop);
+      auto ParentSBody =  ParentSLoop->Body;
+      ParentSBody->appendLoop(SLoop,Predicate);
+    }
+
 
 		for (auto &I : *Block) {
 			if (I.isTerminator())
@@ -310,8 +453,9 @@ GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 			if (!I.mayHaveSideEffects())
 				continue;
 			auto Inst = getGreenInst(&I);
-			auto Stmt = createGreenStmt({Inst});
-			SBody->appendStmt(Stmt);
+			auto Stmt = createGreenStmt(Predicate,Predicate,{Inst});
+
+			SBody->appendStmt(Stmt, Predicate);
 		}
 	}
 
@@ -323,7 +467,7 @@ GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
 
 
 const GreenRoot *LoopOptimizerImpl::parallelize(const GreenRoot *Root){
-	auto NewSeq= parallelizeSequence(Root->getSequence() );
+	auto NewSeq= parallelizeSequence(Root->getSequence());
 	if (NewSeq==Root->getSequence())
 		return Root;
 
@@ -350,12 +494,13 @@ void LoopOptimizerImpl::codegen(const GreenRoot *Root) {
 	BasicBlock *EntryBB = BasicBlock::Create(Context, "entry", NewFunc);
 
 	IRBuilder<> Builder(EntryBB);
-	ActiveRegsTy ActiveRegs; // TODO: Add arguments
+  CodegenContext CodegenCtx;
+	auto & ActiveRegs=CodegenCtx.ActiveRegs;
 	for ( auto P : zip( Func->args(), NewFunc->args() )  ) {
 		ActiveRegs.insert({ &std::get<0>(P) ,&std:: get<1>(P) } );
 	}
 
-	Root->getSequence()->codegen(Builder, ActiveRegs);
+	Root->getSequence()->codegen(Builder, CodegenCtx);
 
 	if (FT->getReturnType()->isVoidTy())
 		Builder.CreateRetVoid();

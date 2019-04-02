@@ -92,6 +92,19 @@ namespace llvm {
     ); 
   }
 
+  auto children_unexpanded() const {
+    return make_range( Children.begin(), Children.end() );
+  }
+
+  // Does not implicitly expand red nodes
+  // Possible alternative: PointerUnion<RedNode*,GreenNode*> which is a GreenNode if the RedNode is not expanded yet.
+  auto children_redgreen() const {
+    auto RedRange = make_range( Children.begin(), Children.end() );
+    auto GreenRange = getGreen()->children();
+    return zip(GreenRange, RedRange);
+  }
+
+
 		int getNumChildren() const {  return Green->getChildren().size(); }
 		RedNode *getChild(int i) const { 
 				auto &Child = Children[i];
@@ -130,7 +143,9 @@ namespace llvm {
 
 	class RedRoot: public RedNode {
 	private:
-    static void  assignDefinitions( RedNode *Node, DenseMap<Value*,RedSet*> &PastDefinitions);
+    bool AllDefsFound = false;
+
+    static void assignDefinitions( RedNode *Node, DenseMap<Value*,RedSet*> &PastDefinitions);
   protected:
     RedRoot( GreenRoot *Green) : RedNode(nullptr, Green) {}
 	public:
@@ -138,15 +153,20 @@ namespace llvm {
 		virtual ~RedRoot() {};
 
 		static bool classof(const RedNode *Node) { return GreenRoot::classof(Node->getGreen()); }
-		static bool classof(const RedRoot *) {	return true;	}
+		static bool classof(const RedRoot *) { return true; }
 
-    const 	GreenRoot* getGreen() const {return static_cast<const  GreenRoot*>( RedNode::getGreen());}
+    const GreenRoot* getGreen() const {return static_cast<const  GreenRoot*>( RedNode::getGreen());}
 
-    void findAllDefinitions();
+
 
     static RedRoot *Create(GreenRoot* Green) { 
       return new RedRoot(Green);
     }
+
+
+    void findAllDefinitions();
+
+    bool hasDirectDependence(RedNode *Pred, RedNode *Succ);
 	};
 
 
@@ -166,8 +186,6 @@ namespace llvm {
 		static bool classof(const RedBlock *) {	return true;	}
 
     const 	GreenBlock* getGreen() const {return static_cast<const  GreenBlock*>( RedNode::getGreen());}
-
-	
 	};
 
 

@@ -11,52 +11,40 @@
 
 namespace llvm {
 	enum class LoopHierarchyKind {
-		Root,
-		Sequence,
-
-		// Blocks
-		Stmt,
-		Loop,
-
-		// Instructions
-		Set,
-		Load,
-		Store,
-		Call,
-
-		// Expressions
-		Const, // Constant/Literal
-    Arg, // Function argument or global
-		Reg,  // Register/Value read
-		GEP,
-		ICmp,
-		Op, // Operation
-
-		Block_First= Stmt,
-		Block_Last = Loop,
-
-		Inst_First = Set,
-		Inst_Last = Call,
-
-		Expr_First = Const,
-		Expr_Last = Op,
+#define HANDLE_NODE(ShortName, LongName) \
+  ShortName,
+#define HANDLE_SUBKIND(ShortName, LongName, First, Last) \
+  ShortName ## _First = First,   \
+  ShortName ## _Last = Last,
+  // TODO: Rename ShortName ## FirstVal, like Value.def
+#include "NodeKinds.def"
 	};
 
 
 	class GreenInst;
 	class GreenExpr;
 	class GreenBlock;
+	class CtrlAtom;
 
 
 
-	using ActiveRegsTy = DenseMap<Value*,Value*>;
 
+
+  // TOOD: Refactor-out codegen; does not need to be part of the central data structure. 
+  // Maybe use visitor-pattern.
+  class CodegenContext {
+  public:
+    DenseMap<Value*,Value*> ActiveRegs;
+
+    SmallVector<std::pair<const GreenExpr* ,BasicBlock*> , 8>  PrecomputedPredicates;
+	DenseMap<CtrlAtom*,BasicBlock*> PrecomputedAtoms;
+  };
 
 	
 
 
 
-		// Immutable (sub-)tree, only contains references to its children
+	// Immutable (sub-)tree, only contains references to its children.
 	class GreenNode {
 	public:
 		virtual ~GreenNode() {};
@@ -75,6 +63,7 @@ namespace llvm {
     }
 
 		// TODO: Use general tree search algorithm
+	// TODO: Consider caching result
 		virtual void findRegUses(SetVector <Value*>  &UseRegs) const {
 			for (auto Child : getChildren()) 
 				Child->findRegUses(UseRegs);
@@ -89,7 +78,7 @@ namespace llvm {
 
 	class GreenSequence final : public GreenNode {
 	private:
-		// TODO: Do the same allocation trick.; Sence GreenSequence is always part of either a GreenRoot or GreenLoop, can also allocate in their memory
+		// TODO: Do the same allocation trick.; Since GreenSequence is always part of either a GreenRoot or GreenLoop, can also allocate in their memory
 		std::vector<const GreenBlock *> Blocks;
 
 	public:
@@ -108,7 +97,7 @@ namespace llvm {
 
 		static 	GreenSequence *create(ArrayRef<const GreenBlock*> Blocks) {  return new GreenSequence(Blocks); }
 
-		 void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const;
+		 void codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const;
 	};
 
 
@@ -142,15 +131,57 @@ namespace llvm {
 
 
 
+  class AtomDisjointSet;
+
+  class CtrlAtom {
+  private:
+    AtomDisjointSet *Parent;
+  public:
+    CtrlAtom  ( AtomDisjointSet *Parent): Parent(Parent) {}
+  };
 
 
 
+
+  // In such a set, exactly one of the atoms will be true
+  // Unconditional branch: One atoms (Tautology)
+  // Conditional branch: Two atoms (IfTrue, IfFalse)
+  // switch: As many atoms as cases + default
+  // indirectbr: As many atoms as valid target labels
+  // invoke: Two atoms (normal, unwind)
+  // Instruction::mayThrow(): Could be two atoms (Or more efficient implementation with a flag that causes control dependencies)
+  // Loop: One atom per exiting edge
+  class AtomDisjointSet {
+  private:
+    // Number of loop nests
+    int Dims = 0;
+
+    SmallVector<CtrlAtom*,2> Atoms;
+  public:
+    AtomDisjointSet(int NumAtoms) {  
+      Atoms.resize(NumAtoms);
+      for (auto &Atom : Atoms)
+          Atom = new CtrlAtom(this);
+    }
+
+    auto atoms() const { return make_range(Atoms.begin(), Atoms.end()); }
+  };
 
 
 	// A statement or loop (abstract class)
 	class GreenBlock  : public GreenNode  {
 	private :
+   const GreenExpr *MustExecutePredicate;
+   const GreenExpr *MayExecutePredicate;
 
+    AtomDisjointSet AtomSet;
+
+  protected:
+    GreenBlock(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, int NumAtoms) :
+      GreenNode(), MustExecutePredicate(MustExecutePredicate), MayExecutePredicate(MayExecutePredicate), AtomSet(NumAtoms) {
+    }
+
+    void printLineCond(raw_ostream &OS) const;
 	public:
 		//GreenBlock (ArrayRef<const GreenSequence*const> Stmts): Stmts(Stmts) {}
 		//virtual ~GreenBlock() {};
@@ -160,9 +191,18 @@ namespace llvm {
 		static bool classof(const GreenBlock *) {	return true;	}
 
 
+	// TODO: Should these be returned by children() as well?
+    const GreenExpr * getMustExecutePredicate() const {return MustExecutePredicate;}
+    const GreenExpr * getMayExecutePredicate() const {return MayExecutePredicate;}
+
+    auto atoms() const { return AtomSet.atoms(); }
+    
 		//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
 	
-		virtual void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const=0;
+     void codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx)const;
+		virtual void codegenBody(IRBuilder<> &Builder, CodegenContext &CodegenCtx)const=0;
+
+    //void codegenPredicate(IRBuilder<> &Builder, CodegenContext &ActiveRegs, const std::function <void(IRBuilder<> &, CodegenContext &)> &CodegenBody) const;
 	}; 
 
 
@@ -180,15 +220,18 @@ namespace llvm {
 		StructType *getIdentTy(Module *M) const;
 		Function * codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegs)const 			;
 	public:
-		GreenLoop (GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop): Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
-		 GreenLoop *clone() const { auto That = create(Iterations,IndVar,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
+		GreenLoop (const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop): GreenBlock(MustExecutePredicate, MayExecutePredicate,1), Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
+		GreenLoop *clone() const { auto That = create(getMustExecutePredicate(), getMayExecutePredicate(),Iterations,IndVar,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
 		virtual ~GreenLoop() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Loop; 	}
 		static bool classof(const GreenLoop *) {	return true;	}
 
-		 void printLine(raw_ostream &OS) const override {OS << "Loop";}
+		 void printLine(raw_ostream &OS) const override {
+       printLineCond(OS);
+       OS << "Loop";
+     }
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override ;
 		Loop *getLoopInfoLoop() const {return LoopInfoLoop;}
@@ -196,9 +239,9 @@ namespace llvm {
 		bool isExecutedInParallel() const {return ExecuteInParallel;}
 		void setExecuteInParallel(bool ExecuteInParallel = true) { this->ExecuteInParallel= ExecuteInParallel;  }
 
-		static 	GreenLoop *create(GreenExpr *Iterations,Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(Iterations,IndVar, Sequence, LoopInfoLoop); }
+		static 	GreenLoop *create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations,Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(MustExecutePredicate, MayExecutePredicate,Iterations,IndVar, Sequence, LoopInfoLoop); }
 	
-		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		void codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 	};
 
 
@@ -208,31 +251,34 @@ namespace llvm {
 	class GreenStmt final : public GreenBlock {
 	private:
 		std::vector<GreenInst*> Insts;
+
+
 	public:
-		GreenStmt(ArrayRef<GreenInst*> Insts) : Insts(Insts) {}
+		GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts);
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Stmt; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
 		static bool classof(const GreenStmt *) {	return true;	}
 
-		void printLine(raw_ostream &OS) const override {OS << "Stmt";}
+		void printLine(raw_ostream &OS) const override ;
 
-		virtual ArrayRef <const GreenNode * > getChildren() const override ;
+		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
-		static GreenStmt*create(ArrayRef<GreenInst*> Insts) { return new GreenStmt(Insts); };
+		static GreenStmt*create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts) { return new GreenStmt(MustExecutePredicate, MayExecutePredicate,Insts); };
 
-		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		void codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs) const override;
 	};
 
 
 
-	class GreenInst  : public GreenNode {
+
+	class GreenInst : public GreenNode {
 	private:
 	public:
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Inst_First <= Kind && Kind <= LoopHierarchyKind::Inst_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
 
-		virtual void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const =0;
+		virtual void codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const =0;
 	};
 
 
@@ -266,7 +312,7 @@ namespace llvm {
 
 		static GreenSet*create(Instruction *Var, GreenExpr *Val) { return new GreenSet(Var, Val); };
 
-		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		void codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 
 
 		void findRegDefs(SetVector<Instruction*>  &DefRegs) const override {
@@ -303,8 +349,10 @@ namespace llvm {
 
 		static GreenStore*create(GreenExpr *Val, GreenExpr *Ptr) { return new GreenStore(Val, Ptr); };
 
-		 void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		 void codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 	};
+
+
 
 
 
@@ -319,7 +367,7 @@ namespace llvm {
 			Operands.insert(Operands.end(), Arguments.begin(), Arguments.end());
 		}
 
-		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Call; }
+		virtual LoopHierarchyKind getKind() const override { return LoopHierarchyKind::Call; }
 		static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::Call; }
 		static bool classof(const GreenCall *) { return true; }
 
@@ -329,7 +377,7 @@ namespace llvm {
 
 		static GreenCall*create(const GreenExpr *Func,ArrayRef<const GreenExpr*> Operands) { return new GreenCall(Func, Operands); };
 
-		void codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		void codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 	};
 
 
@@ -345,7 +393,9 @@ namespace llvm {
 		static bool classof(const GreenNode *Node)  {	auto Kind =Node-> getKind(); return LoopHierarchyKind::Expr_First <= Kind && Kind <= LoopHierarchyKind::Expr_Last;	}
 		static bool classof(const GreenInst *) {	return true;	}
 
-		virtual Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const =0;
+    ArrayRef <const GreenExpr * > getExprChildren() const ;
+
+		virtual Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const =0;
 	};
 
 
@@ -367,8 +417,50 @@ namespace llvm {
 
 		static  GreenConst *create(Constant *C) { return new GreenConst(C); }
 
-		 Value* codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const override;
+		 Value* codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const override;
 	};
+
+
+  class GreenTrueLiteral final : public GreenExpr {
+  private:
+  protected:
+    GreenTrueLiteral() {}
+  public:
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::LiteralTrue; }
+    static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::LiteralTrue; 	}
+    static bool classof(const GreenTrueLiteral *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override { OS <<"true"; }
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+
+    static  GreenTrueLiteral *create() { return new GreenTrueLiteral(); }
+
+    Value* codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const override;
+  };
+
+
+
+
+  class GreenFalseLiteral final : public GreenExpr {
+  private:
+  protected:
+    GreenFalseLiteral() {}
+  public:
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::LiteralFalse; }
+    static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::LiteralFalse; 	}
+    static bool classof(const GreenFalseLiteral *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override { OS <<"false"; }
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+
+    static  GreenFalseLiteral *create() { return new GreenFalseLiteral(); }
+
+    Value* codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const override;
+  };
+
+
 
 
   // Something that is set before the tree, but fixed during the tree's execution, i.e. an Argument or global.
@@ -390,7 +482,7 @@ namespace llvm {
 
     static  GreenArg *create(Value *Arg) { return new GreenArg(Arg); }
 
-    Value* codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const override;
+    Value* codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const override;
   };
 
 
@@ -406,7 +498,7 @@ namespace llvm {
 		static bool classof(const GreenReg *) {	return true;	}
 
 		void printLine(raw_ostream &OS) const override {
-			Var->printAsOperand(OS);
+			Var->printAsOperand(OS, false);
 		}
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
@@ -415,13 +507,36 @@ namespace llvm {
 
 		static  GreenReg *create(Instruction *Var) { return new GreenReg(Var); }
 
-		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 
 		 void findRegUses(SetVector<Value*>  &UseRegs) const override {
 			UseRegs.insert(Var);
 		}
-
 	};
+
+
+  // Join with GreenReg?
+  class GreenCtrl final : public GreenExpr {
+  private:
+  public:
+    GreenCtrl()  {}
+
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Ctrl; }
+    static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Ctrl; 	}
+    static bool classof(const GreenCtrl *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override {
+      OS << "Ctrl";
+    }
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
+    static  GreenCtrl *create() { return new GreenCtrl(); }
+
+    Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override{
+      llvm_unreachable("not yet implemented");
+    }
+  };
+
 
 
 
@@ -449,11 +564,8 @@ namespace llvm {
 
 		static  GreenGEP *create(ArrayRef<GreenExpr*>Operands) { return new GreenGEP(Operands); }
 
-		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+		Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 	};
-
-
-
 
 
 
@@ -464,7 +576,6 @@ namespace llvm {
 		GreenExpr *Operands [2];
 
 		ICmpInst::Predicate Predicate;
-
 	public:
 		GreenICmp(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS ) : Operands{LHS,RHS} , Predicate(Predicate) {}
 
@@ -475,14 +586,74 @@ namespace llvm {
 		GreenExpr * getLHS() const { return Operands[0]; }
 		GreenExpr * getRHS() const { return Operands[1]; }
 
-		void printLine(raw_ostream &OS) const override {OS << "ICmp";}
+		void printLine(raw_ostream &OS) const override ;
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
-		static  GreenICmp *create(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(Predicate,LHS,RHS); }
+	
 
-		Value* codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const override;
+
+		Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
+
+    static  GreenICmp *create(ICmpInst::Predicate Predicate, GreenExpr *LHS, GreenExpr *RHS) { return new GreenICmp(Predicate,LHS,RHS); }
 	};
+
+
+  class GreenLogicOr final : public GreenExpr {
+  private:
+    SmallVector<const GreenExpr*,2> Operands;
+  protected:
+    GreenLogicOr(ArrayRef<const GreenExpr*> Operands): Operands(Operands.begin(), Operands.end()){};
+  public:
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::LogicOr; }
+    static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::LogicOr; 	}
+    static bool classof(const GreenLogicOr *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override ;
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override;
+
+    Value* codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const override;
+
+    static  GreenLogicOr *create( GreenExpr *LHS, GreenExpr *RHS) { 
+      GreenExpr* A[] = {LHS,RHS};
+      return new GreenLogicOr(makeArrayRef(A)); 
+    }
+    static  GreenLogicOr *create(ArrayRef<const GreenExpr*> Operands) { 
+      return new GreenLogicOr(Operands);
+    }
+  };
+
+
+
+
+  class GreenLogicAnd final : public GreenExpr {
+  private:
+    SmallVector<const GreenExpr*,2> Operands;
+  protected:
+    GreenLogicAnd(ArrayRef<const GreenExpr*> Operands): Operands(Operands.begin(), Operands.end()){};
+  public:
+    virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::LogicAnd; }
+    static bool classof(const GreenNode *Node) { return Node->getKind() == LoopHierarchyKind::LogicAnd; 	}
+    static bool classof(const GreenLogicAnd *) {	return true;	}
+
+    void printLine(raw_ostream &OS) const override ;
+
+    virtual ArrayRef <const GreenNode * > getChildren() const override;
+
+    Value* codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const override;
+
+    static  GreenLogicAnd *create( GreenExpr *LHS, GreenExpr *RHS) { 
+      GreenExpr* A[] = {LHS,RHS};
+      return new GreenLogicAnd(makeArrayRef(A)); 
+    }
+    static  GreenLogicAnd *create(ArrayRef<const GreenExpr*> Operands) { 
+      return new GreenLogicAnd(Operands);
+    }
+  };
+
+
+
 }
 
 #endif /* LLVM_LOF_GREENTREE_H */

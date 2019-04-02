@@ -15,18 +15,106 @@ return Result;
 }
 
 
+void GreenBlock:: printLineCond(raw_ostream &OS) const  {
+  auto Cond = getMustExecutePredicate();
+  if (!isa<GreenTrueLiteral>(getMustExecutePredicate())) {
+    // TODO: Print as child?
+    OS << "[";
+    Cond->printLine(OS);
+    OS << "] ";
+  }
+}
+
+
+void GreenBlock::codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const {
+  auto Func = Builder.GetInsertBlock()->getParent();
+  auto &Ctx = Builder.getContext();
+
+  auto EntryBB = BasicBlock::Create(Ctx, "block", Func);
+  Builder.CreateBr(EntryBB);
+  Builder.SetInsertPoint(EntryBB);
+
+  auto Cond = MustExecutePredicate;
+
+  auto ExitBB = EntryBB;
+  SmallVector<BasicBlock*,2> SuccBBs; //atoms
+  if (!isa<GreenTrueLiteral>(Cond)) {
+    auto BodyBB = BasicBlock::Create(Ctx, "block.then", Func);
+    auto ElseBB = BasicBlock::Create(Ctx, "block.else", Func);
+    ExitBB = BasicBlock::Create(Ctx, "block.exit", Func);
+    SuccBBs.push_back(BodyBB);
+    SuccBBs.push_back(ElseBB);
+
+    auto CondV = Cond->codegen(Builder, CodegenCtx);
+    Builder.CreateCondBr(CondV, BodyBB, ElseBB);
+
+    Builder.SetInsertPoint(ElseBB);
+    Builder.CreateBr(ExitBB);
+
+    Builder.SetInsertPoint(BodyBB);
+  } 
+
+
+  codegenBody(Builder, CodegenCtx);
+
+
+  if (!isa<GreenTrueLiteral>(Cond)) {
+    Builder.SetInsertPoint(ExitBB);
+  }
+}
+
+
+#if 0
+void GreenBlock:: codegenPredicate(IRBuilder<> &Builder, CodegenContext &CodegenCtx,const std::function <void(IRBuilder<> &, CodegenContext &)> &CodegenBody ) const {
+  auto Cond = MustExecutePredicate;
+  if (isa<GreenTrueLiteral>(Cond))
+    return;
+
+  auto Func = Builder.GetInsertBlock()->getParent();
+  auto &Ctx = Builder.getContext();
+  auto CondV = Cond->codegen(Builder, CodegenCtx);
+  
+  SmallVector<BasicBlock*,2> SuccBB;
+
+  auto BodyBB = BasicBlock::Create(Ctx, "block.then", Func);
+  auto ElseBB = BasicBlock::Create(Ctx, "block.else", Func);
+
+  Builder.CreateCondBr(CondV, BodyBB, ElseBB);
+
+  Builder.SetInsertPoint(BodyBB);
+  CodegenBody(Builder,CodegenCtx);
+
+  Builder.Set
+
+  Builder.SetInsertPoint();
+
+}
+#endif
+
  ArrayRef <const GreenNode * >GreenLoop:: getChildren() const   {
 	 return ArrayRef <const  GreenNode * >((const  GreenNode **)&Sequence,1);		
  }
 
 
+GreenStmt:: GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts):  
+   GreenBlock(MustExecutePredicate, MayExecutePredicate, isa<GreenTrueLiteral>(MustExecutePredicate) ? 1 :  (MustExecutePredicate == MayExecutePredicate ? 2 : 0) ), // FIXME: If  MustExecute and MayExecute are not the same, the result of this atom depends on speculative execution, hence undefined; split into separate predicate that defines the atom?
+   Insts(Insts) {}
+
+
+void GreenStmt::printLine(raw_ostream &OS) const  { 
+printLineCond(OS);
+  OS << "Stmt"; 
+}
+
   ArrayRef <const GreenNode * > GreenStmt:: getChildren() const  {
 	  return ArrayRef<GreenNode*>((GreenNode**)&Insts[0],Insts.size());
-  };
+  }
+
 
 ArrayRef <const GreenNode * > GreenStore:: getChildren() const { 
 	return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],(size_t)2); 
 }
+
 
 StructType *GreenLoop:: getIdentTy(Module *M) const {
 	auto &Context = M->getContext();
@@ -42,7 +130,7 @@ StructType *GreenLoop:: getIdentTy(Module *M) const {
 }
 
 
-void GreenSequence:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const{
+void GreenSequence:: codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const{
 	for (auto Block : Blocks) 
 		Block->codegen(Builder,ActiveRegs);
 }
@@ -149,15 +237,16 @@ Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegA
 
 	Builder.SetInsertPoint(InnerForBodyBB);
 
-	// TODO: Reuse/Insert parent active regs 
-	ActiveRegsTy SubFnActiveRegs; 
+
+  CodegenContext SubContext;
+	auto & SubFnActiveRegs = SubContext.ActiveRegs; 
 	SubFnActiveRegs.insert({IndVar, IV} );
 	for (auto Y : zip( UseRegArgs,drop_begin( SubFn->args(),3 )  ) ) {
 		auto Loaded = Builder.CreateLoad(&std::get<1>(Y)  );
 		SubFnActiveRegs.insert({ std::get<0>(Y) , Loaded});
 	}
 
-	Sequence->codegen(Builder, SubFnActiveRegs);
+	Sequence->codegen(Builder, SubContext);
 
 	auto NextIV = Builder.CreateAdd(IV, Builder.getInt64(1), "parloop.iv.next" );
 	IV->addIncoming( NextIV, InnerForBodyBB );
@@ -183,7 +272,7 @@ Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegA
 }
 
 
-void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
+void GreenLoop:: codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const {
 	auto ItersV = Iterations->codegen(Builder, ActiveRegs);
 	Function *F = Builder.GetInsertBlock()->getParent();
 	LLVMContext &Context = F->getContext();
@@ -228,9 +317,9 @@ void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 
 	
 
-		SmallVector<Value*,8> Args =  {Ident,			/* Number of subfn varargs */ Builder.getInt32(1 +Params.size() ), Task, IterationsPtr  };
+		SmallVector<Value*,8> Args =  {Ident,	/* Number of subfn varargs */ Builder.getInt32(1 +Params.size() ), Task, IterationsPtr  };
 		for (auto Z : Params) {
-			auto NewVal = ActiveRegs.lookup(Z);
+			auto NewVal =ActiveRegs. ActiveRegs.lookup(Z);
 			auto ValAlloca = AllocaBuilder.CreateAlloca(Z->getType());
 			Builder.CreateStore(NewVal, ValAlloca);
 			Args.push_back(ValAlloca);
@@ -268,7 +357,7 @@ void GreenLoop:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 
 
 
-void GreenStmt:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
+void GreenStmt:: codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const {
 	for (auto Inst : Insts) 
 		Inst->codegen(Builder, ActiveRegs);
 }
@@ -277,16 +366,16 @@ void GreenStmt:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 ArrayRef <const GreenNode * > GreenSet:: getChildren() const  { return ArrayRef<GreenNode*>(Val); }
 
 
-void GreenSet::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
-	auto NewVal =Val->codegen(Builder,ActiveRegs); 
+void GreenSet::codegen(IRBuilder<> &Builder, CodegenContext &CodegenContext )const {
+	auto NewVal =Val->codegen(Builder,CodegenContext); 
 	assert(NewVal);
-	assert(!ActiveRegs.count(Var));
-	ActiveRegs[ Var] = NewVal;
+	assert(!CodegenContext.ActiveRegs.count(Var));
+  CodegenContext.	ActiveRegs[ Var] = NewVal;
 }
 
 
 
-void GreenStore::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
+void GreenStore::codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const {
 	auto Val = getVal()->codegen(Builder,ActiveRegs);
 	auto Ptr = getPtr()->codegen(Builder,ActiveRegs);
 	
@@ -297,7 +386,7 @@ void GreenStore::codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
 ArrayRef <const GreenNode * > GreenCall:: getChildren() const { return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
 
 
-void GreenCall:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const  {
+void GreenCall:: codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const  {
 	auto Callee = Operands[0]->codegen(Builder,ActiveRegs);
 	SmallVector<Value *,8> Args;
 	for (auto GArg : drop_begin( Operands,1)) {
@@ -308,18 +397,33 @@ void GreenCall:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const  
 }
 
 
-Value* GreenConst::codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const  {
+ArrayRef <const GreenExpr * > GreenExpr:: getExprChildren() const {
+  auto Children = getChildren();
+  return  ArrayRef<GreenExpr*>((GreenExpr**)&Children[0],Children.size()); 
+}
+
+Value* GreenConst::codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const  {
 	return Const;
 }
 
+Value* GreenTrueLiteral:: codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const  {
+  auto &Context = Builder.getContext();
+return ConstantInt::get(Context, APInt(1 ,1));
+}
 
-Value* GreenArg:: codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const {
+Value* GreenFalseLiteral:: codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const  {
+  auto &Context = Builder.getContext();
+  return ConstantInt::get(Context, APInt(1 ,0));
+}
+
+
+Value* GreenArg:: codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const {
   return Arg;
 }
 
 
-Value* GreenReg:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const {
-	auto Result = ActiveRegs.lookup(Var);
+Value* GreenReg:: codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const {
+	auto Result = CodegenCtx.ActiveRegs.lookup(Var);
 	assert(Result);
 	return Result;
 }
@@ -328,7 +432,7 @@ Value* GreenReg:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs )const 
 ArrayRef <const GreenNode * > GreenGEP:: getChildren() const { return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
 
 
-Value*GreenGEP:: codegen(IRBuilder<> &Builder, ActiveRegsTy &ActiveRegs ) const {
+Value*GreenGEP:: codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs ) const {
 	SmallVector<Value*,2> Indices;
 	for (auto Green : getIndices()) {
 		auto IndexVal=	Green->codegen(Builder,ActiveRegs);
@@ -342,16 +446,80 @@ return Result;
 }
 
 
+void  GreenICmp::printLine(raw_ostream &OS) const  {
+	 getLHS()->printLine(OS);
+	 OS << " ";
+	 OS << CmpInst::getPredicateName(Predicate);
+	 OS << " ";
+	 getRHS()->printLine(OS);
+}
+
+
 
 ArrayRef <const GreenNode * > GreenICmp:: getChildren() const  {
 	return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],(size_t)2); 
 }
 
 
-Value*GreenICmp:: codegen(IRBuilder<> &Builder , ActiveRegsTy &ActiveRegs)const  {
-	auto LHS = getLHS()->codegen(Builder,ActiveRegs);
-		auto RHS = getLHS()->codegen(Builder,ActiveRegs);
-auto Result=	Builder.CreateICmp(Predicate, LHS, RHS);
-return Result;
+void GreenLogicOr:: printLine(raw_ostream &OS) const  {
+  OS << "("  ;
+  Operands[0]->printLine(OS);
+  for (auto Op: drop_begin(Operands,1)) {
+    OS<<" || ";
+    Op->printLine(OS);
+  }
+  OS << ")";
 }
 
+ ArrayRef <const GreenNode * > GreenLogicOr:: getChildren() const  {return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
+
+ Value* GreenLogicOr:: codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const {
+   // TODO: Shortcut-eval?
+
+   auto Result = Operands[0]->codegen(Builder, CodegenCtx);
+   for (auto Op : drop_begin(Operands,1 )) {
+     auto OpResult = Op->codegen(Builder, CodegenCtx);
+     Result = Builder.CreateOr(Result, OpResult);
+   }
+
+  return Result;
+ }
+
+
+ void GreenLogicAnd:: printLine(raw_ostream &OS) const  {
+   OS << "("  ;
+   Operands[0]->printLine(OS);
+   for (auto Op: drop_begin(Operands,1)) {
+     OS<<" && ";
+     Op->printLine(OS);
+   }
+   OS << ")";
+ }
+
+ ArrayRef <const GreenNode * > GreenLogicAnd:: getChildren() const  {return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
+
+ Value* GreenLogicAnd:: codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const {
+   // TODO: Shortcut-eval?
+
+   auto Result = Operands[0]->codegen(Builder, CodegenCtx);
+   for (auto Op : drop_begin(Operands,1 )) {
+     auto OpResult = Op->codegen(Builder, CodegenCtx);
+     Result = Builder.CreateAnd(Result, OpResult);
+   }
+
+   return Result;
+ }
+
+
+Value*GreenICmp:: codegen(IRBuilder<> &Builder , CodegenContext &ActiveRegs)const  {
+	auto LHS = getLHS()->codegen(Builder,ActiveRegs);
+	auto RHS = getRHS()->codegen(Builder,ActiveRegs);
+  auto Result=	Builder.CreateICmp(Predicate, LHS, RHS);
+  return Result;
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+void neverCalled2() {
+	GreenRoot::create(nullptr)->dump();
+}
+#endif

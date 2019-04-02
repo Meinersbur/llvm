@@ -14,6 +14,7 @@ void RedRoot::assignDefinitions(RedNode *Node, DenseMap<Value*,RedSet*> &PastDef
     Reg->Def = Def;
   }
 
+  // This expands the entire tree, which should not be necessary.
   for (auto Child : Node->children()) {
     assignDefinitions(Child, PastDefinitions);
   }
@@ -23,10 +24,24 @@ void RedRoot::assignDefinitions(RedNode *Node, DenseMap<Value*,RedSet*> &PastDef
 
 
 void RedRoot:: findAllDefinitions(){
+  if (AllDefsFound)
+    return;
+
   DenseMap<Value*,RedSet*> PastDefinitions;
   assignDefinitions(this,PastDefinitions);
+  AllDefsFound = true;
 }
 
+
+bool RedRoot::hasDirectDependence(RedNode *Pred, RedNode *Succ ){
+  findAllDefinitions();
+
+    if (isa<RedSet>(Pred)  && isa<RedReg>(Succ))
+      if (cast<RedReg>(Succ)->getDef() == Pred)
+        return true;
+
+    return false;
+}
 
 
  RedNode *RedNode::Create(RedNode*Parent,const  GreenNode *Green) {
