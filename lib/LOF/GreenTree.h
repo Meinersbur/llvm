@@ -137,7 +137,7 @@ namespace llvm {
   private:
     AtomDisjointSet *Parent;
   public:
-    CtrlAtom  ( AtomDisjointSet *Parent): Parent(Parent) {}
+	explicit  CtrlAtom  ( AtomDisjointSet *Parent): Parent(Parent) {}
   };
 
 

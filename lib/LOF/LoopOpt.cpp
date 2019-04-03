@@ -361,107 +361,150 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedSequence *TopLoop) {
 
 
 
-GreenRoot* LoopOptimizerImpl::buildOriginalLoopTree() {
-	DenseMap <Loop*,StagedLoop*> LoopMap;
-	LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
+GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
+  DenseMap<Loop *, StagedLoop *> LoopMap;
+  LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
   StagedSequence *RootBlock = LoopMap[nullptr]->Body;
-	for (auto L : LI->getLoopsInPreorder()) {
-		// TODO: Use own analysis on loop tree instead of SCEV.
-		auto Taken = SE->getBackedgeTakenCount(L);
-		Taken = SE->getSCEVAtScope(Taken, L->getParentLoop());
+  for (auto L : LI->getLoopsInPreorder()) {
+    // TODO: Use own analysis on loop tree instead of SCEV.
+    auto Taken = SE->getBackedgeTakenCount(L);
+    Taken = SE->getSCEVAtScope(Taken, L->getParentLoop());
 
-		//auto IterCount = SE->getMinusSCEV(Taken,  SE->getSCEV( ConstantInt::get(Context, APInt(2, -1, true) ) ) );
-		Value * IterCountV;
-		if (isa<SCEVSMaxExpr>(Taken)) {
-		 IterCountV = cast<SCEVUnknown>( cast<SCEVSMaxExpr>(Taken)->getOperand(1) )->getValue();
-		} else {
-			IterCountV = cast<SCEVConstant>(Taken)->getValue();
-		}
+    // auto IterCount = SE->getMinusSCEV(Taken,  SE->getSCEV(
+    // ConstantInt::get(Context, APInt(2, -1, true) ) ) );
+    Value *IterCountV;
+    if (isa<SCEVSMaxExpr>(Taken)) {
+      IterCountV = cast<SCEVUnknown>(cast<SCEVSMaxExpr>(Taken)->getOperand(1))->getValue();
+    } else {
+      IterCountV = cast<SCEVConstant>(Taken)->getValue();
+    }
 
-		// FIXME: This assume the form without loop-rotation
-		//    for (int = 0; i < 0; i+=1)
+    // FIXME: This assume the form without loop-rotation
+    //    for (int = 0; i < 0; i+=1)
     assert(IterCountV);
-		LoopMap[L] = new StagedLoop(L,IterCountV );
-	}
+    LoopMap[L] = new StagedLoop(L, IterCountV);
+  }
 
-
-  DenseMap<BasicBlock*,const GreenExpr*> BBPredicate;
+  DenseMap<BasicBlock *, const GreenExpr *> BBPredicate;
   BBPredicate[&Func->getEntryBlock()] = getGreenBool(true); // Assume no branch to entry
 
+#if 0
+  DenseMap<BasicBlock*, CtrlAtom* > Atoms;
+  for (auto &BB : *Func) {
+//if (&BB == &Func->getEntryBlock()) {
+//		  Atoms[&BB] = nullptr;
+//	  continue;
+//}
+	  Atoms[&BB] = new CtrlAtom(nullptr);
+  }
+#endif
 
-	// Build a temporary loop tree
-	ReversePostOrderTraversal<Function*> RPOT(Func);
-	for (auto Block : RPOT) {
-		auto Loop = LI->getLoopFor(Block);
-		auto SLoop = LoopMap.lookup(Loop);
-		auto SBody = SLoop->Body;
+
+
+  DenseMap<BasicBlock*, AtomDisjointSet* > SuccessorAtoms;
+  for (auto &BB : *Func) {
+	  auto Term = BB.getTerminator();
+	  if (auto Br = dyn_cast<BranchInst>(Term)) {
+		  AtomDisjointSet *AtomSet;
+		  if (Br->isUnconditional()) {
+			  AtomSet =  new AtomDisjointSet(1);
+		  } else {
+			  AtomSet =  new AtomDisjointSet(2);
+		  }
+		  SuccessorAtoms[&BB] = AtomSet;
+		  continue;
+	  }
+	  llvm_unreachable("unimplemented terminator");
+  }
+
+
+  DenseMap<Loop*, AtomDisjointSet* > LoopExitAtoms;
+  for (auto L : LI->getLoopsInPreorder()) {
+		SmallVector<BasicBlock*,4> ExitBlocks;
+	  L->getExitBlocks(ExitBlocks);
+	  auto AtomSet = new AtomDisjointSet(ExitBlocks.size());
+	  LoopExitAtoms[L] = AtomSet;
+  }
+
+
+
+
+  // Build a temporary loop tree.
+  ReversePostOrderTraversal<Function *> RPOT(Func);
+  for (auto Block : RPOT) {
+    auto Loop = LI->getLoopFor(Block);
+    auto SLoop = LoopMap.lookup(Loop);
+    auto SBody = SLoop->Body;
 
     bool isLoopHeader = Loop && Block == Loop->getHeader();
-
 
     auto &Predicate = BBPredicate[Block];
     if (!Predicate) {
       Predicate = getGreenBool(false);
-    for (auto Pred : predecessors(Block)) {
-      if (isLoopHeader && Loop->contains(Pred)) // We assume that loops are the only reason for back-edges => no irreducible loops.
-        continue;
+      for (auto Pred : predecessors(Block)) {
+        if (isLoopHeader && Loop->contains(Pred)) {
+		  // We assume that loops are the only reason for back-edges => no irreducible loops.
+          continue;
+		}
 
-	  auto PredLoop = LI->getLoopFor(Pred);
-	  const GreenExpr *PredPredicate;
-	  if (!isLoopHeader && ( Loop != PredLoop)) {
-		  // If this is exiting from a loop, take the loop's own predicate to ignore the exit-loop condition, i.e. assume that the loop will leave eventually.
-		  // FIXME: Multiple loop exits => atoms.
-			PredPredicate =  BBPredicate.lookup(LoopMap.lookup(PredLoop)->L->getHeader() );
-	  } else {
-			PredPredicate = BBPredicate.lookup(Pred);
-	  }
-      assert(PredPredicate);
-   
-	  if (Loop && Loop->isLoopExiting(Pred) ) {
-		  // Ignore continue-loop conditions to avoid them to be propagated to the statement predicates; these are implicit by the surrounding loop
-		  Predicate = getGreenLogicOr(Predicate,PredPredicate);
-		  continue;
-	  } else if (auto Br = dyn_cast<BranchInst>(Pred->getTerminator())) {
-       const GreenExpr* Cond;
-        if (Br->isUnconditional()) {
-          Cond = getGreenBool(true);
-        } else  {
-           Cond = getGreenExpr(Br->getCondition());
+        auto PredLoop = LI->getLoopFor(Pred);
+        const GreenExpr *PredPredicate;
+#if 0
+        if (!isLoopHeader && (Loop != PredLoop)) {
+          // If this is exiting from a loop, take the loop's own predicate to
+          // ignore the exit-loop condition, i.e. assume that the loop will
+          // leave eventually.
+          // FIXME: Multiple loop exits => atoms.
+          PredPredicate = BBPredicate.lookup(LoopMap.lookup(PredLoop)->L->getHeader());
+        } else {
+          PredPredicate = BBPredicate.lookup(Pred);
         }
+#endif
+        assert(PredPredicate);
 
+        if (Loop && Loop->isLoopExiting(Pred)) {
+          // Ignore continue-loop conditions to avoid them to be propagated to
+          // the statement predicates; these are implicit by the surrounding
+          // loop
+          Predicate = getGreenLogicOr(Predicate, PredPredicate);
+          continue;
+        } else if (auto Br = dyn_cast<BranchInst>(Pred->getTerminator())) {
+          const GreenExpr *Cond;
+          if (Br->isUnconditional()) {
+            Cond = getGreenBool(true);
+          } else {
+            Cond = getGreenExpr(Br->getCondition());
+          }
 
-
-        auto AndCond = getGreenLogicAnd(PredPredicate,Cond );
-        Predicate = getGreenLogicOr(Predicate,AndCond);
-        continue;
+          auto AndCond = getGreenLogicAnd(PredPredicate, Cond);
+          Predicate = getGreenLogicOr(Predicate, AndCond);
+          continue;
+        }
+        llvm_unreachable("unimplemented terminator");
       }
-      llvm_unreachable("unimplemented terminator");
-    }
     }
 
     if (isLoopHeader) {
       auto ParentLoop = Loop->getParentLoop();
-      auto ParentSLoop =  LoopMap.lookup(ParentLoop);
-      auto ParentSBody =  ParentSLoop->Body;
-      ParentSBody->appendLoop(SLoop,Predicate);
+      auto ParentSLoop = LoopMap.lookup(ParentLoop);
+      auto ParentSBody = ParentSLoop->Body;
+      ParentSBody->appendLoop(SLoop, Predicate);
     }
 
+    for (auto &I : *Block) {
+      if (I.isTerminator())
+        continue;
+      if (!I.mayHaveSideEffects())
+        continue;
+      auto Inst = getGreenInst(&I);
+      auto Stmt = createGreenStmt(Predicate, Predicate, {Inst});
 
-		for (auto &I : *Block) {
-			if (I.isTerminator())
-				continue;
-			if (!I.mayHaveSideEffects())
-				continue;
-			auto Inst = getGreenInst(&I);
-			auto Stmt = createGreenStmt(Predicate,Predicate,{Inst});
+      SBody->appendStmt(Stmt, Predicate);
+    }
+  }
 
-			SBody->appendStmt(Stmt, Predicate);
-		}
-	}
-
-	
-	OriginalRoot = createGreenRoot(RootBlock);
-	return OriginalRoot;
+  OriginalRoot = createGreenRoot(RootBlock);
+  return OriginalRoot;
 }
 
 
