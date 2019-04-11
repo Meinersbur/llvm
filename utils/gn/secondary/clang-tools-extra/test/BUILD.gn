@@ -39,9 +39,9 @@ write_lit_config("lit_site_cfg") {
   ]
 
   if (clangd_build_xpc) {
-    extra_values += [ "CLANGD_BUILD_XPC_SUPPORT=1" ]
+    extra_values += [ "CLANGD_BUILD_XPC=1" ]
   } else {
-    extra_values += [ "CLANGD_BUILD_XPC_SUPPORT=0" ]
+    extra_values += [ "CLANGD_BUILD_XPC=0" ]
   }
 
   if (clang_enable_static_analyzer) {
@@ -74,6 +74,7 @@ group("test") {
     "//clang-tools-extra/clang-query/tool:clang-query",
     "//clang-tools-extra/clang-reorder-fields/tool:clang-reorder-fields",
     "//clang-tools-extra/clang-tidy/tool:clang-tidy",
+    "//clang-tools-extra/clangd/index/dex/dexp",
     "//clang-tools-extra/clangd/indexer:clangd-indexer",
     "//clang-tools-extra/clangd/tool:clangd",
     "//clang-tools-extra/modularize",
@@ -93,8 +94,6 @@ group("test") {
     deps +=
         [ "//clang-tools-extra/clangd/xpc/test-client:clangd-xpc-test-client" ]
   }
-
-  # FIXME: dep on dexp once it exist
   testonly = true
 }
 

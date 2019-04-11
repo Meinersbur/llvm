@@ -6117,17 +6117,20 @@ LoopVectorizationPlanner::planInVPlanNativePath(bool OptForSize,
     // If the user doesn't provide a vectorization factor, determine a
     // reasonable one.
     if (!UserVF) {
-      // We set VF to 4 for stress testing.
-      if (VPlanBuildStressTest)
-        VF = 4;
-      else
-        VF = determineVPlanVF(TTI->getRegisterBitWidth(true /* Vector*/), CM);
-    }
+      VF = determineVPlanVF(TTI->getRegisterBitWidth(true /* Vector*/), CM);
+      LLVM_DEBUG(dbgs() << "LV: VPlan computed VF " << VF << ".\n");
 
+      // Make sure we have a VF > 1 for stress testing.
+      if (VPlanBuildStressTest && VF < 2) {
+        LLVM_DEBUG(dbgs() << "LV: VPlan stress testing: "
+                          << "overriding computed VF.\n");
+        VF = 4;
+      }
+    }
     assert(EnableVPlanNativePath && "VPlan-native path is not enabled.");
     assert(isPowerOf2_32(VF) && "VF needs to be a power of two");
-    LLVM_DEBUG(dbgs() << "LV: Using " << (UserVF ? "user VF " : "computed VF ")
-                      << VF << " to build VPlans.\n");
+    LLVM_DEBUG(dbgs() << "LV: Using " << (UserVF ? "user " : "") << "VF " << VF
+                      << " to build VPlans.\n");
     buildVPlans(VF, VF);
 
     // For VPlan build stress testing, we bail out after VPlan construction.
@@ -7162,7 +7165,7 @@ static bool processLoopInVPlanNativePath(
   // Check the function attributes to find out if this function should be
   // optimized for size.
   bool OptForSize =
-      Hints.getForce() != LoopVectorizeHints::FK_Enabled && F->optForSize();
+      Hints.getForce() != LoopVectorizeHints::FK_Enabled && F->hasOptSize();
 
   // Plan how to best vectorize, return the best VF and its cost.
   const VectorizationFactor VF = LVP.planInVPlanNativePath(OptForSize, UserVF);
@@ -7245,7 +7248,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   // Check the function attributes to find out if this function should be
   // optimized for size.
   bool OptForSize =
-      Hints.getForce() != LoopVectorizeHints::FK_Enabled && F->optForSize();
+      Hints.getForce() != LoopVectorizeHints::FK_Enabled && F->hasOptSize();
 
   // Entrance to the VPlan-native vectorization path. Outer loops are processed
   // here. They may require CFG and instruction level transformations before

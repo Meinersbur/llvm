@@ -1418,7 +1418,7 @@ SDValue SelectionDAG::getConstantPool(const Constant *C, EVT VT,
   assert((TargetFlags == 0 || isTarget) &&
          "Cannot set target flags on target-independent globals");
   if (Alignment == 0)
-    Alignment = MF->getFunction().optForSize()
+    Alignment = MF->getFunction().hasOptSize()
                     ? getDataLayout().getABITypeAlignment(C->getType())
                     : getDataLayout().getPrefTypeAlignment(C->getType());
   unsigned Opc = isTarget ? ISD::TargetConstantPool : ISD::ConstantPool;
@@ -2084,14 +2084,19 @@ SDValue SelectionDAG::FoldSetCC(EVT VT, SDValue N1, SDValue N2,
     case ISD::SETUGE: return getBoolConstant(R!=APFloat::cmpLessThan, dl, VT,
                                              OpVT);
     }
-  } else if (N1CFP && OpVT.isSimple()) {
+  } else if (N1CFP && OpVT.isSimple() && !N2.isUndef()) {
     // Ensure that the constant occurs on the RHS.
     ISD::CondCode SwappedCond = ISD::getSetCCSwappedOperands(Cond);
     if (!TLI->isCondCodeLegal(SwappedCond, OpVT.getSimpleVT()))
       return SDValue();
     return getSetCC(dl, VT, N2, N1, SwappedCond);
-  } else if (N2CFP && N2CFP->getValueAPF().isNaN()) {
-    // If an operand is known to be a nan, we can fold it.
+  } else if ((N2CFP && N2CFP->getValueAPF().isNaN()) ||
+             (OpVT.isFloatingPoint() && (N1.isUndef() || N2.isUndef()))) {
+    // If an operand is known to be a nan (or undef that could be a nan), we can
+    // fold it.
+    // Choosing NaN for the undef will always make unordered comparison succeed
+    // and ordered comparison fails.
+    // Matches behavior in llvm::ConstantFoldCompareInstruction.
     switch (ISD::getUnorderedFlavor(Cond)) {
     default:
       llvm_unreachable("Unknown flavor!");
@@ -5657,8 +5662,8 @@ static bool shouldLowerMemFuncForSize(const MachineFunction &MF) {
   // On Darwin, -Os means optimize for size without hurting performance, so
   // only really optimize for size when -Oz (MinSize) is used.
   if (MF.getTarget().getTargetTriple().isOSDarwin())
-    return MF.getFunction().optForMinSize();
-  return MF.getFunction().optForSize();
+    return MF.getFunction().hasMinSize();
+  return MF.getFunction().hasOptSize();
 }
 
 static void chainLoadsAndStoresForMemcpy(SelectionDAG &DAG, const SDLoc &dl,

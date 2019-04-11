@@ -2609,6 +2609,20 @@ LLVMBasicBlockRef LLVMCreateBasicBlockInContext(LLVMContextRef C,
   return wrap(llvm::BasicBlock::Create(*unwrap(C), Name));
 }
 
+void LLVMInsertExistingBasicBlockAfterInsertBlock(LLVMBuilderRef Builder,
+                                                  LLVMBasicBlockRef BB) {
+  BasicBlock *ToInsert = unwrap(BB);
+  BasicBlock *CurBB = unwrap(Builder)->GetInsertBlock();
+  assert(CurBB && "current insertion point is invalid!");
+  CurBB->getParent()->getBasicBlockList().insertAfter(CurBB->getIterator(),
+                                                      ToInsert);
+}
+
+void LLVMAppendExistingBasicBlock(LLVMValueRef Fn,
+                                  LLVMBasicBlockRef BB) {
+  unwrap<Function>(Fn)->getBasicBlockList().push_back(unwrap(BB));
+}
+
 LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef C,
                                                 LLVMValueRef FnRef,
                                                 const char *Name) {
@@ -2992,6 +3006,17 @@ void LLVMDisposeBuilder(LLVMBuilderRef Builder) {
 
 /*--.. Metadata builders ...................................................--*/
 
+LLVMMetadataRef LLVMGetCurrentDebugLocation2(LLVMBuilderRef Builder) {
+  return wrap(unwrap(Builder)->getCurrentDebugLocation().getAsMDNode());
+}
+
+void LLVMSetCurrentDebugLocation2(LLVMBuilderRef Builder, LLVMMetadataRef Loc) {
+  if (Loc)
+    unwrap(Builder)->SetCurrentDebugLocation(DebugLoc(unwrap<MDNode>(Loc)));
+  else
+    unwrap(Builder)->SetCurrentDebugLocation(DebugLoc());
+}
+
 void LLVMSetCurrentDebugLocation(LLVMBuilderRef Builder, LLVMValueRef L) {
   MDNode *Loc =
       L ? cast<MDNode>(unwrap<MetadataAsValue>(L)->getMetadata()) : nullptr;
@@ -3007,7 +3032,6 @@ LLVMValueRef LLVMGetCurrentDebugLocation(LLVMBuilderRef Builder) {
 void LLVMSetInstDebugLocation(LLVMBuilderRef Builder, LLVMValueRef Inst) {
   unwrap(Builder)->SetInstDebugLocation(unwrap<Instruction>(Inst));
 }
-
 
 /*--.. Instruction builders ................................................--*/
 

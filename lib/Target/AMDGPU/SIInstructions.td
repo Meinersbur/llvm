@@ -189,6 +189,7 @@ class WrapTerminatorInst<SOP_Pseudo base_inst> : SPseudoInstSI<
 }
 
 def S_MOV_B64_term : WrapTerminatorInst<S_MOV_B64>;
+def S_OR_B64_term : WrapTerminatorInst<S_OR_B64>;
 def S_XOR_B64_term : WrapTerminatorInst<S_XOR_B64>;
 def S_ANDN2_B64_term : WrapTerminatorInst<S_ANDN2_B64>;
 
@@ -1613,7 +1614,7 @@ def : GCNPat <
 // Fract Patterns
 //===----------------------------------------------------------------------===//
 
-let SubtargetPredicate = isSI in {
+let SubtargetPredicate = isGFX6 in {
 
 // V_FRACT is buggy on SI, so the F32 version is never used and (x-floor(x)) is
 // used instead. However, SI doesn't have V_FLOOR_F64, so the most efficient
@@ -1640,7 +1641,7 @@ def : GCNPat <
       DSTCLAMP.NONE, DSTOMOD.NONE)
 >;
 
-} // End SubtargetPredicates = isSI
+} // End SubtargetPredicates = isGFX6
 
 //============================================================================//
 // Miscellaneous Optimization Patterns
@@ -1724,8 +1725,8 @@ multiclass Int16Med3Pat<Instruction med3Inst,
 
 def : FPMed3Pat<f32, V_MED3_F32>;
 
-let OtherPredicates = [isGFX9] in {
+let OtherPredicates = [isGFX9Plus] in {
 def : FP16Med3Pat<f16, V_MED3_F16>;
 defm : Int16Med3Pat<V_MED3_I16, smin, smax, smax_oneuse, smin_oneuse>;
 defm : Int16Med3Pat<V_MED3_U16, umin, umax, umax_oneuse, umin_oneuse>;
-} // End Predicates = [isGFX9]
+} // End Predicates = [isGFX9Plus]

@@ -407,10 +407,10 @@ def AArch64umaxv    : SDNode<"AArch64ISD::UMAXV", SDT_AArch64UnaryVec>;
 // the Function object through the <Target>Subtarget and objections were raised
 // to that (see post-commit review comments for r301750).
 let RecomputePerFunction = 1 in {
-  def ForCodeSize   : Predicate<"MF->getFunction().optForSize()">;
-  def NotForCodeSize   : Predicate<"!MF->getFunction().optForSize()">;
+  def ForCodeSize   : Predicate<"MF->getFunction().hasOptSize()">;
+  def NotForCodeSize   : Predicate<"!MF->getFunction().hasOptSize()">;
   // Avoid generating STRQro if it is slow, unless we're optimizing for code size.
-  def UseSTRQro : Predicate<"!Subtarget->isSTRQroSlow() || MF->getFunction().optForSize()">;
+  def UseSTRQro : Predicate<"!Subtarget->isSTRQroSlow() || MF->getFunction().hasOptSize()">;
 
   def UseBTI : Predicate<[{ MF->getFunction().hasFnAttribute("branch-target-enforcement") }]>;
   def NotUseBTI : Predicate<[{ !MF->getFunction().hasFnAttribute("branch-target-enforcement") }]>;
@@ -5327,6 +5327,8 @@ def : Pat<(f16 (int_aarch64_neon_vcvtfxs2fp (i32 (sext_inreg FPR32:$Rn, i16)), v
           (SCVTFh (EXTRACT_SUBREG FPR32:$Rn, hsub), vecshiftR16:$imm)>;
 def : Pat<(f16 (int_aarch64_neon_vcvtfxs2fp (i32 FPR32:$Rn), vecshiftR16:$imm)),
           (SCVTFh (EXTRACT_SUBREG FPR32:$Rn, hsub), vecshiftR16:$imm)>;
+def : Pat<(f16 (int_aarch64_neon_vcvtfxs2fp (i64 FPR64:$Rn), vecshiftR16:$imm)),
+          (SCVTFh (EXTRACT_SUBREG FPR64:$Rn, hsub), vecshiftR16:$imm)>;
 def : Pat<(f16 (int_aarch64_neon_vcvtfxu2fp
             (and FPR32:$Rn, (i32 65535)),
             vecshiftR16:$imm)),
@@ -5354,6 +5356,16 @@ def : Pat<(i64 (int_aarch64_neon_vcvtfp2fxu (f16 FPR16:$Rn), vecshiftR64:$imm)),
           (i64 (INSERT_SUBREG
             (i64 (IMPLICIT_DEF)),
             (FCVTZUh FPR16:$Rn, vecshiftR64:$imm),
+            hsub))>;
+def : Pat<(i32 (int_aarch64_neon_facge (f16 FPR16:$Rn), (f16 FPR16:$Rm))),
+          (i32 (INSERT_SUBREG
+            (i32 (IMPLICIT_DEF)),
+            (FACGE16 FPR16:$Rn, FPR16:$Rm),
+            hsub))>;
+def : Pat<(i32 (int_aarch64_neon_facgt (f16 FPR16:$Rn), (f16 FPR16:$Rm))),
+          (i32 (INSERT_SUBREG
+            (i32 (IMPLICIT_DEF)),
+            (FACGT16 FPR16:$Rn, FPR16:$Rm),
             hsub))>;
 
 defm SHL      : SIMDScalarLShiftD<   0, 0b01010, "shl", AArch64vshl>;

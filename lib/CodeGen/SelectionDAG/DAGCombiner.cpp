@@ -196,7 +196,7 @@ namespace {
     DAGCombiner(SelectionDAG &D, AliasAnalysis *AA, CodeGenOpt::Level OL)
         : DAG(D), TLI(D.getTargetLoweringInfo()), Level(BeforeLegalizeTypes),
           OptLevel(OL), AA(AA) {
-      ForCodeSize = DAG.getMachineFunction().getFunction().optForSize();
+      ForCodeSize = DAG.getMachineFunction().getFunction().hasOptSize();
 
       MaximumLegalStoreInBits = 0;
       for (MVT VT : MVT::all_valuetypes())
@@ -3036,6 +3036,14 @@ SDValue DAGCombiner::visitSUBO(SDNode *N) {
   if (N0 == N1)
     return CombineTo(N, DAG.getConstant(0, DL, VT),
                      DAG.getConstant(0, DL, CarryVT));
+
+  ConstantSDNode *N1C = getAsNonOpaqueConstant(N1);
+
+  // fold (subox, c) -> (addo x, -c)
+  if (IsSigned && N1C && !N1C->getAPIntValue().isMinSignedValue()) {
+    return DAG.getNode(ISD::SADDO, DL, N->getVTList(), N0,
+                       DAG.getConstant(-N1C->getAPIntValue(), DL, VT));
+  }
 
   // fold (subo x, 0) -> x + no borrow
   if (isNullOrNullSplat(N1))
@@ -12188,7 +12196,7 @@ SDValue DAGCombiner::visitFPOW(SDNode *N) {
 
     // Assume that libcalls are the smallest code.
     // TODO: This restriction should probably be lifted for vectors.
-    if (DAG.getMachineFunction().getFunction().optForSize())
+    if (DAG.getMachineFunction().getFunction().hasOptSize())
       return SDValue();
 
     // pow(X, 0.25) --> sqrt(sqrt(X))
@@ -18078,11 +18086,28 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   // If it is a splat, check if the argument vector is another splat or a
   // build_vector.
   if (SVN->isSplat() && SVN->getSplatIndex() < (int)NumElts) {
-    SDNode *V = N0.getNode();
+    int SplatIndex = SVN->getSplatIndex();
+    if (TLI.isExtractVecEltCheap(VT, SplatIndex) &&
+        ISD::isBinaryOp(N0.getNode())) {
+      // splat (vector_bo L, R), Index -->
+      // splat (scalar_bo (extelt L, Index), (extelt R, Index))
+      SDValue L = N0.getOperand(0), R = N0.getOperand(1);
+      SDLoc DL(N);
+      EVT EltVT = VT.getScalarType();
+      SDValue Index = DAG.getIntPtrConstant(SplatIndex, DL);
+      SDValue ExtL = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, EltVT, L, Index);
+      SDValue ExtR = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, EltVT, R, Index);
+      SDValue NewBO = DAG.getNode(N0.getOpcode(), DL, EltVT, ExtL, ExtR,
+                                  N0.getNode()->getFlags());
+      SDValue Insert = DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, VT, NewBO);
+      SmallVector<int, 16> ZeroMask(VT.getVectorNumElements(), 0);
+      return DAG.getVectorShuffle(VT, DL, Insert, DAG.getUNDEF(VT), ZeroMask);
+    }
 
     // If this is a bit convert that changes the element type of the vector but
     // not the number of vector elements, look through it.  Be careful not to
     // look though conversions that change things like v4f32 to v2f64.
+    SDNode *V = N0.getNode();
     if (V->getOpcode() == ISD::BITCAST) {
       SDValue ConvInput = V->getOperand(0);
       if (ConvInput.getValueType().isVector() &&
@@ -18115,7 +18140,7 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
         return N0;
 
       // Canonicalize any other splat as a build_vector.
-      const SDValue &Splatted = V->getOperand(SVN->getSplatIndex());
+      SDValue Splatted = V->getOperand(SplatIndex);
       SmallVector<SDValue, 8> Ops(NumElts, Splatted);
       SDValue NewBV = DAG.getBuildVector(V->getValueType(0), SDLoc(N), Ops);
 
@@ -18650,6 +18675,61 @@ SDValue DAGCombiner::XformToShuffleWithZero(SDNode *N) {
   return SDValue();
 }
 
+/// If a vector binop is performed on build vector operands that only have one
+/// non-undef element, it may be profitable to extract, scalarize, and insert.
+static SDValue scalarizeBinOpOfBuildVectors(SDNode *N, SelectionDAG &DAG) {
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  if (N0.getOpcode() != ISD::BUILD_VECTOR || N0.getOpcode() != N1.getOpcode())
+    return SDValue();
+
+  // Return the index of exactly one scalar element in an otherwise undefined
+  // build vector.
+  auto getScalarIndex = [](SDValue V) {
+    int NotUndefIndex = -1;
+    for (unsigned i = 0, e = V.getNumOperands(); i != e; ++i) {
+      // Ignore undef elements.
+      if (V.getOperand(i).isUndef())
+        continue;
+      // There can be only one.
+      if (NotUndefIndex >= 0)
+        return -1;
+      // This might be the only non-undef operand.
+      NotUndefIndex = i;
+    }
+    return NotUndefIndex;
+  };
+  int N0Index = getScalarIndex(N0);
+  if (N0Index == -1)
+    return SDValue();
+  int N1Index = getScalarIndex(N1);
+  if (N1Index == -1)
+    return SDValue();
+
+  SDValue X = N0.getOperand(N0Index);
+  SDValue Y = N1.getOperand(N1Index);
+  EVT ScalarVT = X.getValueType();
+  if (ScalarVT != Y.getValueType())
+    return SDValue();
+
+  // TODO: Remove/replace the extract cost check? If the elements are available
+  //       as scalars, then there may be no extract cost. Should we ask if
+  //       inserting a scalar back into a vector is cheap instead?
+  EVT VT = N->getValueType(0);
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  if (N0Index != N1Index || !TLI.isExtractVecEltCheap(VT, N0Index) ||
+      !TLI.isOperationLegalOrCustom(N->getOpcode(), ScalarVT))
+    return SDValue();
+
+  // bo (build_vec ...undef, x, undef...), (build_vec ...undef, y, undef...) -->
+  // build_vec ...undef, (bo x, y), undef...
+  SDValue ScalarBO = DAG.getNode(N->getOpcode(), SDLoc(N), ScalarVT, X, Y,
+                                 N->getFlags());
+  SmallVector<SDValue, 8> Ops(N0.getNumOperands(), DAG.getUNDEF(ScalarVT));
+  Ops[N0Index] = ScalarBO;
+  return DAG.getBuildVector(VT, SDLoc(N), Ops);
+}
+
 /// Visit a binary vector operation, like ADD.
 SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
   assert(N->getValueType(0).isVector() &&
@@ -18711,6 +18791,9 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
       return DAG.getNode(ISD::INSERT_SUBVECTOR, DL, VT, VecC, NarrowBO, Z);
     }
   }
+
+  if (SDValue V = scalarizeBinOpOfBuildVectors(N, DAG))
+    return V;
 
   return SDValue();
 }
@@ -19213,7 +19296,7 @@ SDValue DAGCombiner::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
 SDValue DAGCombiner::BuildSDIV(SDNode *N) {
   // when optimising for minimum size, we don't want to expand a div to a mul
   // and a shift.
-  if (DAG.getMachineFunction().getFunction().optForMinSize())
+  if (DAG.getMachineFunction().getFunction().hasMinSize())
     return SDValue();
 
   SmallVector<SDNode *, 8> Built;
@@ -19254,7 +19337,7 @@ SDValue DAGCombiner::BuildSDIVPow2(SDNode *N) {
 SDValue DAGCombiner::BuildUDIV(SDNode *N) {
   // when optimising for minimum size, we don't want to expand a div to a mul
   // and a shift.
-  if (DAG.getMachineFunction().getFunction().optForMinSize())
+  if (DAG.getMachineFunction().getFunction().hasMinSize())
     return SDValue();
 
   SmallVector<SDNode *, 8> Built;
