@@ -35,6 +35,7 @@ namespace llvm {
   class CodegenContext {
   public:
     DenseMap<Value*,Value*> ActiveRegs;
+	DenseMap<CtrlAtom* ,Value*> AtomVals;
 
     SmallVector<std::pair<const GreenExpr* ,BasicBlock*> , 8>  PrecomputedPredicates;
 	DenseMap<CtrlAtom*,BasicBlock*> PrecomputedAtoms;
@@ -75,7 +76,7 @@ namespace llvm {
 	};
 
 
-
+	// TODO: Integrate into GreenLoop: Everything is a loop (possible with just one iteration) 
 	class GreenSequence final : public GreenNode {
 	private:
 		// TODO: Do the same allocation trick.; Since GreenSequence is always part of either a GreenRoot or GreenLoop, can also allocate in their memory
@@ -104,7 +105,7 @@ namespace llvm {
 
 
 
-
+	
 	class GreenRoot : public GreenNode {
 	private :
 		const GreenSequence *Sequence;
@@ -165,6 +166,9 @@ namespace llvm {
     }
 
     auto atoms() const { return make_range(Atoms.begin(), Atoms.end()); }
+	CtrlAtom* getAtom(int Idx) const { return Atoms[Idx]; }
+
+	int getNumAtoms() const { return Atoms.size(); }
   };
 
 
@@ -174,12 +178,16 @@ namespace llvm {
    const GreenExpr *MustExecutePredicate;
    const GreenExpr *MayExecutePredicate;
 
-    AtomDisjointSet AtomSet;
+   protected:
+    AtomDisjointSet *AtomSet;
 
   protected:
-    GreenBlock(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, int NumAtoms) :
-      GreenNode(), MustExecutePredicate(MustExecutePredicate), MayExecutePredicate(MayExecutePredicate), AtomSet(NumAtoms) {
+    GreenBlock(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, AtomDisjointSet*Atoms) :
+      GreenNode(), MustExecutePredicate(MustExecutePredicate), MayExecutePredicate(MayExecutePredicate), AtomSet(Atoms) {
     }
+	GreenBlock(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, int NumAtoms) : 
+		GreenBlock(MustExecutePredicate, MayExecutePredicate, new AtomDisjointSet(NumAtoms) ){}
+
 
     void printLineCond(raw_ostream &OS) const;
 	public:
@@ -195,11 +203,11 @@ namespace llvm {
     const GreenExpr * getMustExecutePredicate() const {return MustExecutePredicate;}
     const GreenExpr * getMayExecutePredicate() const {return MayExecutePredicate;}
 
-    auto atoms() const { return AtomSet.atoms(); }
+    auto atoms() const { return AtomSet->atoms(); }
     
 		//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
 	
-     void codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx)const;
+		void codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx)const;
 		virtual void codegenBody(IRBuilder<> &Builder, CodegenContext &CodegenCtx)const=0;
 
     //void codegenPredicate(IRBuilder<> &Builder, CodegenContext &ActiveRegs, const std::function <void(IRBuilder<> &, CodegenContext &)> &CodegenBody) const;
@@ -220,8 +228,8 @@ namespace llvm {
 		StructType *getIdentTy(Module *M) const;
 		Function * codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegs)const 			;
 	public:
-		GreenLoop (const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop): GreenBlock(MustExecutePredicate, MayExecutePredicate,1), Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
-		GreenLoop *clone() const { auto That = create(getMustExecutePredicate(), getMayExecutePredicate(),Iterations,IndVar,Sequence,nullptr ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
+		GreenLoop (const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations, Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop, AtomDisjointSet*AtomSet): GreenBlock(MustExecutePredicate, MayExecutePredicate,AtomSet), Iterations(Iterations), IndVar(IndVar), Sequence(Sequence), LoopInfoLoop(LoopInfoLoop) {}
+		GreenLoop *clone() const { auto That = create(getMustExecutePredicate(), getMayExecutePredicate(),Iterations,IndVar,Sequence,nullptr , AtomSet ); That->ExecuteInParallel= this->ExecuteInParallel; return That; }
 		virtual ~GreenLoop() {};
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Loop; }
@@ -239,7 +247,7 @@ namespace llvm {
 		bool isExecutedInParallel() const {return ExecuteInParallel;}
 		void setExecuteInParallel(bool ExecuteInParallel = true) { this->ExecuteInParallel= ExecuteInParallel;  }
 
-		static 	GreenLoop *create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations,Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop) {  return new GreenLoop(MustExecutePredicate, MayExecutePredicate,Iterations,IndVar, Sequence, LoopInfoLoop); }
+		static 	GreenLoop *create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,GreenExpr *Iterations,Instruction *IndVar,GreenSequence *Sequence,Loop* LoopInfoLoop, AtomDisjointSet *AtomSet) {  return new GreenLoop(MustExecutePredicate, MayExecutePredicate,Iterations,IndVar, Sequence, LoopInfoLoop,AtomSet); }
 	
 		void codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override;
 	};
@@ -254,7 +262,7 @@ namespace llvm {
 
 
 	public:
-		GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts);
+		GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts, AtomDisjointSet *AtomsSet);
 
 		virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Stmt; }
 		static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Stmt; 	}
@@ -264,7 +272,7 @@ namespace llvm {
 
 		virtual ArrayRef <const GreenNode * > getChildren() const override;
 
-		static GreenStmt*create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts) { return new GreenStmt(MustExecutePredicate, MayExecutePredicate,Insts); };
+		static GreenStmt*create(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts, AtomDisjointSet *AtomSet) { return new GreenStmt(MustExecutePredicate, MayExecutePredicate,Insts, AtomSet); };
 
 		void codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs) const override;
 	};
@@ -518,8 +526,10 @@ namespace llvm {
   // Join with GreenReg?
   class GreenCtrl final : public GreenExpr {
   private:
+	  CtrlAtom *Atom;
+
   public:
-    GreenCtrl()  {}
+    GreenCtrl( CtrlAtom *Atom) : Atom(Atom) {}
 
     virtual LoopHierarchyKind getKind() const override {return LoopHierarchyKind::Ctrl; }
     static bool classof(const GreenNode *Node) {	return Node->getKind() == LoopHierarchyKind::Ctrl; 	}
@@ -530,11 +540,9 @@ namespace llvm {
     }
 
     virtual ArrayRef <const GreenNode * > getChildren() const override { return {}; };
-    static  GreenCtrl *create() { return new GreenCtrl(); }
+    static  GreenCtrl *create( CtrlAtom *Atom) { return new GreenCtrl(Atom); }
 
-    Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const override{
-      llvm_unreachable("not yet implemented");
-    }
+	Value* codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs)const override;
   };
 
 

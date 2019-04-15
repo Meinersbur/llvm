@@ -23,8 +23,9 @@ namespace {
 		Loop *L ;
     StagedSequence *Body;
 		Value *Iterations;
+		AtomDisjointSet *Atoms;
 
-		explicit StagedLoop(Loop *LoopInfoLoop, Value *Iterations)  ;
+		explicit StagedLoop(Loop *LoopInfoLoop, Value *Iterations, AtomDisjointSet *Atoms)  ;
 	};
 
 	
@@ -32,13 +33,14 @@ namespace {
 	public:
 		SmallVector<llvm::PointerUnion< GreenStmt*, StagedLoop*> ,16> Stmts;
     SmallVector<const GreenExpr*,16> Predicates;
+	SmallVector<AtomDisjointSet*,16> Atoms;
 
-		void appendStmt(GreenStmt *Stmt, const GreenExpr *Predicate) { Stmts.push_back(Stmt);Predicates.push_back(Predicate); }
-		void appendLoop(StagedLoop *Loop, const GreenExpr *Predicate) { Stmts.push_back(Loop);Predicates.push_back(Predicate); }
+		void appendStmt(GreenStmt *Stmt, const GreenExpr *Predicate, AtomDisjointSet *AtomSet) { Stmts.push_back(Stmt);Predicates.push_back(Predicate); Atoms.push_back(AtomSet); }
+		void appendLoop(StagedLoop *Loop, const GreenExpr *Predicate, AtomDisjointSet *AtomSet) { Stmts.push_back(Loop);Predicates.push_back(Predicate);   Atoms.push_back(AtomSet); } 
 	};
 
 
-	StagedLoop::StagedLoop(Loop *LoopInfoLoop, Value *Iterations): L(LoopInfoLoop), Body(new StagedSequence()) , Iterations(Iterations){	}
+	StagedLoop::StagedLoop(Loop *LoopInfoLoop, Value *Iterations, AtomDisjointSet *Atoms): L(LoopInfoLoop), Body(new StagedSequence()) , Iterations(Iterations),  Atoms(Atoms)  {	}
 
 
 
@@ -68,6 +70,19 @@ namespace {
   const  GreenExpr* getGreenBool(bool Val) {
       return Val ? GreenTrue : GreenFalse;
     }
+
+
+
+  DenseMap <CtrlAtom *, GreenCtrl*> CtrlExprCache;
+  const GreenCtrl* getGreenCtrl(CtrlAtom *Atom ) {
+		auto Result = CtrlExprCache[Atom];
+		if (!Result) {
+			Result = GreenCtrl::create(Atom);
+		}
+		return Result;
+	}
+
+
 
     const  GreenExpr *getGreenLogicOr(const GreenExpr *LHS,const GreenExpr *RHS) {
       SmallVector<const GreenExpr *, 4> Operands;
@@ -159,7 +174,7 @@ namespace {
 		DenseMap <Instruction *, GreenInst*> InstCache; // FIXME: Instructions may not be re-usable, so do not cache.
 		GreenInst *getGreenInst(Instruction *I) ;
 
-		GreenStmt *createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts);
+		GreenStmt *createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts,AtomDisjointSet *Atoms);
 
 
 
@@ -320,15 +335,15 @@ GreenInst *LoopOptimizerImpl::getGreenInst(Instruction *I) {
 }
 
 
-GreenStmt *LoopOptimizerImpl:: createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts) {
-	return GreenStmt::create(MustExecutePredicate,MayExecutePredicate,Insts);
+GreenStmt *LoopOptimizerImpl:: createGreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate,ArrayRef<GreenInst*> Insts, AtomDisjointSet *Atoms) {
+	return GreenStmt::create(MustExecutePredicate,MayExecutePredicate,Insts,Atoms);
 }
 
 
 GreenLoop* LoopOptimizerImpl:: createGreenLoop(const GreenExpr* Predicate, StagedLoop *Staged ) {
 	auto Seq = createGreenSequence(Staged->Body);
 auto Iters=	getGreenExpr(Staged->Iterations);
-	return	GreenLoop::create(Predicate,Predicate,Iters, Staged->L->getCanonicalInductionVariable(), Seq, Staged->L);
+	return	GreenLoop::create(Predicate,Predicate,Iters, Staged->L->getCanonicalInductionVariable(), Seq, Staged->L, Staged->Atoms);
 }
 
 GreenSequence* LoopOptimizerImpl:: createGreenSequence(StagedSequence *Sequence) {
@@ -362,8 +377,44 @@ GreenRoot *LoopOptimizerImpl:: createGreenRoot(StagedSequence *TopLoop) {
 
 
 GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
-  DenseMap<Loop *, StagedLoop *> LoopMap;
-  LoopMap[nullptr] = new StagedLoop(nullptr, nullptr);
+
+	DenseMap<BasicBlock*, AtomDisjointSet* > SuccessorAtoms;
+	for (auto &BB : *Func) {
+		auto Term = BB.getTerminator();
+		if (auto Br = dyn_cast<BranchInst>(Term)) {
+			AtomDisjointSet *AtomSet;
+			if (Br->isUnconditional()) {
+				AtomSet =  new AtomDisjointSet(1);
+			} else {
+				AtomSet =  new AtomDisjointSet(2);
+			}
+			SuccessorAtoms[&BB] = AtomSet;
+			continue;
+		} else if (isa<ReturnInst>(Term)) {
+			// No successors
+			continue;
+		} else if (isa<UnreachableInst>(Term)) {
+			// No successors
+			continue;
+		}
+		llvm_unreachable("unimplemented terminator");
+	}
+
+
+	DenseMap<Loop*, AtomDisjointSet* > LoopExitAtoms;
+	for (auto L : LI->getLoopsInPreorder()) {
+		SmallVector<BasicBlock*,4> ExitBlocks;
+		L->getExitBlocks(ExitBlocks);
+		auto AtomSet = new AtomDisjointSet(ExitBlocks.size());
+		LoopExitAtoms[L] = AtomSet;
+	}
+
+
+
+	
+	
+	DenseMap<Loop *, StagedLoop *> LoopMap;
+  LoopMap[nullptr] = new StagedLoop(nullptr, nullptr, LoopExitAtoms.lookup(nullptr) );
   StagedSequence *RootBlock = LoopMap[nullptr]->Body;
   for (auto L : LI->getLoopsInPreorder()) {
     // TODO: Use own analysis on loop tree instead of SCEV.
@@ -382,49 +433,11 @@ GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
     // FIXME: This assume the form without loop-rotation
     //    for (int = 0; i < 0; i+=1)
     assert(IterCountV);
-    LoopMap[L] = new StagedLoop(L, IterCountV);
+    LoopMap[L] = new StagedLoop(L, IterCountV, LoopExitAtoms.lookup(L) );
   }
 
   DenseMap<BasicBlock *, const GreenExpr *> BBPredicate;
   BBPredicate[&Func->getEntryBlock()] = getGreenBool(true); // Assume no branch to entry
-
-#if 0
-  DenseMap<BasicBlock*, CtrlAtom* > Atoms;
-  for (auto &BB : *Func) {
-//if (&BB == &Func->getEntryBlock()) {
-//		  Atoms[&BB] = nullptr;
-//	  continue;
-//}
-	  Atoms[&BB] = new CtrlAtom(nullptr);
-  }
-#endif
-
-
-
-  DenseMap<BasicBlock*, AtomDisjointSet* > SuccessorAtoms;
-  for (auto &BB : *Func) {
-	  auto Term = BB.getTerminator();
-	  if (auto Br = dyn_cast<BranchInst>(Term)) {
-		  AtomDisjointSet *AtomSet;
-		  if (Br->isUnconditional()) {
-			  AtomSet =  new AtomDisjointSet(1);
-		  } else {
-			  AtomSet =  new AtomDisjointSet(2);
-		  }
-		  SuccessorAtoms[&BB] = AtomSet;
-		  continue;
-	  }
-	  llvm_unreachable("unimplemented terminator");
-  }
-
-
-  DenseMap<Loop*, AtomDisjointSet* > LoopExitAtoms;
-  for (auto L : LI->getLoopsInPreorder()) {
-		SmallVector<BasicBlock*,4> ExitBlocks;
-	  L->getExitBlocks(ExitBlocks);
-	  auto AtomSet = new AtomDisjointSet(ExitBlocks.size());
-	  LoopExitAtoms[L] = AtomSet;
-  }
 
 
 
@@ -439,17 +452,66 @@ GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
     bool isLoopHeader = Loop && Block == Loop->getHeader();
 
     auto &Predicate = BBPredicate[Block];
+	int NPreds = 0;
     if (!Predicate) {
       Predicate = getGreenBool(false);
-      for (auto Pred : predecessors(Block)) {
-        if (isLoopHeader && Loop->contains(Pred)) {
-		  // We assume that loops are the only reason for back-edges => no irreducible loops.
-          continue;
-		}
+	  for (auto Pred : predecessors(Block)) {
+		  if (isLoopHeader && Loop->contains(Pred)) {
+			  // We assume that loops are the only reason for back-edges => no irreducible loops.
+			  continue;
+		  }
 
+		  auto PredLoop = LI->getLoopFor(Pred);
+		  CtrlAtom *PredAtom = nullptr;
+		  if (PredLoop&& PredLoop->isLoopExiting(Block)) {
+			  assert(PredLoop);
+			  // If this is exiting from a loop, take the loop's own predicate to
+			  // ignore the exit-loop condition, i.e. assume that the loop will
+			  // leave eventually.
+			  // FIXME: This assumes we're exiting at most one loop.
+
+			  // Find the number of the exit loop
+			  SmallVector<BasicBlock*, 4> ExitBlocks;
+			  PredLoop->getExitBlocks(ExitBlocks);
+			  int ExitIdx = -1;
+			  for (int i = 0; i < ExitBlocks.size(); i += 1) {
+				  if (ExitBlocks[i] != Pred) {
+					  ExitIdx = i;
+					  break;
+				  }
+			  }
+			  assert(ExitIdx >= 0);
+
+			  auto ExitAtomSet = LoopExitAtoms[PredLoop];
+			  PredAtom = ExitAtomSet->getAtom(ExitIdx);
+	  }	else {
+			auto BlockAtomSet = SuccessorAtoms[Pred];
+
+			if (auto Br = dyn_cast<BranchInst>(Pred->getTerminator())) {
+				int SuccIdx = -1;
+		
+				for (int i = 0; i < Br->getNumSuccessors(); i+=1) {
+					if (Br->getSuccessor(i) ==Block ) {
+						// FIXME: This assumes that there can be only a single edge from predecessor to block (which is problably true because PHINodes cannot differentiate edges)
+					SuccIdx=i;
+					break;
+					}
+				}
+
+				PredAtom = BlockAtomSet->getAtom(SuccIdx);
+			} else 
+				llvm_unreachable("Unhandled terminator");
+		
+			NPreds += 1;
+		  }
+		assert(PredAtom);
+		auto PredCond=  getGreenCtrl(PredAtom);
+		Predicate = getGreenLogicOr(Predicate, PredCond);
+
+#if 0
         auto PredLoop = LI->getLoopFor(Pred);
         const GreenExpr *PredPredicate;
-#if 0
+
         if (!isLoopHeader && (Loop != PredLoop)) {
           // If this is exiting from a loop, take the loop's own predicate to
           // ignore the exit-loop condition, i.e. assume that the loop will
@@ -459,8 +521,9 @@ GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
         } else {
           PredPredicate = BBPredicate.lookup(Pred);
         }
-#endif
+
         assert(PredPredicate);
+
 
         if (Loop && Loop->isLoopExiting(Pred)) {
           // Ignore continue-loop conditions to avoid them to be propagated to
@@ -481,14 +544,16 @@ GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
           continue;
         }
         llvm_unreachable("unimplemented terminator");
+#endif
       }
+
     }
 
     if (isLoopHeader) {
       auto ParentLoop = Loop->getParentLoop();
       auto ParentSLoop = LoopMap.lookup(ParentLoop);
       auto ParentSBody = ParentSLoop->Body;
-      ParentSBody->appendLoop(SLoop, Predicate);
+      ParentSBody->appendLoop(SLoop, Predicate, LoopExitAtoms.lookup(SLoop->L) );
     }
 
     for (auto &I : *Block) {
@@ -497,10 +562,15 @@ GreenRoot *LoopOptimizerImpl::buildOriginalLoopTree() {
       if (!I.mayHaveSideEffects())
         continue;
       auto Inst = getGreenInst(&I);
-      auto Stmt = createGreenStmt(Predicate, Predicate, {Inst});
+      auto Stmt = createGreenStmt(Predicate, Predicate, {Inst}, nullptr);
 
-      SBody->appendStmt(Stmt, Predicate);
+      SBody->appendStmt(Stmt, Predicate,  nullptr);
     }
+
+	auto Term = getGreenInst(Block->getTerminator());
+	auto TermStmt = createGreenStmt(Predicate, Predicate, {Term}, SuccessorAtoms.lookup(Block));
+	SBody->appendStmt(TermStmt, Predicate, SuccessorAtoms.lookup(Block) );
+
   }
 
   OriginalRoot = createGreenRoot(RootBlock);

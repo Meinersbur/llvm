@@ -38,6 +38,7 @@ void GreenBlock::codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const
 
   auto ExitBB = EntryBB;
   SmallVector<BasicBlock*,2> SuccBBs; //atoms
+  
   if (!isa<GreenTrueLiteral>(Cond)) {
     auto BodyBB = BasicBlock::Create(Ctx, "block.then", Func);
     auto ElseBB = BasicBlock::Create(Ctx, "block.else", Func);
@@ -58,9 +59,23 @@ void GreenBlock::codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )const
   codegenBody(Builder, CodegenCtx);
 
 
-  if (!isa<GreenTrueLiteral>(Cond)) {
-    Builder.SetInsertPoint(ExitBB);
+  SmallVector<Value*, 2> AtomVals;
+  if (isa<GreenTrueLiteral>(Cond)) {
+	  auto Atom = Builder.getInt1(true);
+	  AtomVals.push_back(Atom);
+  } else { 
+	  Builder.SetInsertPoint(ExitBB);
+	  auto TrueAtom = Builder.CreatePHI( Builder.getInt1Ty(), 2, "atom" );
+	  TrueAtom->addIncoming(Builder.getInt1(true), SuccBBs[0] );
+	  TrueAtom->addIncoming(Builder.getInt1(false), SuccBBs[1] );
+	  AtomVals.push_back(TrueAtom);
+
+	  auto FalseAtom = Builder.CreateNot(TrueAtom, "not_atom");
+	  AtomVals.push_back(FalseAtom);
   }
+
+  for (int i = 0; i < AtomSet->getNumAtoms(); i += 1)
+	  CodegenCtx.AtomVals[AtomSet->getAtom(i)] = AtomVals[i];
 }
 
 
@@ -96,8 +111,8 @@ void GreenBlock:: codegenPredicate(IRBuilder<> &Builder, CodegenContext &Codegen
  }
 
 
-GreenStmt:: GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts):  
-   GreenBlock(MustExecutePredicate, MayExecutePredicate, isa<GreenTrueLiteral>(MustExecutePredicate) ? 1 :  (MustExecutePredicate == MayExecutePredicate ? 2 : 0) ), // FIXME: If  MustExecute and MayExecute are not the same, the result of this atom depends on speculative execution, hence undefined; split into separate predicate that defines the atom?
+GreenStmt:: GreenStmt(const GreenExpr *MustExecutePredicate,const GreenExpr *MayExecutePredicate, ArrayRef<GreenInst*> Insts, AtomDisjointSet *AtomSet):  
+   GreenBlock(MustExecutePredicate, MayExecutePredicate, AtomSet ), // FIXME: If  MustExecute and MayExecute are not the same, the result of this atom depends on speculative execution, hence undefined; split into separate predicate that defines the atom?
    Insts(Insts) {}
 
 
@@ -272,7 +287,7 @@ Function * GreenLoop::codegenSubfunc(Module *M, SmallVectorImpl<Value*>& UseRegA
 }
 
 
-void GreenLoop:: codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const {
+void GreenLoop:: codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs) const {
 	auto ItersV = Iterations->codegen(Builder, ActiveRegs);
 	Function *F = Builder.GetInsertBlock()->getParent();
 	LLVMContext &Context = F->getContext();
@@ -283,7 +298,7 @@ void GreenLoop:: codegenBody(IRBuilder<> &Builder, CodegenContext &ActiveRegs )c
 	auto Int8PtrTy = Type::getInt8PtrTy(Context);
 	auto LongTy =  Type::getInt64Ty(Context); // Depends on the bitness of the loop counter
 	auto LongPtrTy = LongTy->getPointerTo();
-	auto VoidTy=  Type::getVoidTy(Context);
+	auto VoidTy =  Type::getVoidTy(Context);
 
 	if (ExecuteInParallel) {
 		SmallVector<Value*,8> Params;
@@ -428,6 +443,12 @@ Value* GreenReg:: codegen(IRBuilder<> &Builder, CodegenContext &CodegenCtx )cons
 	return Result;
 }
 
+
+Value* GreenCtrl:: codegen(IRBuilder<> &Builder, CodegenContext &ActiveRegs )const{
+	auto Result = ActiveRegs.AtomVals.lookup(Atom );
+	assert(Result);
+	return Result;
+}
 
 ArrayRef <const GreenNode * > GreenGEP:: getChildren() const { return  ArrayRef<GreenNode*>((GreenNode**)&Operands[0],Operands.size());  }
 
