@@ -17425,28 +17425,27 @@ static SDValue narrowExtractedVectorBinOp(SDNode *Extract, SelectionDAG &DAG) {
       LHS.getOpcode() == ISD::CONCAT_VECTORS && LHS.getNumOperands() == 2;
   bool ConcatR =
       RHS.getOpcode() == ISD::CONCAT_VECTORS && RHS.getNumOperands() == 2;
-  if (!ConcatL && !ConcatR)
-    return SDValue();
+  if (ConcatL || ConcatR) {
+    // If a binop operand was not the result of a concat, we must extract a
+    // half-sized operand for our new narrow binop:
+    // extract (binop (concat X1, X2), (concat Y1, Y2)), N --> binop XN, YN
+    // extract (binop (concat X1, X2), Y), N --> binop XN, (extract Y, IndexC)
+    // extract (binop X, (concat Y1, Y2)), N --> binop (extract X, IndexC), YN
+    SDLoc DL(Extract);
+    SDValue IndexC = DAG.getConstant(ExtBOIdx, DL, ExtBOIdxVT);
+    SDValue X = ConcatL ? DAG.getBitcast(NarrowBVT, LHS.getOperand(ConcatOpNum))
+                        : DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, NarrowBVT,
+                                      BinOp.getOperand(0), IndexC);
 
-  // If one of the binop operands was not the result of a concat, we must
-  // extract a half-sized operand for our new narrow binop.
-  SDLoc DL(Extract);
+    SDValue Y = ConcatR ? DAG.getBitcast(NarrowBVT, RHS.getOperand(ConcatOpNum))
+                        : DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, NarrowBVT,
+                                      BinOp.getOperand(1), IndexC);
 
-  // extract (binop (concat X1, X2), (concat Y1, Y2)), N --> binop XN, YN
-  // extract (binop (concat X1, X2), Y), N --> binop XN, (extract Y, N)
-  // extract (binop X, (concat Y1, Y2)), N --> binop (extract X, N), YN
-  SDValue X = ConcatL ? DAG.getBitcast(NarrowBVT, LHS.getOperand(ConcatOpNum))
-                      : DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, NarrowBVT,
-                                    BinOp.getOperand(0),
-                                    DAG.getConstant(ExtBOIdx, DL, ExtBOIdxVT));
+    SDValue NarrowBinOp = DAG.getNode(BOpcode, DL, NarrowBVT, X, Y);
+    return DAG.getBitcast(VT, NarrowBinOp);
+  }
 
-  SDValue Y = ConcatR ? DAG.getBitcast(NarrowBVT, RHS.getOperand(ConcatOpNum))
-                      : DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, NarrowBVT,
-                                    BinOp.getOperand(1),
-                                    DAG.getConstant(ExtBOIdx, DL, ExtBOIdxVT));
-
-  SDValue NarrowBinOp = DAG.getNode(BOpcode, DL, NarrowBVT, X, Y);
-  return DAG.getBitcast(VT, NarrowBinOp);
+  return SDValue();
 }
 
 /// If we are extracting a subvector from a wide vector load, convert to a
@@ -17597,6 +17596,53 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
     return SDValue(N, 0);
 
   return SDValue();
+}
+
+/// Try to convert a wide shuffle of concatenated vectors into 2 narrow shuffles
+/// followed by concatenation. Narrow vector ops may have better performance
+/// than wide ops, and this can unlock further narrowing of other vector ops.
+/// Targets can invert this transform later if it is not profitable.
+static SDValue foldShuffleOfConcatUndefs(ShuffleVectorSDNode *Shuf,
+                                         SelectionDAG &DAG) {
+  SDValue N0 = Shuf->getOperand(0), N1 = Shuf->getOperand(1);
+  if (N0.getOpcode() != ISD::CONCAT_VECTORS || N0.getNumOperands() != 2 ||
+      N1.getOpcode() != ISD::CONCAT_VECTORS || N1.getNumOperands() != 2 ||
+      !N0.getOperand(1).isUndef() || !N1.getOperand(1).isUndef())
+    return SDValue();
+
+  // Split the wide shuffle mask into halves. Any mask element that is accessing
+  // operand 1 is offset down to account for narrowing of the vectors.
+  ArrayRef<int> Mask = Shuf->getMask();
+  EVT VT = Shuf->getValueType(0);
+  unsigned NumElts = VT.getVectorNumElements();
+  unsigned HalfNumElts = NumElts / 2;
+  SmallVector<int, 16> Mask0(HalfNumElts, -1);
+  SmallVector<int, 16> Mask1(HalfNumElts, -1);
+  for (unsigned i = 0; i != NumElts; ++i) {
+    if (Mask[i] == -1)
+      continue;
+    int M = Mask[i] < (int)NumElts ? Mask[i] : Mask[i] - (int)HalfNumElts;
+    if (i < HalfNumElts)
+      Mask0[i] = M;
+    else
+      Mask1[i - HalfNumElts] = M;
+  }
+
+  // Ask the target if this is a valid transform.
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  EVT HalfVT = EVT::getVectorVT(*DAG.getContext(), VT.getScalarType(),
+                                HalfNumElts);
+  if (!TLI.isShuffleMaskLegal(Mask0, HalfVT) ||
+      !TLI.isShuffleMaskLegal(Mask1, HalfVT))
+    return SDValue();
+
+  // shuffle (concat X, undef), (concat Y, undef), Mask -->
+  // concat (shuffle X, Y, Mask0), (shuffle X, Y, Mask1)
+  SDValue X = N0.getOperand(0), Y = N1.getOperand(0);
+  SDLoc DL(Shuf);
+  SDValue Shuf0 = DAG.getVectorShuffle(HalfVT, DL, X, Y, Mask0);
+  SDValue Shuf1 = DAG.getVectorShuffle(HalfVT, DL, X, Y, Mask1);
+  return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, Shuf0, Shuf1);
 }
 
 // Tries to turn a shuffle of two CONCAT_VECTORS into a single concat,
@@ -18379,6 +18425,9 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
     //   shuffle(shuffle(A, B, M0), C, M1) -> shuffle(B, C, M2)
     return DAG.getVectorShuffle(VT, SDLoc(N), SV0, SV1, Mask);
   }
+
+  if (SDValue V = foldShuffleOfConcatUndefs(SVN, DAG))
+    return V;
 
   return SDValue();
 }
