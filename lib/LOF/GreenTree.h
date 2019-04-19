@@ -165,7 +165,7 @@ namespace llvm {
           Atom = new CtrlAtom(this);
     }
 
-    auto atoms() const { return make_range(Atoms.begin(), Atoms.end()); }
+    auto atoms() const -> llvm::iterator_range<decltype(Atoms.begin())> { return make_range(Atoms.begin(), Atoms.end()); }
 	CtrlAtom* getAtom(int Idx) const { return Atoms[Idx]; }
 
 	int getNumAtoms() const { return Atoms.size(); }
@@ -203,7 +203,7 @@ namespace llvm {
     const GreenExpr * getMustExecutePredicate() const {return MustExecutePredicate;}
     const GreenExpr * getMayExecutePredicate() const {return MayExecutePredicate;}
 
-    auto atoms() const { return AtomSet->atoms(); }
+    auto atoms() const -> decltype(AtomSet->atoms()) { return AtomSet->atoms(); }
     
 		//	virtual ArrayRef <const GreenNode * const> getChildren() const override { return Stmts;}// ArrayRef<const GreenNode * const>( Stmts.data(), Stmts.size()); };
 	

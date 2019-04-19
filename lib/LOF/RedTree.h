@@ -92,16 +92,16 @@ namespace llvm {
     ); 
   }
 
-  auto children_unexpanded() const {
+  auto children_unexpanded() const -> llvm::iterator_range<decltype(Children.begin())>  {
     return make_range( Children.begin(), Children.end() );
   }
 
   // Does not implicitly expand red nodes
   // Possible alternative: PointerUnion<RedNode*,GreenNode*> which is a GreenNode if the RedNode is not expanded yet.
-  auto children_redgreen() const {
-    auto RedRange = make_range( Children.begin(), Children.end() );
-    auto GreenRange = getGreen()->children();
-    return zip(GreenRange, RedRange);
+  auto children_redgreen() const -> decltype(zip( getGreen()->children(), make_range( Children.begin(), Children.end() )  )) {
+	//  auto GreenRange = getGreen()->children();
+	  auto RedRange = make_range( Children.begin(), Children.end() );
+    return zip(getGreen()->children(), make_range( Children.begin(), Children.end() ));
   }
 
 
@@ -350,7 +350,8 @@ namespace llvm {
       return Def;
     }
 
- static   RedReg *RedReg::Create(RedNode*Parent,const  GreenReg *Green) {
+
+ static RedReg *Create(RedNode*Parent,const  GreenReg *Green) {
       auto Result = new RedReg(Parent, Green);
       return Result;
     }

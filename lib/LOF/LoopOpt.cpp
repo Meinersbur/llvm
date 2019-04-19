@@ -655,7 +655,7 @@ bool LoopOptimizerImpl::optimize() {
 
 
 template <> 
-struct GraphTraits<const GreenNode *> {
+struct llvm::GraphTraits<const llvm::GreenNode *> {
 	using GraphRef = const GreenNode *;
 	using NodeRef = const GreenNode *;
 
@@ -676,7 +676,7 @@ struct GraphTraits<const GreenNode *> {
 
 
 template <> 
-struct DOTGraphTraits<const GreenNode *> : public DefaultDOTGraphTraits {
+struct llvm:: DOTGraphTraits<const llvm:: GreenNode *> : public DefaultDOTGraphTraits {
 	using GraphRef = const GreenNode *;
 	using NodeRef = const GreenNode *;
 
