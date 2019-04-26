@@ -794,6 +794,8 @@ ConstantRange ConstantRange::binaryOp(Instruction::BinaryOps BinOp,
     return multiply(Other);
   case Instruction::UDiv:
     return udiv(Other);
+  case Instruction::URem:
+    return urem(Other);
   case Instruction::Shl:
     return shl(Other);
   case Instruction::LShr:
@@ -972,8 +974,6 @@ ConstantRange
 ConstantRange::udiv(const ConstantRange &RHS) const {
   if (isEmptySet() || RHS.isEmptySet() || RHS.getUnsignedMax().isNullValue())
     return getEmpty();
-  if (RHS.isFullSet())
-    return getFull();
 
   APInt Lower = getUnsignedMin().udiv(RHS.getUnsignedMax());
 
@@ -989,6 +989,19 @@ ConstantRange::udiv(const ConstantRange &RHS) const {
 
   APInt Upper = getUnsignedMax().udiv(RHS_umin) + 1;
   return getNonEmpty(std::move(Lower), std::move(Upper));
+}
+
+ConstantRange ConstantRange::urem(const ConstantRange &RHS) const {
+  if (isEmptySet() || RHS.isEmptySet() || RHS.getUnsignedMax().isNullValue())
+    return getEmpty();
+
+  // L % R for L < R is L.
+  if (getUnsignedMax().ult(RHS.getUnsignedMin()))
+    return *this;
+
+  // L % R is <= L and < R.
+  APInt Upper = APIntOps::umin(getUnsignedMax(), RHS.getUnsignedMax() - 1) + 1;
+  return getNonEmpty(APInt::getNullValue(getBitWidth()), std::move(Upper));
 }
 
 ConstantRange
@@ -1141,6 +1154,37 @@ ConstantRange ConstantRange::inverse() const {
   if (isEmptySet())
     return getFull();
   return ConstantRange(Upper, Lower);
+}
+
+ConstantRange ConstantRange::abs() const {
+  if (isEmptySet())
+    return getEmpty();
+
+  if (isSignWrappedSet()) {
+    APInt Lo;
+    // Check whether the range crosses zero.
+    if (Upper.isStrictlyPositive() || !Lower.isStrictlyPositive())
+      Lo = APInt::getNullValue(getBitWidth());
+    else
+      Lo = APIntOps::umin(Lower, -Upper + 1);
+
+    // SignedMin is included in the result range.
+    return ConstantRange(Lo, APInt::getSignedMinValue(getBitWidth()) + 1);
+  }
+
+  APInt SMin = getSignedMin(), SMax = getSignedMax();
+
+  // All non-negative.
+  if (SMin.isNonNegative())
+    return *this;
+
+  // All negative.
+  if (SMax.isNegative())
+    return ConstantRange(-SMax, -SMin + 1);
+
+  // Range crosses zero.
+  return ConstantRange(APInt::getNullValue(getBitWidth()),
+                       APIntOps::umax(-SMin, SMax) + 1);
 }
 
 ConstantRange::OverflowResult ConstantRange::unsignedAddMayOverflow(

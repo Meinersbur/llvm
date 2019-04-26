@@ -6882,6 +6882,8 @@ SDValue DAGCombiner::visitSHL(SDNode *N) {
   //                               (and (srl x, (sub c1, c2), MASK)
   // Only fold this if the inner shift has no other uses -- if it does, folding
   // this will increase the total number of instructions.
+  // TODO - drop hasOneUse requirement if c1 == c2?
+  // TODO - support non-uniform vector shift amounts.
   if (N1C && N0.getOpcode() == ISD::SRL && N0.hasOneUse() &&
       TLI.shouldFoldConstantShiftPairToMask(N, Level)) {
     if (ConstantSDNode *N0C1 = isConstOrConstSplat(N0.getOperand(1))) {
@@ -7188,6 +7190,7 @@ SDValue DAGCombiner::visitSRL(SDNode *N) {
   }
 
   // fold (srl (shl x, c), c) -> (and x, cst2)
+  // TODO - (srl (shl x, c1), c2).
   if (N0.getOpcode() == ISD::SHL && N0.getOperand(1) == N1 &&
       isConstantOrConstantVector(N1, /* NoOpaques */ true)) {
     SDLoc DL(N);
@@ -11901,6 +11904,9 @@ SDValue DAGCombiner::visitFMA(SDNode *N) {
 // FDIVs may be lower than the cost of one FDIV and two FMULs. Another reason
 // is the critical path is increased from "one FDIV" to "one FDIV + one FMUL".
 SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
+  // TODO: Limit this transform based on optsize/minsize - it always creates at
+  //       least 1 extra instruction. But the perf win may be substantial enough
+  //       that only minsize should restrict this.
   bool UnsafeMath = DAG.getTarget().Options.UnsafeFPMath;
   const SDNodeFlags Flags = N->getFlags();
   if (!UnsafeMath && !Flags.hasAllowReciprocal())
@@ -11916,7 +11922,15 @@ SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
   // possibly be enough uses of the divisor to make the transform worthwhile.
   SDValue N1 = N->getOperand(1);
   unsigned MinUses = TLI.combineRepeatedFPDivisors();
-  if (!MinUses || N1->use_size() < MinUses)
+
+  // For splat vectors, scale the number of uses by the splat factor. If we can
+  // convert the division into a scalar op, that will likely be much faster.
+  unsigned NumElts = 1;
+  EVT VT = N->getValueType(0);
+  if (VT.isVector() && DAG.isSplatValue(N1))
+    NumElts = VT.getVectorNumElements();
+
+  if (!MinUses || (N1->use_size() * NumElts) < MinUses)
     return SDValue();
 
   // Find all FDIV users of the same divisor.
@@ -11933,10 +11947,9 @@ SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
 
   // Now that we have the actual number of divisor uses, make sure it meets
   // the minimum threshold specified by the target.
-  if (Users.size() < MinUses)
+  if ((Users.size() * NumElts) < MinUses)
     return SDValue();
 
-  EVT VT = N->getValueType(0);
   SDLoc DL(N);
   SDValue FPOne = DAG.getConstantFP(1.0, DL, VT);
   SDValue Reciprocal = DAG.getNode(ISD::FDIV, DL, VT, FPOne, N1, Flags);
@@ -17518,7 +17531,7 @@ static SDValue narrowExtractedVectorLoad(SDNode *Extract, SelectionDAG &DAG) {
   return NewLd;
 }
 
-SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
+SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode *N) {
   EVT NVT = N->getValueType(0);
   SDValue V = N->getOperand(0);
 
@@ -17571,26 +17584,27 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
       if (ExtractSize % EltSize == 0) {
         unsigned NumElems = ExtractSize / EltSize;
         EVT EltVT = InVT.getVectorElementType();
-        EVT ExtractVT = NumElems == 1 ? EltVT :
-          EVT::getVectorVT(*DAG.getContext(), EltVT, NumElems);
+        EVT ExtractVT = NumElems == 1 ? EltVT
+                                      : EVT::getVectorVT(*DAG.getContext(),
+                                                         EltVT, NumElems);
         if ((Level < AfterLegalizeDAG ||
              (NumElems == 1 ||
               TLI.isOperationLegal(ISD::BUILD_VECTOR, ExtractVT))) &&
             (!LegalTypes || TLI.isTypeLegal(ExtractVT))) {
-          unsigned IdxVal = (Idx->getZExtValue() * NVT.getScalarSizeInBits()) /
-                            EltSize;
+          unsigned IdxVal = Idx->getZExtValue();
+          IdxVal *= NVT.getScalarSizeInBits();
+          IdxVal /= EltSize;
+
           if (NumElems == 1) {
             SDValue Src = V->getOperand(IdxVal);
             if (EltVT != Src.getValueType())
               Src = DAG.getNode(ISD::TRUNCATE, SDLoc(N), InVT, Src);
-
             return DAG.getBitcast(NVT, Src);
           }
 
           // Extract the pieces from the original build_vector.
-          SDValue BuildVec = DAG.getBuildVector(ExtractVT, SDLoc(N),
-                                            makeArrayRef(V->op_begin() + IdxVal,
-                                                         NumElems));
+          SDValue BuildVec = DAG.getBuildVector(
+              ExtractVT, SDLoc(N), V->ops().slice(IdxVal, NumElems));
           return DAG.getBitcast(NVT, BuildVec);
         }
       }
@@ -17620,7 +17634,7 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
       return DAG.getNode(
           ISD::EXTRACT_SUBVECTOR, SDLoc(N), NVT,
           DAG.getBitcast(N->getOperand(0).getValueType(), V.getOperand(0)),
-                         N->getOperand(1));
+          N->getOperand(1));
     }
   }
 

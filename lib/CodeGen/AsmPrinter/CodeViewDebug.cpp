@@ -1075,8 +1075,13 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     for (auto HeapAllocSite : FI.HeapAllocSites) {
       MCSymbol *BeginLabel = std::get<0>(HeapAllocSite);
       MCSymbol *EndLabel = std::get<1>(HeapAllocSite);
-      DIType *DITy = std::get<2>(HeapAllocSite);
 
+      // The labels might not be defined if the instruction was replaced
+      // somewhere in the codegen pipeline.
+      if (!BeginLabel->isDefined() || !EndLabel->isDefined())
+        continue;
+
+      DIType *DITy = std::get<2>(HeapAllocSite);
       MCSymbol *HeapAllocEnd = beginSymbolRecord(SymbolKind::S_HEAPALLOCSITE);
       OS.AddComment("Call site offset");
       OS.EmitCOFFSecRel32(BeginLabel, /*Offset=*/0);

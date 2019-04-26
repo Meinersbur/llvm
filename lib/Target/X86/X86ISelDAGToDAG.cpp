@@ -258,16 +258,24 @@ namespace {
     void emitSpecialCodeForMain();
 
     inline void getAddressOperands(X86ISelAddressMode &AM, const SDLoc &DL,
-                                   SDValue &Base, SDValue &Scale,
+                                   MVT VT, SDValue &Base, SDValue &Scale,
                                    SDValue &Index, SDValue &Disp,
                                    SDValue &Segment) {
-      Base = (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
-                 ? CurDAG->getTargetFrameIndex(
-                       AM.Base_FrameIndex,
-                       TLI->getPointerTy(CurDAG->getDataLayout()))
-                 : AM.Base_Reg;
+      if (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
+        Base = CurDAG->getTargetFrameIndex(
+            AM.Base_FrameIndex, TLI->getPointerTy(CurDAG->getDataLayout()));
+      else if (AM.Base_Reg.getNode())
+        Base = AM.Base_Reg;
+      else
+        Base = CurDAG->getRegister(0, VT);
+
       Scale = getI8Imm(AM.Scale, DL);
-      Index = AM.IndexReg;
+
+      if (AM.IndexReg.getNode())
+        Index = AM.IndexReg;
+      else
+        Index = CurDAG->getRegister(0, VT);
+
       // These are 32-bit even in 64-bit mode since RIP-relative offset
       // is 32-bit.
       if (AM.GV)
@@ -296,7 +304,7 @@ namespace {
       if (AM.Segment.getNode())
         Segment = AM.Segment;
       else
-        Segment = CurDAG->getRegister(0, MVT::i32);
+        Segment = CurDAG->getRegister(0, MVT::i16);
     }
 
     // Utility function to determine whether we should avoid selecting
@@ -590,6 +598,15 @@ X86DAGToDAGISel::IsProfitableToFold(SDValue N, SDNode *U, SDNode *Root) const {
         if (U->getOpcode() == ISD::AND &&
             Imm->getAPIntValue().getBitWidth() == 64 &&
             Imm->getAPIntValue().isIntN(32))
+          return false;
+
+        // If this really a zext_inreg that can be represented with a movzx
+        // instruction, prefer that.
+        // TODO: We could shrink the load and fold if it is non-volatile.
+        if (U->getOpcode() == ISD::AND &&
+            (Imm->getAPIntValue() == UINT8_MAX ||
+             Imm->getAPIntValue() == UINT16_MAX ||
+             Imm->getAPIntValue() == UINT32_MAX))
           return false;
 
         // ADD/SUB with can negate the immediate and use the opposite operation
@@ -1375,6 +1392,7 @@ static bool foldMaskAndShiftToExtract(SelectionDAG &DAG, SDValue N,
   insertDAGNode(DAG, N, ShlCount);
   insertDAGNode(DAG, N, Shl);
   DAG.ReplaceAllUsesWith(N, Shl);
+  DAG.RemoveDeadNode(N.getNode());
   AM.IndexReg = And;
   AM.Scale = (1 << ScaleLog);
   return false;
@@ -1441,6 +1459,7 @@ static bool foldMaskedShiftToScaledMask(SelectionDAG &DAG, SDValue N,
   insertDAGNode(DAG, N, NewAnd);
   insertDAGNode(DAG, N, NewShift);
   DAG.ReplaceAllUsesWith(N, NewShift);
+  DAG.RemoveDeadNode(N.getNode());
 
   AM.Scale = 1 << ShiftAmt;
   AM.IndexReg = NewAnd;
@@ -1551,6 +1570,7 @@ static bool foldMaskAndShiftToScale(SelectionDAG &DAG, SDValue N,
   insertDAGNode(DAG, N, NewSHLAmt);
   insertDAGNode(DAG, N, NewSHL);
   DAG.ReplaceAllUsesWith(N, NewSHL);
+  DAG.RemoveDeadNode(N.getNode());
 
   AM.Scale = 1 << AMShiftAmt;
   AM.IndexReg = NewSRL;
@@ -1609,6 +1629,7 @@ static bool foldMaskedShiftToBEXTR(SelectionDAG &DAG, SDValue N,
   insertDAGNode(DAG, N, NewSHLAmt);
   insertDAGNode(DAG, N, NewSHL);
   DAG.ReplaceAllUsesWith(N, NewSHL);
+  DAG.RemoveDeadNode(N.getNode());
 
   AM.Scale = 1 << AMShiftAmt;
   AM.IndexReg = NewAnd;
@@ -1940,6 +1961,7 @@ bool X86DAGToDAGISel::matchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     insertDAGNode(*CurDAG, N, Zext);
     insertDAGNode(*CurDAG, N, NewShl);
     CurDAG->ReplaceAllUsesWith(N, NewShl);
+    CurDAG->RemoveDeadNode(N.getNode());
     return false;
   }
   }
@@ -2007,17 +2029,14 @@ bool X86DAGToDAGISel::selectVectorAddr(SDNode *Parent, SDValue N, SDValue &Base,
   if (AddrSpace == 258)
     AM.Segment = CurDAG->getRegister(X86::SS, MVT::i16);
 
+  SDLoc DL(N);
+  MVT VT = N.getSimpleValueType();
+
   // Try to match into the base and displacement fields.
   if (matchVectorAddress(N, AM))
     return false;
 
-  MVT VT = N.getSimpleValueType();
-  if (AM.BaseType == X86ISelAddressMode::RegBase) {
-    if (!AM.Base_Reg.getNode())
-      AM.Base_Reg = CurDAG->getRegister(0, VT);
-  }
-
-  getAddressOperands(AM, SDLoc(N), Base, Scale, Index, Disp, Segment);
+  getAddressOperands(AM, DL, VT, Base, Scale, Index, Disp, Segment);
   return true;
 }
 
@@ -2052,19 +2071,14 @@ bool X86DAGToDAGISel::selectAddr(SDNode *Parent, SDValue N, SDValue &Base,
       AM.Segment = CurDAG->getRegister(X86::SS, MVT::i16);
   }
 
+  // Save the DL and VT before calling matchAddress, it can invalidate N.
+  SDLoc DL(N);
+  MVT VT = N.getSimpleValueType();
+
   if (matchAddress(N, AM))
     return false;
 
-  MVT VT = N.getSimpleValueType();
-  if (AM.BaseType == X86ISelAddressMode::RegBase) {
-    if (!AM.Base_Reg.getNode())
-      AM.Base_Reg = CurDAG->getRegister(0, VT);
-  }
-
-  if (!AM.IndexReg.getNode())
-    AM.IndexReg = CurDAG->getRegister(0, VT);
-
-  getAddressOperands(AM, SDLoc(N), Base, Scale, Index, Disp, Segment);
+  getAddressOperands(AM, DL, VT, Base, Scale, Index, Disp, Segment);
   return true;
 }
 
@@ -2245,18 +2259,13 @@ bool X86DAGToDAGISel::selectLEAAddr(SDValue N,
   AM.Segment = Copy;
 
   unsigned Complexity = 0;
-  if (AM.BaseType == X86ISelAddressMode::RegBase)
-    if (AM.Base_Reg.getNode())
-      Complexity = 1;
-    else
-      AM.Base_Reg = CurDAG->getRegister(0, VT);
+  if (AM.BaseType == X86ISelAddressMode::RegBase && AM.Base_Reg.getNode())
+    Complexity = 1;
   else if (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
     Complexity = 4;
 
   if (AM.IndexReg.getNode())
     Complexity++;
-  else
-    AM.IndexReg = CurDAG->getRegister(0, VT);
 
   // Don't match just leal(,%reg,2). It's cheaper to do addl %reg, %reg, or with
   // a simple shift.
@@ -2276,14 +2285,14 @@ bool X86DAGToDAGISel::selectLEAAddr(SDValue N,
       Complexity += 2;
   }
 
-  if (AM.Disp && (AM.Base_Reg.getNode() || AM.IndexReg.getNode()))
+  if (AM.Disp)
     Complexity++;
 
   // If it isn't worth using an LEA, reject it.
   if (Complexity <= 2)
     return false;
 
-  getAddressOperands(AM, DL, Base, Scale, Index, Disp, Segment);
+  getAddressOperands(AM, DL, VT, Base, Scale, Index, Disp, Segment);
   return true;
 }
 
@@ -2297,17 +2306,15 @@ bool X86DAGToDAGISel::selectTLSADDRAddr(SDValue N, SDValue &Base,
   X86ISelAddressMode AM;
   AM.GV = GA->getGlobal();
   AM.Disp += GA->getOffset();
-  AM.Base_Reg = CurDAG->getRegister(0, N.getValueType());
   AM.SymbolFlags = GA->getTargetFlags();
 
-  if (N.getValueType() == MVT::i32) {
+  MVT VT = N.getSimpleValueType();
+  if (VT == MVT::i32) {
     AM.Scale = 1;
     AM.IndexReg = CurDAG->getRegister(X86::EBX, MVT::i32);
-  } else {
-    AM.IndexReg = CurDAG->getRegister(0, MVT::i64);
   }
 
-  getAddressOperands(AM, SDLoc(N), Base, Scale, Index, Disp, Segment);
+  getAddressOperands(AM, SDLoc(N), VT, Base, Scale, Index, Disp, Segment);
   return true;
 }
 

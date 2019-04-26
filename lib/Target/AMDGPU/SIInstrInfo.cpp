@@ -2819,10 +2819,10 @@ static bool shouldReadExec(const MachineInstr &MI) {
   if (SIInstrInfo::isVALU(MI)) {
     switch (MI.getOpcode()) {
     case AMDGPU::V_READLANE_B32:
-    case AMDGPU::V_READLANE_B32_si:
+    case AMDGPU::V_READLANE_B32_gfx6_gfx7:
     case AMDGPU::V_READLANE_B32_vi:
     case AMDGPU::V_WRITELANE_B32:
-    case AMDGPU::V_WRITELANE_B32_si:
+    case AMDGPU::V_WRITELANE_B32_gfx6_gfx7:
     case AMDGPU::V_WRITELANE_B32_vi:
       return false;
     }
@@ -5591,7 +5591,9 @@ enum SIEncodingFamily {
   SDWA = 2,
   SDWA9 = 3,
   GFX80 = 4,
-  GFX9 = 5
+  GFX9 = 5,
+  GFX10 = 6,
+  SDWA10 = 7
 };
 
 static SIEncodingFamily subtargetEncodingFamily(const GCNSubtarget &ST) {
@@ -5604,6 +5606,8 @@ static SIEncodingFamily subtargetEncodingFamily(const GCNSubtarget &ST) {
   case AMDGPUSubtarget::VOLCANIC_ISLANDS:
   case AMDGPUSubtarget::GFX9:
     return SIEncodingFamily::VI;
+  case AMDGPUSubtarget::GFX10:
+    return SIEncodingFamily::GFX10;
   }
   llvm_unreachable("Unknown subtarget generation!");
 }

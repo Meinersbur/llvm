@@ -2749,6 +2749,22 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   CU.addDIETypeSignature(RefDie, Signature);
 }
 
+DwarfDebug::NonTypeUnitContext::NonTypeUnitContext(DwarfDebug *DD)
+    : DD(DD),
+      TypeUnitsUnderConstruction(std::move(DD->TypeUnitsUnderConstruction)) {
+  DD->TypeUnitsUnderConstruction.clear();
+  assert(TypeUnitsUnderConstruction.empty() || !DD->AddrPool.hasBeenUsed());
+}
+
+DwarfDebug::NonTypeUnitContext::~NonTypeUnitContext() {
+  DD->TypeUnitsUnderConstruction = std::move(TypeUnitsUnderConstruction);
+  DD->AddrPool.resetUsedFlag();
+}
+
+DwarfDebug::NonTypeUnitContext DwarfDebug::enterNonTypeUnitContext() {
+  return NonTypeUnitContext(this);
+}
+
 // Add the Name along with its companion DIE to the appropriate accelerator
 // table (for AccelTableKind::Dwarf it's always AccelDebugNames, for
 // AccelTableKind::Apple, we use the table we got as an argument). If
@@ -2761,7 +2777,7 @@ void DwarfDebug::addAccelNameImpl(const DICompileUnit &CU,
     return;
 
   if (getAccelTableKind() != AccelTableKind::Apple &&
-      CU.getNameTableKind() == DICompileUnit::DebugNameTableKind::None)
+      CU.getNameTableKind() != DICompileUnit::DebugNameTableKind::Default)
     return;
 
   DwarfFile &Holder = useSplitDwarf() ? SkeletonHolder : InfoHolder;
