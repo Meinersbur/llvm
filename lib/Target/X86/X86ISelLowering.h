@@ -590,6 +590,9 @@ namespace llvm {
       // Load, scalar_to_vector, and zero extend.
       VZEXT_LOAD,
 
+      // extract_vector_elt, store.
+      VEXTRACT_STORE,
+
       // Store FP control world into i16 memory.
       FNSTCW16m,
 
@@ -1597,10 +1600,10 @@ namespace llvm {
   void scaleShuffleMask(int Scale, ArrayRef<T> Mask,
                         SmallVectorImpl<T> &ScaledMask) {
     assert(0 < Scale && "Unexpected scaling factor");
-    int NumElts = Mask.size();
-    ScaledMask.assign(static_cast<size_t>(NumElts * Scale), -1);
+    size_t NumElts = Mask.size();
+    ScaledMask.assign(NumElts * Scale, -1);
 
-    for (int i = 0; i != NumElts; ++i) {
+    for (int i = 0; i != (int)NumElts; ++i) {
       int M = Mask[i];
 
       // Repeat sentinel values in every mask element.
