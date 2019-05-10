@@ -164,3 +164,161 @@ define i32 @and32 (i32* %p) {
   %1 = atomicrmw and i32* %p, i32 -1 acq_rel
   ret i32 %1
 }
+
+define void @or32_nouse_monotonic(i32* %p) {
+; CHECK-LABEL: or32_nouse_monotonic:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    #MEMBARRIER
+; CHECK-NEXT:    ret{{[l|q]}}
+  atomicrmw or i32* %p, i32 0 monotonic
+  ret void
+}
+
+
+define void @or32_nouse_acquire(i32* %p) {
+; CHECK-LABEL: or32_nouse_acquire:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    #MEMBARRIER
+; CHECK-NEXT:    ret{{[l|q]}}
+  atomicrmw or i32* %p, i32 0 acquire
+  ret void
+}
+
+define void @or32_nouse_release(i32* %p) {
+; CHECK-LABEL: or32_nouse_release:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    #MEMBARRIER
+; CHECK-NEXT:    ret{{[l|q]}}
+  atomicrmw or i32* %p, i32 0 release
+  ret void
+}
+
+define void @or32_nouse_acq_rel(i32* %p) {
+; CHECK-LABEL: or32_nouse_acq_rel:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    #MEMBARRIER
+; CHECK-NEXT:    ret{{[l|q]}}
+  atomicrmw or i32* %p, i32 0 acq_rel
+  ret void
+}
+
+define void @or32_nouse_seq_cst(i32* %p) {
+; X64-LABEL: or32_nouse_seq_cst:
+; X64:       # %bb.0:
+; X64-NEXT:    lock orl $0, (%rsp)
+; X64-NEXT:    retq
+;
+; X32-LABEL: or32_nouse_seq_cst:
+; X32:       # %bb.0:
+; X32-NEXT:    lock orl $0, (%esp)
+; X32-NEXT:    retl
+  atomicrmw or i32* %p, i32 0 seq_cst
+  ret void
+}
+
+; TODO: The value isn't used on 32 bit, so the cmpxchg8b is unneeded
+define void @or64_nouse_seq_cst(i64* %p) {
+; X64-LABEL: or64_nouse_seq_cst:
+; X64:       # %bb.0:
+; X64-NEXT:    lock orl $0, (%rsp)
+; X64-NEXT:    retq
+;
+; X32-LABEL: or64_nouse_seq_cst:
+; X32:       # %bb.0:
+; X32-NEXT:    pushl %ebx
+; X32-NEXT:    .cfi_def_cfa_offset 8
+; X32-NEXT:    pushl %esi
+; X32-NEXT:    .cfi_def_cfa_offset 12
+; X32-NEXT:    .cfi_offset %esi, -12
+; X32-NEXT:    .cfi_offset %ebx, -8
+; X32-NEXT:    movl {{[0-9]+}}(%esp), %esi
+; X32-NEXT:    movl (%esi), %eax
+; X32-NEXT:    movl 4(%esi), %edx
+; X32-NEXT:    .p2align 4, 0x90
+; X32-NEXT:  .LBB11_1: # %atomicrmw.start
+; X32-NEXT:    # =>This Inner Loop Header: Depth=1
+; X32-NEXT:    movl %edx, %ecx
+; X32-NEXT:    movl %eax, %ebx
+; X32-NEXT:    lock cmpxchg8b (%esi)
+; X32-NEXT:    jne .LBB11_1
+; X32-NEXT:  # %bb.2: # %atomicrmw.end
+; X32-NEXT:    popl %esi
+; X32-NEXT:    .cfi_def_cfa_offset 8
+; X32-NEXT:    popl %ebx
+; X32-NEXT:    .cfi_def_cfa_offset 4
+; X32-NEXT:    retl
+  atomicrmw or i64* %p, i64 0 seq_cst
+  ret void
+}
+
+; TODO: Don't need to lower as sync_and_fetch call
+define void @or128_nouse_seq_cst(i128* %p) {
+; X64-LABEL: or128_nouse_seq_cst:
+; X64:       # %bb.0:
+; X64-NEXT:    pushq %rax
+; X64-NEXT:    .cfi_def_cfa_offset 16
+; X64-NEXT:    xorl %esi, %esi
+; X64-NEXT:    xorl %edx, %edx
+; X64-NEXT:    callq __sync_fetch_and_or_16
+; X64-NEXT:    popq %rax
+; X64-NEXT:    .cfi_def_cfa_offset 8
+; X64-NEXT:    retq
+;
+; X32-LABEL: or128_nouse_seq_cst:
+; X32:       # %bb.0:
+; X32-NEXT:    pushl %ebp
+; X32-NEXT:    .cfi_def_cfa_offset 8
+; X32-NEXT:    .cfi_offset %ebp, -8
+; X32-NEXT:    movl %esp, %ebp
+; X32-NEXT:    .cfi_def_cfa_register %ebp
+; X32-NEXT:    andl $-8, %esp
+; X32-NEXT:    subl $16, %esp
+; X32-NEXT:    movl %esp, %eax
+; X32-NEXT:    pushl $0
+; X32-NEXT:    pushl $0
+; X32-NEXT:    pushl $0
+; X32-NEXT:    pushl $0
+; X32-NEXT:    pushl 8(%ebp)
+; X32-NEXT:    pushl %eax
+; X32-NEXT:    calll __sync_fetch_and_or_16
+; X32-NEXT:    addl $20, %esp
+; X32-NEXT:    movl %ebp, %esp
+; X32-NEXT:    popl %ebp
+; X32-NEXT:    .cfi_def_cfa %esp, 4
+; X32-NEXT:    retl
+; X128-LABEL: or128_nouse_seq_cst:
+; X128:       # %bb.0:
+; X128-NEXT:    lock orl $0, -{{[0-9]+}}(%esp)
+; X128-NEXT:    retl
+  atomicrmw or i128* %p, i128 0 seq_cst
+  ret void
+}
+
+
+define void @or16_nouse_seq_cst(i16* %p) {
+; X64-LABEL: or16_nouse_seq_cst:
+; X64:       # %bb.0:
+; X64-NEXT:    lock orl $0, (%rsp)
+; X64-NEXT:    retq
+;
+; X32-LABEL: or16_nouse_seq_cst:
+; X32:       # %bb.0:
+; X32-NEXT:    lock orl $0, (%esp)
+; X32-NEXT:    retl
+  atomicrmw or i16* %p, i16 0 seq_cst
+  ret void
+}
+
+define void @or8_nouse_seq_cst(i8* %p) {
+; X64-LABEL: or8_nouse_seq_cst:
+; X64:       # %bb.0:
+; X64-NEXT:    lock orl $0, (%rsp)
+; X64-NEXT:    retq
+;
+; X32-LABEL: or8_nouse_seq_cst:
+; X32:       # %bb.0:
+; X32-NEXT:    lock orl $0, (%esp)
+; X32-NEXT:    retl
+  atomicrmw or i8* %p, i8 0 seq_cst
+  ret void
+}

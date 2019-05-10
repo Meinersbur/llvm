@@ -169,8 +169,8 @@ namespace {
 
   public:
     explicit X86DAGToDAGISel(X86TargetMachine &tm, CodeGenOpt::Level OptLevel)
-        : SelectionDAGISel(tm, OptLevel), OptForSize(false),
-          OptForMinSize(false) {}
+        : SelectionDAGISel(tm, OptLevel), Subtarget(nullptr), OptForSize(false),
+          OptForMinSize(false), IndirectTlsSegRefs(false) {}
 
     StringRef getPassName() const override {
       return "X86 DAG->DAG Instruction Selection";
@@ -907,6 +907,11 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
     ++I;
     CurDAG->DeleteNode(N);
   }
+
+  // The load+call transform above can leave some dead nodes in the graph. Make
+  // sure we remove them. Its possible some of the other transforms do to so
+  // just remove dead nodes unconditionally.
+  CurDAG->RemoveDeadNodes();
 }
 
 // Look for a redundant movzx/movsx that can occur after an 8-bit divrem.
@@ -3725,7 +3730,7 @@ bool X86DAGToDAGISel::tryVPTESTM(SDNode *Root, SDValue Setcc,
   bool FoldedBCast = false;
   if (!FoldedLoad && CanFoldLoads &&
       (CmpSVT == MVT::i32 || CmpSVT == MVT::i64)) {
-    SDNode *ParentNode;
+    SDNode *ParentNode = nullptr;
     if ((Load = findBroadcastedOp(Src1, CmpSVT, ParentNode))) {
       FoldedBCast = tryFoldLoad(Root, ParentNode, Load, Tmp0,
                                 Tmp1, Tmp2, Tmp3, Tmp4);

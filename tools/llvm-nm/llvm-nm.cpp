@@ -180,6 +180,9 @@ cl::opt<bool> JustSymbolName("just-symbol-name",
 cl::alias JustSymbolNames("j", cl::desc("Alias for --just-symbol-name"),
                           cl::aliasopt(JustSymbolName), cl::Grouping);
 
+cl::opt<bool> SpecialSyms("special-syms",
+                          cl::desc("No-op. Used for GNU compatibility only"));
+
 // FIXME: This option takes exactly two strings and should be allowed anywhere
 // on the command line.  Such that "llvm-nm -s __TEXT __text foo.o" would work.
 // But that does not as the CommandLine Library does not have a way to make
@@ -522,7 +525,8 @@ static void darwinPrintSymbol(SymbolicFile &Obj, const NMSymbol &S,
     }
     DataRefImpl Ref = Sec->getRawDataRefImpl();
     StringRef SectionName;
-    MachO->getSectionName(Ref, SectionName);
+    if (Expected<StringRef> NameOrErr = MachO->getSectionName(Ref))
+      SectionName = *NameOrErr;
     StringRef SegmentName = MachO->getSectionFinalSegmentName(Ref);
     outs() << "(" << SegmentName << "," << SectionName << ") ";
     break;
@@ -899,24 +903,28 @@ static char getSymbolNMTypeChar(ELFObjectFileBase &Obj,
   if (SecI != Obj.section_end()) {
     uint32_t Type = SecI->getType();
     uint64_t Flags = SecI->getFlags();
-    if (Type == ELF::SHT_NOBITS)
-      return 'b';
     if (Flags & ELF::SHF_EXECINSTR)
       return 't';
+    if (Type == ELF::SHT_NOBITS)
+      return 'b';
     if (Flags & ELF::SHF_ALLOC)
       return Flags & ELF::SHF_WRITE ? 'd' : 'r';
+  }
+
+  if (SymI->getELFType() == ELF::STT_SECTION) {
     Expected<StringRef> Name = SymI->getName();
     if (!Name) {
       consumeError(Name.takeError());
       return '?';
     }
-    if (Name->startswith(".debug"))
-      return 'N';
-    if (!(Flags & ELF::SHF_WRITE))
-      return 'n';
+    return StringSwitch<char>(*Name)
+        .StartsWith(".debug", 'N')
+        .StartsWith(".note", 'n')
+        .StartsWith(".comment", 'n')
+        .Default('?');
   }
 
-  return '?';
+  return 'n';
 }
 
 static char getSymbolNMTypeChar(COFFObjectFile &Obj, symbol_iterator I) {
@@ -948,10 +956,9 @@ static char getSymbolNMTypeChar(COFFObjectFile &Obj, symbol_iterator I) {
     section_iterator SecI = *SecIOrErr;
     const coff_section *Section = Obj.getCOFFSection(*SecI);
     Characteristics = Section->Characteristics;
-    StringRef SectionName;
-    Obj.getSectionName(Section, SectionName);
-    if (SectionName.startswith(".idata"))
-      return 'i';
+    if (Expected<StringRef> NameOrErr = Obj.getSectionName(Section))
+      if (NameOrErr->startswith(".idata"))
+        return 'i';
   }
 
   switch (Symb.getSectionNumber()) {
@@ -1011,7 +1018,8 @@ static char getSymbolNMTypeChar(MachOObjectFile &Obj, basic_symbol_iterator I) {
       return 's';
     DataRefImpl Ref = Sec->getRawDataRefImpl();
     StringRef SectionName;
-    Obj.getSectionName(Ref, SectionName);
+    if (Expected<StringRef> NameOrErr = Obj.getSectionName(Ref))
+      SectionName = *NameOrErr;
     StringRef SegmentName = Obj.getSectionFinalSegmentName(Ref);
     if (Obj.is64Bit() && Obj.getHeader64().filetype == MachO::MH_KEXT_BUNDLE &&
         SegmentName == "__TEXT_EXEC" && SectionName == "__text")
@@ -1133,7 +1141,8 @@ static unsigned getNsectForSegSect(MachOObjectFile *Obj) {
   for (auto &S : Obj->sections()) {
     DataRefImpl Ref = S.getRawDataRefImpl();
     StringRef SectionName;
-    Obj->getSectionName(Ref, SectionName);
+    if (Expected<StringRef> NameOrErr = Obj->getSectionName(Ref))
+      SectionName = *NameOrErr;
     StringRef SegmentName = Obj->getSectionFinalSegmentName(Ref);
     if (SegmentName == SegSect[0] && SectionName == SegSect[1])
       return Nsect;
@@ -1455,7 +1464,6 @@ dumpSymbolNamesFromObject(SymbolicFile &Obj, bool printName,
           B.SymFlags = SymbolRef::SF_Global | SymbolRef::SF_Undefined;
           B.NType = MachO::N_EXT | MachO::N_UNDF;
           B.NSect = 0;
-          B.NDesc = 0;
           B.NDesc = 0;
           MachO::SET_LIBRARY_ORDINAL(B.NDesc, Entry.ordinal());
           B.IndirectName = StringRef();
