@@ -21,6 +21,7 @@ set(LLVM_LINK_COMPONENTS
   TransformUtils
   Vectorize
   Passes
+  LOF
   )
 
 # Support plugins.

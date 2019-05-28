@@ -56,6 +56,7 @@
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/LOF/LoopOptPass.h"
 #include <algorithm>
 #include <memory>
 using namespace llvm;
@@ -506,6 +507,8 @@ int main(int argc, char **argv) {
   initializeAggressiveInstCombine(Registry);
   initializeInstrumentation(Registry);
   initializeTarget(Registry);
+  initializeLoopOptimizationFrameworkPass(Registry);
+
   // For codegen passes, only passes that do IR to IR transformation are
   // supported.
   initializeExpandMemCmpPassPass(Registry);
@@ -528,6 +531,7 @@ int main(int argc, char **argv) {
   initializeExpandReductionsPass(Registry);
   initializeWasmEHPreparePass(Registry);
   initializeWriteBitcodePassPass(Registry);
+
 
 #ifdef LINK_POLLY_INTO_TOOLS
   polly::initializePollyPasses(Registry);
