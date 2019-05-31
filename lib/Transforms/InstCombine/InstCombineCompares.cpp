@@ -703,7 +703,10 @@ static Value *rewriteGEPAsOffset(Value *Start, Value *Base,
       continue;
 
     if (auto *CI = dyn_cast<CastInst>(Val)) {
-      NewInsts[CI] = NewInsts[CI->getOperand(0)];
+      // Don't get rid of the intermediate variable here; the store can grow
+      // the map which will invalidate the reference to the input value.
+      Value *V = NewInsts[CI->getOperand(0)];
+      NewInsts[CI] = V;
       continue;
     }
     if (auto *GEP = dyn_cast<GEPOperator>(Val)) {
@@ -3993,7 +3996,8 @@ bool InstCombiner::OptimizeOverflowCheck(
   switch (computeOverflow(BinaryOp, IsSigned, LHS, RHS, &OrigI)) {
     case OverflowResult::MayOverflow:
       return false;
-    case OverflowResult::AlwaysOverflows:
+    case OverflowResult::AlwaysOverflowsLow:
+    case OverflowResult::AlwaysOverflowsHigh:
       Result = Builder.CreateBinOp(BinaryOp, LHS, RHS);
       Result->takeName(&OrigI);
       Overflow = Builder.getTrue();

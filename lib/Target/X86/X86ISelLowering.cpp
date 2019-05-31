@@ -674,6 +674,8 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::FMA, MVT::f80, Expand);
     setOperationAction(ISD::LROUND, MVT::f80, Expand);
     setOperationAction(ISD::LLROUND, MVT::f80, Expand);
+    setOperationAction(ISD::LRINT, MVT::f80, Expand);
+    setOperationAction(ISD::LLRINT, MVT::f80, Expand);
   }
 
   // Always use a library call for pow.
@@ -960,9 +962,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::FP_EXTEND,          MVT::v2f32, Custom);
     setOperationAction(ISD::FP_ROUND,           MVT::v2f32, Custom);
 
-    for (MVT VT : MVT::fp_vector_valuetypes())
-      setLoadExtAction(ISD::EXTLOAD, VT, MVT::v2f32, Legal);
-
     // We want to legalize this to an f64 load rather than an i64 load on
     // 64-bit targets and two 32-bit loads on a 32-bit target. Similar for
     // store.
@@ -1143,9 +1142,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     if (!Subtarget.hasAVX512())
       setOperationAction(ISD::BITCAST, MVT::v32i1, Custom);
 
-    for (MVT VT : MVT::fp_vector_valuetypes())
-      setLoadExtAction(ISD::EXTLOAD, VT, MVT::v4f32, Legal);
-
     // In the customized shift lowering, the legal v8i32/v4i64 cases
     // in AVX2 will be recognized.
     for (auto VT : { MVT::v32i8, MVT::v16i16, MVT::v8i32, MVT::v4i64 }) {
@@ -1287,7 +1283,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       setOperationAction(ISD::SCALAR_TO_VECTOR,   VT, Custom);
       setOperationAction(ISD::INSERT_SUBVECTOR,   VT, Legal);
       setOperationAction(ISD::CONCAT_VECTORS,     VT, Custom);
-      setOperationAction(ISD::STORE,              VT, Custom);
     }
 
     if (HasInt256)
@@ -1378,9 +1373,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     addRegisterClass(MVT::v16f32, &X86::VR512RegClass);
     addRegisterClass(MVT::v8i64,  &X86::VR512RegClass);
     addRegisterClass(MVT::v8f64,  &X86::VR512RegClass);
-
-    for (MVT VT : MVT::fp_vector_valuetypes())
-      setLoadExtAction(ISD::EXTLOAD, VT, MVT::v8f32, Legal);
 
     for (auto ExtType : {ISD::ZEXTLOAD, ISD::SEXTLOAD}) {
       setLoadExtAction(ExtType, MVT::v16i32, MVT::v16i8,  Legal);
@@ -21081,17 +21073,7 @@ static SDValue LowerStore(SDValue Op, const X86Subtarget &Subtarget,
   if (St->isTruncatingStore())
     return SDValue();
 
-  // If this is a 256-bit store of concatenated ops, we are better off splitting
-  // that store into two 128-bit stores. This avoids spurious use of 256-bit ops
-  // and each half can execute independently. Some cores would split the op into
-  // halves anyway, so the concat (vinsertf128) is purely an extra op.
   MVT StoreVT = StoredVal.getSimpleValueType();
-  if (StoreVT.is256BitVector()) {
-    if (StoredVal.getOpcode() != ISD::CONCAT_VECTORS || !StoredVal.hasOneUse())
-      return SDValue();
-    return split256BitStore(St, DAG);
-  }
-
   assert(StoreVT.isVector() && StoreVT.getSizeInBits() == 64 &&
          "Unexpected VT");
   if (DAG.getTargetLoweringInfo().getTypeAction(*DAG.getContext(), StoreVT) !=
@@ -22962,6 +22944,28 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     }
     return DAG.getCopyFromReg(DAG.getEntryNode(), dl, Reg, VT);
   }
+
+  case Intrinsic::x86_avx512_vp2intersect_q_512:
+  case Intrinsic::x86_avx512_vp2intersect_q_256:
+  case Intrinsic::x86_avx512_vp2intersect_q_128:
+  case Intrinsic::x86_avx512_vp2intersect_d_512:
+  case Intrinsic::x86_avx512_vp2intersect_d_256:
+  case Intrinsic::x86_avx512_vp2intersect_d_128: {
+    MVT MaskVT = Op.getSimpleValueType();
+
+    SDVTList VTs = DAG.getVTList(MVT::Untyped, MVT::Other);
+    SDLoc DL(Op);
+
+    SDValue Operation =
+        DAG.getNode(X86ISD::VP2INTERSECT, DL, VTs,
+                    Op->getOperand(1), Op->getOperand(2));
+
+    SDValue Result0 = DAG.getTargetExtractSubreg(X86::sub_mask_0, DL,
+                                                 MaskVT, Operation);
+    SDValue Result1 = DAG.getTargetExtractSubreg(X86::sub_mask_1, DL,
+                                                 MaskVT, Operation);
+    return DAG.getMergeValues({Result0, Result1}, DL);
+  }
   }
 }
 
@@ -23296,6 +23300,27 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget &Subtarget,
           DAG.getNode(Opcode, dl, VTs, Chain, Op->getOperand(2),
                       Op->getOperand(3), Op->getOperand(4));
       SDValue SetCC = getSETCC(X86::COND_B, Operation.getValue(0), dl, DAG);
+      return DAG.getNode(ISD::MERGE_VALUES, dl, Op->getVTList(), SetCC,
+                         Operation.getValue(1));
+    }
+    case Intrinsic::x86_enqcmd:
+    case Intrinsic::x86_enqcmds: {
+      SDLoc dl(Op);
+      SDValue Chain = Op.getOperand(0);
+      SDVTList VTs = DAG.getVTList(MVT::i32, MVT::Other);
+      unsigned Opcode;
+      switch (IntNo) {
+      default: llvm_unreachable("Impossible intrinsic!");
+      case Intrinsic::x86_enqcmd:
+        Opcode = X86ISD::ENQCMD;
+        break;
+      case Intrinsic::x86_enqcmds:
+        Opcode = X86ISD::ENQCMDS;
+        break;
+      }
+      SDValue Operation = DAG.getNode(Opcode, dl, VTs, Chain, Op.getOperand(2),
+                                      Op.getOperand(3));
+      SDValue SetCC = getSETCC(X86::COND_E, Operation.getValue(0), dl, DAG);
       return DAG.getNode(ISD::MERGE_VALUES, dl, Op->getVTList(), SetCC,
                          Operation.getValue(1));
     }
@@ -28279,6 +28304,9 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::NT_BRIND:           return "X86ISD::NT_BRIND";
   case X86ISD::UMWAIT:             return "X86ISD::UMWAIT";
   case X86ISD::TPAUSE:             return "X86ISD::TPAUSE";
+  case X86ISD::ENQCMD:             return "X86ISD:ENQCMD";
+  case X86ISD::ENQCMDS:            return "X86ISD:ENQCMDS";
+  case X86ISD::VP2INTERSECT:       return "X86ISD::VP2INTERSECT";
   }
   return nullptr;
 }
@@ -38907,6 +38935,21 @@ static SDValue combineLoad(SDNode *N, SelectionDAG &DAG,
 
     SDValue NewVec = DAG.getNode(ISD::CONCAT_VECTORS, dl, RegVT, Load1, Load2);
     return DCI.CombineTo(N, NewVec, TF, true);
+  }
+
+  // Bool vector load - attempt to cast to an integer, as we have good
+  // (vXiY *ext(vXi1 bitcast(iX))) handling.
+  if (Ext == ISD::NON_EXTLOAD && !Subtarget.hasAVX512() && RegVT.isVector() &&
+      RegVT.getScalarType() == MVT::i1 && DCI.isBeforeLegalize()) {
+    unsigned NumElts = RegVT.getVectorNumElements();
+    EVT IntVT = EVT::getIntegerVT(*DAG.getContext(), NumElts);
+    if (TLI.isTypeLegal(IntVT)) {
+      SDValue IntLoad = DAG.getLoad(IntVT, dl, Ld->getChain(), Ld->getBasePtr(),
+                                    Ld->getPointerInfo(), Alignment,
+                                    Ld->getMemOperand()->getFlags());
+      SDValue BoolVec = DAG.getBitcast(RegVT, IntLoad);
+      return DCI.CombineTo(N, BoolVec, IntLoad.getValue(1), true);
+    }
   }
 
   return SDValue();
