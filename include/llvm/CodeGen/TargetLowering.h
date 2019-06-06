@@ -435,10 +435,12 @@ public:
     return false;
   }
 
-  /// Allow store merging after legalization in addition to before legalization.
-  /// This may catch stores that do not exist earlier (eg, stores created from
-  /// intrinsics).
-  virtual bool mergeStoresAfterLegalization() const { return true; }
+  /// Allow store merging for the specified type after legalization in addition
+  /// to before legalization. This may transform stores that do not exist
+  /// earlier (for example, stores created from intrinsics).
+  virtual bool mergeStoresAfterLegalization(EVT MemVT) const {
+    return true;
+  }
 
   /// Returns if it's reasonable to merge stores to MemVT size.
   virtual bool canMergeStoresTo(unsigned AS, EVT MemVT,
@@ -802,8 +804,8 @@ public:
   /// Returns true if the target can instruction select the specified FP
   /// immediate natively. If false, the legalizer will materialize the FP
   /// immediate as a load from a constant pool.
-  virtual bool isFPImmLegal(const APFloat &/*Imm*/, EVT /*VT*/,
-			    bool ForCodeSize = false) const {
+  virtual bool isFPImmLegal(const APFloat & /*Imm*/, EVT /*VT*/,
+                            bool ForCodeSize = false) const {
     return false;
   }
 
