@@ -534,6 +534,12 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     addRegisterClass(MVT::f64, Subtarget.hasAVX512() ? &X86::FR64XRegClass
                                                      : &X86::FR64RegClass);
 
+    // Disable f32->f64 extload as we can only generate this in one instruction
+    // under optsize. So its easier to pattern match (fpext (load)) for that
+    // case instead of needing to emit 2 instructions for extload in the
+    // non-optsize case.
+    setLoadExtAction(ISD::EXTLOAD, MVT::f64, MVT::f32, Expand);
+
     for (auto VT : { MVT::f32, MVT::f64 }) {
       // Use ANDPD to simulate FABS.
       setOperationAction(ISD::FABS, VT, Custom);
@@ -19485,29 +19491,52 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
   if (isNullConstant(Op1))
     return EmitTest(Op0, X86CC, dl, DAG, Subtarget);
 
-  if ((Op0.getValueType() == MVT::i8 || Op0.getValueType() == MVT::i16 ||
-       Op0.getValueType() == MVT::i32 || Op0.getValueType() == MVT::i64)) {
-    // Only promote the compare up to I32 if it is a 16 bit operation
-    // with an immediate.  16 bit immediates are to be avoided.
-    if (Op0.getValueType() == MVT::i16 &&
-        ((isa<ConstantSDNode>(Op0) &&
-          !cast<ConstantSDNode>(Op0)->getAPIntValue().isSignedIntN(8)) ||
-         (isa<ConstantSDNode>(Op1) &&
-          !cast<ConstantSDNode>(Op1)->getAPIntValue().isSignedIntN(8))) &&
-        !DAG.getMachineFunction().getFunction().hasMinSize() &&
-        !Subtarget.isAtom()) {
+  EVT CmpVT = Op0.getValueType();
+
+  if (CmpVT.isFloatingPoint())
+    return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op0, Op1);
+
+  assert((CmpVT == MVT::i8 || CmpVT == MVT::i16 ||
+          CmpVT == MVT::i32 || CmpVT == MVT::i64) && "Unexpected VT!");
+
+  // Only promote the compare up to I32 if it is a 16 bit operation
+  // with an immediate.  16 bit immediates are to be avoided.
+  if (CmpVT == MVT::i16 && !Subtarget.isAtom() &&
+      !DAG.getMachineFunction().getFunction().hasMinSize()) {
+    ConstantSDNode *COp0 = dyn_cast<ConstantSDNode>(Op0);
+    ConstantSDNode *COp1 = dyn_cast<ConstantSDNode>(Op1);
+    // Don't do this if the immediate can fit in 8-bits.
+    if ((COp0 && !COp0->getAPIntValue().isSignedIntN(8)) ||
+        (COp1 && !COp1->getAPIntValue().isSignedIntN(8))) {
       unsigned ExtendOp =
           isX86CCUnsigned(X86CC) ? ISD::ZERO_EXTEND : ISD::SIGN_EXTEND;
-      Op0 = DAG.getNode(ExtendOp, dl, MVT::i32, Op0);
-      Op1 = DAG.getNode(ExtendOp, dl, MVT::i32, Op1);
+      if (X86CC == X86::COND_E || X86CC == X86::COND_NE) {
+        // For equality comparisons try to use SIGN_EXTEND if the input was
+        // truncate from something with enough sign bits.
+        if (Op0.getOpcode() == ISD::TRUNCATE) {
+          SDValue In = Op0.getOperand(0);
+          unsigned EffBits =
+              In.getScalarValueSizeInBits() - DAG.ComputeNumSignBits(In) + 1;
+          if (EffBits <= 16)
+            ExtendOp = ISD::SIGN_EXTEND;
+        } else if (Op1.getOpcode() == ISD::TRUNCATE) {
+          SDValue In = Op1.getOperand(0);
+          unsigned EffBits =
+              In.getScalarValueSizeInBits() - DAG.ComputeNumSignBits(In) + 1;
+          if (EffBits <= 16)
+            ExtendOp = ISD::SIGN_EXTEND;
+        }
+      }
+
+      CmpVT = MVT::i32;
+      Op0 = DAG.getNode(ExtendOp, dl, CmpVT, Op0);
+      Op1 = DAG.getNode(ExtendOp, dl, CmpVT, Op1);
     }
-    // Use SUB instead of CMP to enable CSE between SUB and CMP.
-    SDVTList VTs = DAG.getVTList(Op0.getValueType(), MVT::i32);
-    SDValue Sub = DAG.getNode(X86ISD::SUB, dl, VTs, Op0, Op1);
-    return SDValue(Sub.getNode(), 1);
   }
-  assert(Op0.getValueType().isFloatingPoint() && "Unexpected VT!");
-  return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op0, Op1);
+  // Use SUB instead of CMP to enable CSE between SUB and CMP.
+  SDVTList VTs = DAG.getVTList(CmpVT, MVT::i32);
+  SDValue Sub = DAG.getNode(X86ISD::SUB, dl, VTs, Op0, Op1);
+  return Sub.getValue(1);
 }
 
 /// Convert a comparison if required by the subtarget.
@@ -43158,6 +43187,55 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+/// If we are extracting a subvector of a vector select and the select condition
+/// is composed of concatenated vectors, try to narrow the select width. This
+/// is a common pattern for AVX1 integer code because 256-bit selects may be
+/// legal, but there is almost no integer math/logic available for 256-bit.
+/// This function should only be called with legal types (otherwise, the calls
+/// to get simple value types will assert).
+static SDValue narrowExtractedVectorSelect(SDNode *Ext, SelectionDAG &DAG) {
+  SDValue Sel = peekThroughBitcasts(Ext->getOperand(0));
+  SmallVector<SDValue, 4> CatOps;
+  if (Sel.getOpcode() != ISD::VSELECT ||
+      !collectConcatOps(Sel.getOperand(0).getNode(), CatOps))
+    return SDValue();
+
+  // TODO: This can be extended to handle extraction to 256-bits.
+  MVT VT = Ext->getSimpleValueType(0);
+  if (!VT.is128BitVector())
+    return SDValue();
+
+  MVT WideVT = Ext->getOperand(0).getSimpleValueType();
+  MVT SelVT = Sel.getSimpleValueType();
+  unsigned SelElts = SelVT.getVectorNumElements();
+  unsigned CastedElts = WideVT.getVectorNumElements();
+  unsigned ExtIdx = cast<ConstantSDNode>(Ext->getOperand(1))->getZExtValue();
+  if (SelElts % CastedElts == 0) {
+    // The select has the same or more (narrower) elements than the extract
+    // operand. The extraction index gets scaled by that factor.
+    ExtIdx *= (SelElts / CastedElts);
+  } else if (CastedElts % SelElts == 0) {
+    // The select has less (wider) elements than the extract operand. Make sure
+    // that the extraction index can be divided evenly.
+    unsigned IndexDivisor = CastedElts / SelElts;
+    if (ExtIdx % IndexDivisor != 0)
+      return SDValue();
+    ExtIdx /= IndexDivisor;
+  } else {
+    llvm_unreachable("Element count of simple vector types are not divisible?");
+  }
+
+  unsigned NarrowingFactor = WideVT.getSizeInBits() / VT.getSizeInBits();
+  unsigned NarrowElts = SelElts / NarrowingFactor;
+  MVT NarrowSelVT = MVT::getVectorVT(SelVT.getVectorElementType(), NarrowElts);
+  SDLoc DL(Ext);
+  SDValue ExtCond = extract128BitVector(Sel.getOperand(0), ExtIdx, DAG, DL);
+  SDValue ExtT = extract128BitVector(Sel.getOperand(1), ExtIdx, DAG, DL);
+  SDValue ExtF = extract128BitVector(Sel.getOperand(2), ExtIdx, DAG, DL);
+  SDValue NarrowSel = DAG.getSelect(DL, NarrowSelVT, ExtCond, ExtT, ExtF);
+  return DAG.getBitcast(VT, NarrowSel);
+}
+
 static SDValue combineExtractSubvector(SDNode *N, SelectionDAG &DAG,
                                        TargetLowering::DAGCombinerInfo &DCI,
                                        const X86Subtarget &Subtarget) {
@@ -43199,6 +43277,9 @@ static SDValue combineExtractSubvector(SDNode *N, SelectionDAG &DAG,
 
   if (DCI.isBeforeLegalizeOps())
     return SDValue();
+
+  if (SDValue V = narrowExtractedVectorSelect(N, DAG))
+    return V;
 
   SDValue InVec = N->getOperand(0);
   unsigned IdxVal = cast<ConstantSDNode>(N->getOperand(1))->getZExtValue();
