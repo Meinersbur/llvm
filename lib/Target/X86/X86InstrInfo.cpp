@@ -4685,6 +4685,7 @@ MachineInstr *X86InstrInfo::foldMemoryOperandImpl(
                                                   &RI, MF);
       unsigned RCSize = TRI.getRegSizeInBits(*RC) / 8;
       if (Size < RCSize) {
+        // FIXME: Allow scalar intrinsic instructions like ADDSSrm_Int.
         // Check if it's safe to fold the load. If the size of the object is
         // narrower than the load width, then it's not.
         if (Opcode != X86::MOV64rm || RCSize != 8 || Size != 4)
@@ -4874,6 +4875,7 @@ static bool isNonFoldablePartialRegisterLoad(const MachineInstr &LoadMI,
     case X86::MULSSrr_Int: case X86::VMULSSrr_Int: case X86::VMULSSZrr_Int:
     case X86::SUBSSrr_Int: case X86::VSUBSSrr_Int: case X86::VSUBSSZrr_Int:
     case X86::VADDSSZrr_Intk: case X86::VADDSSZrr_Intkz:
+    case X86::VCMPSSZrr_Intk:
     case X86::VDIVSSZrr_Intk: case X86::VDIVSSZrr_Intkz:
     case X86::VMAXSSZrr_Intk: case X86::VMAXSSZrr_Intkz:
     case X86::VMINSSZrr_Intk: case X86::VMINSSZrr_Intkz:
@@ -4925,6 +4927,7 @@ static bool isNonFoldablePartialRegisterLoad(const MachineInstr &LoadMI,
     case X86::MULSDrr_Int: case X86::VMULSDrr_Int: case X86::VMULSDZrr_Int:
     case X86::SUBSDrr_Int: case X86::VSUBSDrr_Int: case X86::VSUBSDZrr_Int:
     case X86::VADDSDZrr_Intk: case X86::VADDSDZrr_Intkz:
+    case X86::VCMPSDZrr_Intk:
     case X86::VDIVSDZrr_Intk: case X86::VDIVSDZrr_Intkz:
     case X86::VMAXSDZrr_Intk: case X86::VMAXSDZrr_Intkz:
     case X86::VMINSDZrr_Intk: case X86::VMINSDZrr_Intkz:
