@@ -53,6 +53,7 @@ subdirectories =
  llvm-split
  llvm-undname
  opt
+ regression
  verify-uselistorder
 
 [component_0]

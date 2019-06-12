@@ -1,3 +1,5 @@
+// RUN:
+// REQUIRES: fixing
 
 #include <omp.h>
 #include <stdio.h>

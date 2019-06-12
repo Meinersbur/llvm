@@ -1,4 +1,5 @@
-
+// RUN:
+// REQUIRES: fixing
 
 void test(long long i);
 
