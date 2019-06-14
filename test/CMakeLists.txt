@@ -106,6 +106,7 @@ set(LLVM_TEST_DEPENDS
           verify-uselistorder
           yaml-bench
           yaml2obj
+          regression
         )
 
 if(TARGET llvm-lto)
@@ -163,26 +164,6 @@ if(TARGET ocaml_llvm)
         )
 endif()
 
-add_custom_target(llvm-test-depends DEPENDS ${LLVM_TEST_DEPENDS})
-set_target_properties(llvm-test-depends PROPERTIES FOLDER "Tests")
-
-add_lit_testsuite(check-llvm "Running the LLVM regression tests"
-  ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS ${LLVM_TEST_DEPENDS}
-  )
-set_target_properties(check-llvm PROPERTIES FOLDER "Tests")
-
-add_lit_testsuites(LLVM ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ${LLVM_TEST_DEPENDS}
-  )
-
-# Setup a legacy alias for 'check-llvm'. This will likely change to be an
-# alias for 'check-all' at some point in the future.
-add_custom_target(check)
-add_dependencies(check check-llvm)
-set_target_properties(check PROPERTIES FOLDER "Tests")
-
-
 # copied from add_unittest
 function(add_compiled_test sourcefile)
   if( NOT LLVM_BUILD_TESTS )
@@ -212,13 +193,16 @@ function(add_compiled_test sourcefile)
 
   set(LLVM_REQUIRES_RTTI OFF)
   list(APPEND LLVM_LINK_COMPONENTS Support) # gtest needs it for raw_ostream
-  
+
   set(test_name "${sourcefile}")
   string(REPLACE  "/" "_" test_name "${test_name}")
   string(REPLACE  "\\" "_" test_name "${test_name}")
   message("test_name: ${test_name} sourcefile: ${sourcefile}")
-  add_llvm_executable(${test_name} IGNORE_EXTERNALIZE_DEBUGINFO NO_INSTALL_RPATH ${sourcefile})
-  
+  add_llvm_executable(${test_name} ${sourcefile}  NO_INSTALL_RPATH DEPENDS regression)
+  target_link_libraries(${test_name} PUBLIC regression)
+  # IGNORE_EXTERNALIZE_DEBUGINFO
+
+  # TODO: put into appropriate subdir
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   message("outdir: ${outdir}")
   set_output_directory(${test_name} BINARY_DIR ${outdir} LIBRARY_DIR ${outdir})
@@ -227,15 +211,46 @@ function(add_compiled_test sourcefile)
   # API for all shared libaries loaded by this executable.
   target_link_libraries(${test_name} PRIVATE gtest_main gtest ${LLVM_PTHREAD_LIB})
 
-  add_dependencies(${test_suite} ${test_name})
-  get_target_property(test_suite_folder ${test_suite} FOLDER)
-  if (NOT ${test_suite_folder} STREQUAL "NOTFOUND")
-    set_property(TARGET ${test_name} PROPERTY FOLDER "${test_suite_folder}")
-  endif ()
+  set(LLVM_TEST_DEPENDS "${LLVM_TEST_DEPENDS};${test_name}" PARENT_SCOPE)
+  message("depends ${LLVM_TEST_DEPENDS}")
+  #list(APPEND LLVM_TEST_DEPENDS ${test_name} )
+  #add_dependencies(llvm-test-depends ${test_name})
+  #get_target_property(test_suite_folder ${test_suite} FOLDER)
+  #if (NOT ${test_suite_folder} STREQUAL "NOTFOUND")
+  #  set_property(TARGET ${test_name} PROPERTY FOLDER "${test_suite_folder}")
+  #endif ()
 endfunction()
 
-file(GLOB_RECURSE compiled_tests RELATIVE CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+file(GLOB_RECURSE compiled_tests FOLLOW_SYMLINKS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS  "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx")
+message("COMPILED TESTS FOUND: ${compiled_tests}")
 foreach(compiled_test IN LISTS compiled_tests)
-  message("FOUND: ${compiled_test}")
-  add_unittest(UnitTests ${test_dirname} ${ARGN})
+  message("TEST: ${compiled_test}")
+  add_compiled_test(${compiled_test})
 endforeach()
+
+
+
+
+
+
+add_custom_target(llvm-test-depends DEPENDS ${LLVM_TEST_DEPENDS})
+set_target_properties(llvm-test-depends PROPERTIES FOLDER "Tests")
+
+add_lit_testsuite(check-llvm "Running the LLVM regression tests"
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS ${LLVM_TEST_DEPENDS}
+  )
+set_target_properties(check-llvm PROPERTIES FOLDER "Tests")
+
+add_lit_testsuites(LLVM ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS ${LLVM_TEST_DEPENDS}
+  )
+
+# Setup a legacy alias for 'check-llvm'. This will likely change to be an
+# alias for 'check-all' at some point in the future.
+add_custom_target(check)
+add_dependencies(check check-llvm)
+set_target_properties(check PROPERTIES FOLDER "Tests")
+
+
+

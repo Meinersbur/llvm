@@ -477,10 +477,12 @@ void initializePollyPasses(llvm::PassRegistry &Registry);
 }
 #endif
 
+
+
 //===----------------------------------------------------------------------===//
 // main for opt
 //
-int main(int argc, char **argv) {
+int main2(int argc, char **argv) {
   InitLLVM X(argc, argv);
 
   // Enable debug stream buffering.
@@ -948,3 +950,22 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+
+
+static cl::opt<std::string> Definition("D", cl::desc("IR section to use"), cl::Required, cl::ValueRequired);
+
+int main(int argc, char *argv[]) {
+
+  InitLLVM X(argc, argv);
+  cl::ParseCommandLineOptions(argc, argv, "regression test helper\n");
+
+  llvm::errs() << "Executing regression\n";
+  llvm::errs() << "Input: " << InputFilename << "\n";
+  llvm::errs() << "Def: " << Definition.getValue() << "\n";
+
+
+  exit(1);
+  return EXIT_SUCCESS;
+}
+
+
