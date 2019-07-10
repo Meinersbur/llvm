@@ -389,7 +389,7 @@ endfunction(set_windows_version_resource_properties)
 #   )
 function(llvm_add_library name)
   cmake_parse_arguments(ARG
-    "MODULE;SHARED;STATIC;OBJECT;DISABLE_LLVM_LINK_LLVM_DYLIB;SONAME;NO_INSTALL_RPATH"
+    "MODULE;SHARED;STATIC;OBJECT;DISABLE_LLVM_LINK_LLVM_DYLIB;SONAME;NO_INSTALL_RPATH;ENABLE_PLUGINS"
     "OUTPUT_NAME;PLUGIN_TOOL;ENTITLEMENTS;BUNDLE_PATH"
     "ADDITIONAL_HEADERS;DEPENDS;LINK_COMPONENTS;LINK_LIBS;OBJLIBS"
     ${ARGN})
@@ -402,6 +402,9 @@ function(llvm_add_library name)
     set(ALL_FILES ${ARG_OBJLIBS})
   else()
     llvm_process_sources(ALL_FILES ${ARG_UNPARSED_ARGUMENTS} ${ARG_ADDITIONAL_HEADERS})
+  endif()
+  if(ARG_ENABLE_PLUGINS)
+    set_property(GLOBAL APPEND PROPERTY LLVM_PLUGIN_TARGETS ${name})
   endif()
 
   if(ARG_MODULE)
@@ -717,7 +720,7 @@ endmacro(add_llvm_library name)
 
 macro(add_llvm_executable name)
   cmake_parse_arguments(ARG
-    "DISABLE_LLVM_LINK_LLVM_DYLIB;IGNORE_EXTERNALIZE_DEBUGINFO;NO_INSTALL_RPATH"
+    "DISABLE_LLVM_LINK_LLVM_DYLIB;IGNORE_EXTERNALIZE_DEBUGINFO;NO_INSTALL_RPATH;ENABLE_PLUGINS"
     "ENTITLEMENTS;BUNDLE_PATH"
     "DEPENDS"
     ${ARGN})
@@ -799,9 +802,36 @@ macro(add_llvm_executable name)
     # API for all shared libaries loaded by this executable.
     target_link_libraries(${name} PRIVATE ${LLVM_PTHREAD_LIB})
   endif()
+  if(ARG_ENABLE_PLUGINS)
+    set_property(GLOBAL APPEND PROPERTY LLVM_PLUGIN_TARGETS ${name})
+  endif()
 
   llvm_codesign(${name} ENTITLEMENTS ${ARG_ENTITLEMENTS} BUNDLE_PATH ${ARG_BUNDLE_PATH})
 endmacro(add_llvm_executable name)
+
+# add_llvm_pass_plugin(name)
+#   Add ${name} as an llvm plugin.
+#   If option LLVM_${name_upper}_LINK_INTO_TOOLS is set to ON, the plugin is registered statically.
+#   Otherwise a pluggable shared library is registered.
+function(add_llvm_pass_plugin name)
+    cmake_parse_arguments(ARG "" "" "" ${ARGN})
+
+  string(TOUPPER ${name} name_upper)
+
+  option(LLVM_${name_upper}_LINK_INTO_TOOLS "Statically link ${name} into tools (if available)" ON)
+  add_llvm_library(${name} OBJECT ${ARG_UNPARSED_ARGUMENTS})
+
+  message(STATUS "Registering ${name} as a pass plugin (static build: ${LLVM_${name_upper}_LINK_INTO_TOOLS})")
+  if(LLVM_${name_upper}_LINK_INTO_TOOLS)
+    set_property(GLOBAL APPEND PROPERTY LLVM_COMPILE_EXTENSIONS ${name})
+    get_property(llvm_plugin_targets GLOBAL PROPERTY LLVM_PLUGIN_TARGETS)
+    foreach(llvm_plugin_target ${llvm_plugin_targets})
+      set_property(TARGET ${llvm_plugin_target} APPEND PROPERTY SOURCES $<TARGET_OBJECTS:obj.${name}>)
+      set_property(TARGET ${llvm_plugin_target} APPEND PROPERTY LINK_LIBRARIES ${name})
+      set_property(TARGET ${llvm_plugin_target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${name})
+    endforeach()
+  endif()
+endfunction(add_llvm_pass_plugin)
 
 function(export_executable_symbols target)
   if (LLVM_EXPORTED_SYMBOL_FILE)

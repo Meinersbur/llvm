@@ -109,12 +109,6 @@ public:
 };
 }
 
-#ifdef LINK_POLLY_INTO_TOOLS
-namespace polly {
-void initializePollyPasses(llvm::PassRegistry &Registry);
-}
-#endif
-
 int main(int argc, char **argv) {
 #ifndef DEBUG_BUGPOINT
   InitLLVM X(argc, argv);
@@ -133,10 +127,6 @@ int main(int argc, char **argv) {
   initializeAggressiveInstCombine(Registry);
   initializeInstrumentation(Registry);
   initializeTarget(Registry);
-
-#ifdef LINK_POLLY_INTO_TOOLS
-  polly::initializePollyPasses(Registry);
-#endif
 
   if (std::getenv("bar") == (char*) -1) {
     InitializeAllTargets();

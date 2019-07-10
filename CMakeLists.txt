@@ -446,29 +446,6 @@ set(LLVM_LIB_FUZZING_ENGINE "" CACHE PATH
 option(LLVM_USE_SPLIT_DWARF
   "Use -gsplit-dwarf when compiling llvm." OFF)
 
-option(LLVM_POLLY_LINK_INTO_TOOLS "Statically link Polly into tools (if available)" ON)
-option(LLVM_POLLY_BUILD "Build LLVM with Polly" ON)
-
-if (EXISTS ${LLVM_MAIN_SRC_DIR}/tools/polly/CMakeLists.txt)
-  set(POLLY_IN_TREE TRUE)
-elseif(LLVM_EXTERNAL_POLLY_SOURCE_DIR)
-  set(POLLY_IN_TREE TRUE)
-else()
-  set(POLLY_IN_TREE FALSE)
-endif()
-
-if (LLVM_POLLY_BUILD AND POLLY_IN_TREE)
-  set(WITH_POLLY ON)
-else()
-  set(WITH_POLLY OFF)
-endif()
-
-if (LLVM_POLLY_LINK_INTO_TOOLS AND WITH_POLLY)
-  set(LINK_POLLY_INTO_TOOLS ON)
-else()
-  set(LINK_POLLY_INTO_TOOLS OFF)
-endif()
-
 # Define an option controlling whether we should build for 32-bit on 64-bit
 # platforms, where supported.
 if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
@@ -1090,3 +1067,27 @@ if (LLVM_INCLUDE_BENCHMARKS)
   add_subdirectory(utils/benchmark)
   add_subdirectory(benchmarks)
 endif()
+
+# generate X Macro file for extension handling. It provides a
+# HANDLE_EXTENSION(extension_namespace, ExtensionProject) call for each extension
+# allowing client code to define HANDLE_EXTENSION to have a specific code be run for
+# each extension.
+get_property(LLVM_EXTENSIONS GLOBAL PROPERTY LLVM_COMPILE_EXTENSIONS)
+file(WRITE "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def.tmp" "//extension handlers\n")
+foreach(llvm_extension ${LLVM_EXTENSIONS})
+    string(TOLOWER ${llvm_extension} llvm_extension_lower)
+
+    string(TOUPPER ${llvm_extension} llvm_extension_upper)
+    string(SUBSTRING ${llvm_extension_upper} 0 1 llvm_extension_upper_first)
+    string(SUBSTRING ${llvm_extension_lower} 1 -1 llvm_extension_lower_tail)
+    string(CONCAT llvm_extension_project ${llvm_extension_upper_first} ${llvm_extension_lower_tail})
+
+    if(LLVM_${llvm_extension_upper}_LINK_INTO_TOOLS)
+        file(APPEND "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def.tmp" "HANDLE_EXTENSION(${llvm_extension_project})\n")
+    endif()
+endforeach()
+file(APPEND "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def.tmp" "#undef HANDLE_EXTENSION\n")
+
+# only replace if there's an actual change
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def.tmp" "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def")
+file(REMOVE "${CMAKE_BINARY_DIR}/include/llvm/Support/Extension.def.tmp")
