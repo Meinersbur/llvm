@@ -8,4 +8,7 @@ add_llvm_library(LLVMLOF
 
   ADDITIONAL_HEADER_DIRS
     ${LLVM_MAIN_INCLUDE_DIR}/llvm/LOF
+    
+  DEPENDS
+  intrinsics_gen
 )
